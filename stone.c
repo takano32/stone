@@ -84,7 +84,7 @@
  * -DWINDOWS	  Windows95/98/NT
  * -DNT_SERVICE	  WindowsNT/2000 native service
  */
-#define VERSION	"2.1v"
+#define VERSION	"2.1w"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -372,7 +372,9 @@ int Syslog = 0;
 char SyslogName[STRMAX];
 #endif
 FILE *LogFp;
+char *LogFileName = NULL;
 FILE *AccFp = NULL;
+char *AccFileName = NULL;
 char *ConfigFile = NULL;
 int ConfigArgc = 0;
 int OldConfigArgc = 0;
@@ -3484,6 +3486,7 @@ char *argv[];
 				errno,argv[i]);
 			exit(1);
 		    }
+		    LogFileName = strdup(argv[i]);
 		}
 		setbuf(LogFp,NULL);
 		break;
@@ -3500,6 +3503,7 @@ char *argv[];
 				errno,argv[i]);
 			exit(1);
 		    }
+		    AccFileName = strdup(argv[i]);
 		}
 		setbuf(AccFp,NULL);
 		break;
@@ -3711,6 +3715,28 @@ int sig, code;
 #ifndef NO_FORK
 	}
 #endif
+	if (LogFileName) {
+	    fclose(LogFp);
+	    LogFp = fopen(LogFileName,"a");
+	    if (LogFp == NULL) {
+		LogFp = stderr;
+		message(LOG_ERR,"Can't re-create log file err=%d: %s",
+			errno,LogFileName);
+		exit(1);
+	    }
+	    setbuf(LogFp,NULL);
+	}
+	if (AccFileName) {
+	    fclose(AccFp);
+	    AccFp = fopen(AccFileName,"a");
+	    if (AccFp == NULL) {
+		message(LOG_ERR,
+			"Can't re-create account log file err=%d: %s",
+			errno,AccFileName);
+		exit(1);
+	    }
+	    setbuf(AccFp,NULL);
+	}
 	signal(SIGHUP,handler);
 	break;
       case SIGTERM:
