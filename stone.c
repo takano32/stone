@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.60 2003/07/12 10:14:27 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.61 2003/07/22 10:42:39 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -248,6 +248,7 @@ typedef struct {
     SSL_CTX *ctx;
     regex_t *re[DEPTH_MAX];
     unsigned char lbmod;
+    unsigned char lbparm;
 } StoneSSL;
 
 typedef struct {
@@ -262,6 +263,7 @@ typedef struct {
     char *cipherList;
     char *regexp[DEPTH_MAX];
     unsigned char lbmod;
+    unsigned char lbparm;
 } SSLOpts;
 
 SSLOpts ServerOpts;
@@ -1436,9 +1438,12 @@ void asyncConn(Conn *conn) {
     else ret = 1;
     if (ret > 0) {
 	if (p2->match && p2->stone->ssl_server) {
-	    unsigned char *s = p2->match[0];	/* \1 */
+	    int lbparm = p2->stone->ssl_server->lbparm;
 	    int lbmod = p2->stone->ssl_server->lbmod;
 	    int ofs = 0;
+	    unsigned char *s;
+	    if (1 <= lbparm && lbparm <= 9) s = p2->match[lbparm - 1];
+	    else s = p2->match[0];
 	    if (lbmod) {
 		while (*s) {
 		    ofs <<= 6;
@@ -1447,8 +1452,8 @@ void asyncConn(Conn *conn) {
 		}
 		ofs %= lbmod;
 		if (Debug > 2)
-		    message(LOG_DEBUG, "TCP %d: pair %d lb=%d",
-			    p1->sd, p2->sd, ofs);
+		    message(LOG_DEBUG, "TCP %d: pair %d lb%d=%d",
+			    p1->sd, p2->sd, lbparm, ofs);
 		conn->sin.sin_addr.s_addr
 		    = htonl(ntohl(conn->sin.sin_addr.s_addr) + ofs);
 	    }
@@ -2951,6 +2956,7 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
     SSL_CTX_set_verify_depth(ss->ctx,opts->depth + 1);
     ss->depth = opts->depth;
     ss->lbmod = opts->lbmod;
+    ss->lbparm = opts->lbparm;
     if ((opts->caFile || opts->caPath)
 	&& !SSL_CTX_load_verify_locations(ss->ctx,opts->caFile,opts->caPath)) {
 	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s,%s) error",
@@ -3367,7 +3373,7 @@ void help(char *com) {
 	    "       CAfile=<file>    ; certificate file of CA\n"
 	    "       CApath=<dir>     ; dir of CAs\n"
 	    "       cipher=<ciphers> ; list of ciphers\n"
-	    "       lb=<n>           ; load balancing based on CN\n"
+	    "       lb<n>=<m>        ; load balancing based on CN\n"
 #endif
 	    , com);
 #endif
@@ -3700,8 +3706,10 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	opts->caPath = strdup(argv[i]+7);
     } else if (!strncmp(argv[i],"cipher=",7)) {
 	opts->cipherList = strdup(argv[i]+7);
-    } else if (!strncmp(argv[i],"lb=",3)) {
-	opts->lbmod = atoi(argv[i]+3);
+    } else if (!strncmp(argv[i],"lb",2) && isdigit(argv[i][2])
+	       && argv[i][3] == '=') {
+	opts->lbparm = argv[i][2] - '0';
+	opts->lbmod = atoi(argv[i]+4);
     } else {
     error:
 	message(LOG_ERR,"Invalid SSL Option: %s",argv[i]);
