@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.48 2003/05/07 14:27:26 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.49 2003/05/07 16:36:31 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -239,7 +239,8 @@ typedef int SOCKET;
 #include <openssl/err.h>
 #include <regex.h>
 
-#define DEPTH_MAX 10
+#define NMATCH_MAX	9	/* \1 ... \9 */
+#define DEPTH_MAX	10
 
 typedef struct {
     int verbose;
@@ -314,6 +315,7 @@ typedef struct _Pair {
     Stone *stone;	/* parent */
 #ifdef USE_SSL
     SSL *ssl;		/* SSL handle */
+    char **match;
 #endif
     time_t clock;
     int timeout;
@@ -1155,6 +1157,18 @@ static void printSSLinfo(SSL *ssl) {
     }
 }
 
+void rmMatch(Pair *pair) {
+    if (pair->match) {
+	int i;
+	char **match = pair->match;
+	pair->match = NULL;
+	for (i=0; i < NMATCH_MAX; i++) {
+	    if (match[i]) free(match[i]);
+	}
+	free(match);
+    }
+}
+
 int trySSL_accept(Pair *pair) {
     int ret;
     unsigned long err;
@@ -1189,6 +1203,7 @@ int trySSL_accept(Pair *pair) {
 			pair->sd,ERR_error_string(err,NULL));
 	    message_pair(pair);
 	    SSL_free(ssl);
+	    rmMatch(pair);
 	    return -1;
 	}
     }
@@ -1200,6 +1215,7 @@ int trySSL_accept(Pair *pair) {
 	    message_pair(pair);
 	}
 	SSL_free(ssl);
+	rmMatch(pair);
 	return -1;	/* unexpected EOF */
     }
  finished:
@@ -1246,6 +1262,7 @@ int doSSL_connect(Pair *pair) {
 			pair->sd,ERR_error_string(err,NULL));
 	    message_pair(pair);
 	    SSL_free(ssl);
+	    rmMatch(pair);
 	    return -1;
 	}
     }
@@ -1609,6 +1626,7 @@ Pair *doaccept(Stone *stonep) {
     pair1->pair = NULL;
 #ifdef USE_SSL
     pair1->ssl = pair2->ssl = NULL;
+    pair1->match = pair2->match = NULL;
     if (stonep->proto & proto_ssl_s) {
 	ret = doSSL_accept(pair1);
 	if (ret < 0) goto error;
@@ -1659,12 +1677,26 @@ int strnparse(char *buf, int limit, char *p, Pair *pair) {
     char c;
     while (i < limit && (c = *p++)) {
 	if (c == '\\') {
-	    switch(c = *p++) {
-	      case 'n':  c = '\n';  break;
-	      case 'r':  c = '\r';  break;
-	      case 't':  c = '\t';  break;
-	      case 'a':  i += strnPeerAddr(buf+i,limit-i,pair->sd); continue;
-	      case '\0':
+	    c = *p++;
+	    if ('1' <= c && c <= '9') {
+		if (pair->match) {
+		    char **match = pair->match;
+		    c -= '1';
+		    if (match[c]) {
+			int len = strlen(match[c]);
+			if (len >= limit - i) len = limit - i;
+			strncpy(buf+i,match[c],len);
+			i += len;
+		    }
+		}
+		continue;
+	    }
+	    switch(c) {
+	    case 'n':  c = '\n';  break;
+	    case 'r':  c = '\r';  break;
+	    case 't':  c = '\t';  break;
+	    case 'a':  i += strnPeerAddr(buf+i,limit-i,pair->sd); continue;
+	    case '\0':
 		c = '\\';
 		p--;
 	    }
@@ -1759,6 +1791,7 @@ int scanClose(void) {	/* scan close request */
 		    SSL *ssl = p2->ssl;
 		    p2->ssl = NULL;
 		    SSL_free(ssl);
+		    rmMatch(p2);
 		}
 #endif
 		if (Debug > 3) message(LOG_DEBUG,"TCP %d: closesocket",p2->sd);
@@ -2799,10 +2832,36 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     }
     if (!preverify_ok) return 0;
     if (depth < DEPTH_MAX && ss->re[depth]) {
-	err = regexec(ss->re[depth], p, (size_t)0, 0, 0);
+	regmatch_t pmatch[NMATCH_MAX];
+	err = regexec(ss->re[depth], p, (size_t)NMATCH_MAX, pmatch, 0);
 	if (Debug > 3) message(LOG_DEBUG,"TCP %d: regexec%d=%d",
 			       pair->sd,depth,err);
-	return !err;
+	if (err) return 0;	/* not match */
+	if (!pair->match) {
+	    pair->match = malloc(sizeof(char*) * NMATCH_MAX);
+	    if (pair->match) {
+		int i;
+		for (i=0; i < NMATCH_MAX; i++) pair->match[i] = NULL;
+	    }
+	}
+	if (pair->match) {
+	    int i;
+	    int j = 1;
+	    for (i=0; i < NMATCH_MAX; i++) {
+		if (pair->match[i]) continue;
+		if (pmatch[j].rm_so >= 0) {
+		    int len = pmatch[j].rm_eo - pmatch[j].rm_so;
+		    pair->match[i] = malloc(len+1);
+		    if (pair->match[i]) {
+			strncpy(pair->match[i], p + pmatch[j].rm_so, len);
+			pair->match[i][len] = '\0';
+			if (Debug > 4) message(LOG_DEBUG,"TCP %d: \\%d=%s",
+					       pair->sd,i+1,pair->match[i]);
+		    }
+		    j++;
+		}
+	    }
+	}
     }
     return 1;	/* if re is null, always succeed */
 }
