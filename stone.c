@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.39 2003/05/03 03:47:25 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.40 2003/05/03 10:00:50 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -238,7 +238,7 @@ typedef int SOCKET;
 #include <openssl/bio.h>
 #include <openssl/err.h>
 SSL_CTX *ssl_ctx_server, *ssl_ctx_client;
-char *keyfile, *certfile, *CAfile;
+char *keyfile, *certfile, *CAfile, *CApath;
 char ssl_file_path[BUFMAX];
 int ssl_verbose_flag = 0;
 int ssl_verify_flag = SSL_VERIFY_NONE;
@@ -3516,6 +3516,8 @@ char *argv[];
 	ssl_verbose_flag++;
     } else if (!strncmp(argv[i],"CAfile=",7)) {
 	CAfile = strdup(argv[i]+7);
+    } else if (!strncmp(argv[i],"CApath=",7)) {
+	CApath = strdup(argv[i]+7);
     } else {
 	message(LOG_ERR,"Invalid SSL Option: %s",argv[i]);
 	help(argv[0]);
@@ -3925,7 +3927,7 @@ char *argv[];
     sprintf(ssl_file_path,"%s/stone.pem",	/* default */
 	    X509_get_default_cert_dir());
     keyfile = certfile = ssl_file_path;
-    CAfile = NULL;
+    CAfile = CApath = NULL;
 #endif
     i = doopts(argc,argv);
     if (ConfigFile) {
@@ -3965,8 +3967,10 @@ char *argv[];
     SSL_CTX_set_mode(ssl_ctx_server,SSL_MODE_ENABLE_PARTIAL_WRITE);
     SSL_CTX_set_mode(ssl_ctx_client,SSL_MODE_ENABLE_PARTIAL_WRITE);
     if (!cipher_list) cipher_list = getenv("SSL_CIPHER");
-    if (CAfile && !SSL_CTX_load_verify_locations(ssl_ctx_server,CAfile,NULL)) {
-	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s) error",CAfile);
+    if ((CAfile || CApath)
+	&& !SSL_CTX_load_verify_locations(ssl_ctx_server,CAfile,CApath)) {
+	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s,%s) error",
+		CAfile,CApath);
 	if (ssl_verbose_flag)
 	    message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
     }
