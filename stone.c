@@ -348,6 +348,8 @@ const proto_udp =	    0x2000;	/* user datagram protocol */
 const proto_source =	    0x4000;	/* source flag */
 const proto_first_r =	   0x10000;	/* first read packet */
 const proto_first_w =	   0x20000;	/* first written packet */
+const proto_select_r =	   0x40000;	/* select to read */
+const proto_select_w =	   0x80000;	/* select to write */
 const proto_connect =	  0x100000;	/* connection established */
 const proto_close =	  0x200000;	/* request to close */
 const proto_ssl_intr =	  0x800000;	/* SSL accept/connect interrupted */
@@ -2096,7 +2098,7 @@ Pair *pair;		/* read into buf from pair->pair->start */
 		message(LOG_ERR,"TCP %d: SSL_read error err=%d, closing",
 			sd,err);
 		message_pair(pair);
-		return len;	/* error */
+		return -1;	/* error */
 	    }
 	}
 	if (ssl_verbose_flag &&
@@ -2564,151 +2566,133 @@ Pair *pair;
     return len;
 }
 
-int waitFd(pair, write_flag, timeout)
-Pair *pair;
-int write_flag;
-long timeout;
+static void select_debug(rout, wout, eout)
+fd_set *rout, *wout, *eout;
 {
-    SOCKET sd = pair->sd;
-    Pair *p = pair->pair;
-    struct timeval tv, *tvp;
-    fd_set set;
-    int ret;
-    if (InvalidSocket(sd)) return -1;
-    FD_ZERO(&set);
-    FD_SET(sd,&set);
-    tvp = &tv;
-    tvp->tv_sec = 0;
-    if (timeout) {
-	tvp->tv_usec = timeout;
-    } else {
-	tvp = NULL;
-    }
-    if (Debug > 8) {
-	message(LOG_DEBUG,"TCP %d: select(%ld) to %s %d...", 
-		sd,
-		(tvp ? tvp->tv_usec : 0),
-		(write_flag ? "write data from" : "read data into"),
-		(p ? p->sd : INVALID_SOCKET));
-    }
-    if (write_flag) {
-	return select(FD_SETSIZE,NULL,&set,NULL,tvp);
-    } else {
-	return select(FD_SETSIZE,&set,NULL,NULL,tvp);
+    int i, r, w, e;
+    if (Debug > 11) {
+	for (i=0; i < FD_SETSIZE; i++) {
+	    r = FD_ISSET(i,rout);
+	    w = FD_ISSET(i,wout);
+	    if (eout) e = FD_ISSET(i,eout); else e = 0;
+	    if (r || w || e)
+		message(LOG_DEBUG,"select %d: %c%c%c",
+			i, (r ? 'r' : ' '), (w ? 'w' : ' '), (e ? 'e' : ' '));
+	}
     }
 }
 
-void doReadWrite(pair,write_flag)
+void asyncReadWrite(pair)
 Pair *pair;
-int write_flag;
 {
+    fd_set ri, wi;
+    fd_set ro, wo;
+    struct timeval tv;
+    int npairs = 1;
+    Pair *p[2];
     Pair *rPair, *wPair;
     SOCKET rsd, wsd;
     int len;
+    int i;
     ASYNC_BEGIN;
-    if (write_flag) {
-	wPair = pair;
-	rPair = pair->pair;
-	goto write;
-    }
-    rPair = pair;
-    wPair = pair->pair;
- read:
-    rsd = rPair->sd;
-    wsd = INVALID_SOCKET;
-    if (Debug > 8) message(LOG_DEBUG,"TCP %d: asyncRead...", rsd);
-    utimer(TICK_TIMER);
-    len = doread(rPair);
-    utimer(0);
-    rPair->count--;
-    if (wPair) wPair->count--;
-    if (len < 0 || (rPair->proto & proto_close) || wPair == NULL) {
-	doclose(rPair,1);	/* EOF or error, wait mutex */
-    } else {
-	if (len > 0) {
-	    int first_flag;
-	    first_flag = (rPair->proto & proto_first_r);
-	    if (first_flag) len = first_read(rPair);
-	    wsd = wPair->sd;
-	    if (len > 0
-		&& ValidSocket(wsd)
-		&& !(wPair->proto & proto_close)
-		&& !(rPair->proto & proto_close)) {
-		if (!first_flag
-		    && !(wPair->proto & proto_first_w)
-		    && waitFd(wPair,1,TICK_SELECT) > 0) {
-		    wPair->count++;
-		    if (wPair->pair) rPair->count++;
-		    if (Debug > 8)
-			message(LOG_DEBUG,"TCP %d: write ready, continue",wsd);
-		    goto write;
-		}
-		if (Debug > 8)
-		    message(LOG_DEBUG,"TCP %d: write timeout, set &win",wsd);
-		waitMutex(FdWinMutex);
-		FD_SET(wsd,&win);
-		freeMutex(FdWinMutex);
-	    }
-	} else {		/* EINTR */
-	    waitMutex(FdRinMutex);
-	    FD_SET(rsd,&rin);
-	    freeMutex(FdRinMutex);
+    FD_ZERO(&ri);
+    FD_ZERO(&wi);
+    p[0] = pair;
+    p[1] = pair->pair;
+    if (Debug > 8) message(LOG_DEBUG,"TCP %d, %d: asyncReadWrite ...",
+			   (p[0] ? p[0]->sd : INVALID_SOCKET),
+			   (p[1] ? p[1]->sd : INVALID_SOCKET));
+    if (p[1]) npairs++;
+    for (i=0; i < npairs; i++) {
+	if (p[i]->proto & proto_select_r) {
+	    FD_SET(p[i]->sd,&ri);
+	    p[i]->proto &= ~proto_select_r;
+	}
+	if (p[i]->proto & proto_select_w) {
+	    FD_SET(p[i]->sd,&wi);
+	    p[i]->proto &= ~proto_select_w;
 	}
     }
-    goto end;
-
- write:
-    wsd = wPair->sd;
-    rsd = INVALID_SOCKET;
-    if (Debug > 8) message(LOG_DEBUG,"TCP %d: asyncWrite...", wsd);
-    utimer(TICK_TIMER);
-    len = dowrite(wPair);
-    utimer(0);
-    wPair->count--;
-    if (rPair) rPair->count--;
-    if (len < 0 || (wPair->proto & proto_close) || rPair == NULL) {
-	if (rPair) doclose(rPair,1);	/* if error, close, wait mutex */
-	doclose(wPair,1);
-    } else {
-	if (wPair->len <= 0) {	/* all written */
-	    if (wPair->proto & proto_first_w) wPair->proto &= ~proto_first_w;
-	    rsd = rPair->sd;
-	    if (rPair && ValidSocket(rsd)
-		&& !(rPair->proto & proto_close)
-		&& !(wPair->proto & proto_close)) {
-		if (waitFd(rPair,0,TICK_SELECT) > 0) {
-		    rPair->count++;
-		    if (rPair->pair) wPair->count++;
-		    if (Debug > 8)
-			message(LOG_DEBUG,"TCP %d: read ready, continue",rsd);
-		    goto read;
+    tv.tv_sec = 0;
+    tv.tv_usec = TICK_SELECT;
+    if (Debug > 10) select_debug(&ri,&wi,NULL);
+    while (ro=ri, wo=wi, select(FD_SETSIZE,&ro,&wo,NULL,&tv) > 0) {
+	for (i=0; i < npairs; i++) {
+	    if (p[i] && FD_ISSET(p[i]->sd,&ro)) {	/* read */
+		rPair = p[i];
+		wPair = p[1-i];
+		rsd = rPair->sd;
+		if (wPair) wsd = wPair->sd; else wsd = INVALID_SOCKET;
+		FD_CLR(rsd,&ri);
+		rPair->count++;
+		utimer(TICK_TIMER);
+		len = doread(rPair);
+		utimer(0);
+		rPair->count--;
+		if (len < 0 || (rPair->proto & proto_close) || wPair == NULL) {
+		    doclose(rPair,1);	/* EOF or error, wait mutex */
+		} else {
+		    if (len > 0) {
+			int first_flag;
+			first_flag = (rPair->proto & proto_first_r);
+			if (first_flag) len = first_read(rPair);
+			if (len > 0 && ValidSocket(wsd)
+			    && !(wPair->proto & proto_close)
+			    && !(rPair->proto & proto_close)) {
+			    FD_SET(wsd,&wi);
+			}
+		    } else {	/* EINTR */
+			FD_SET(rsd,&ri);
+		    }
 		}
-		if (Debug > 8)
-		    message(LOG_DEBUG,"TCP %d: read timeout, set &rin",rsd);
-		waitMutex(FdRinMutex);
-		FD_SET(rsd,&rin);
-		freeMutex(FdRinMutex);
+	    } else if (p[i] && FD_ISSET(p[i]->sd,&wo)) {	/* write */
+		wPair = p[i];
+		rPair = p[1-i];
+		wsd = wPair->sd;
+		if (rPair) rsd = rPair->sd; else rsd = INVALID_SOCKET;
+		FD_CLR(wsd,&wi);
+		if ((wPair->proto & proto_command) == command_ihead) {
+		    if (insheader(wPair) >= 0)	/* insert header */
+			wPair->proto &= ~proto_command;
+		}
+		wPair->count++;
+		utimer(TICK_TIMER);
+		len = dowrite(wPair);
+		utimer(0);
+		wPair->count--;
+		if (len < 0 || (wPair->proto & proto_close) || rPair == NULL) {
+		    if (rPair) doclose(rPair,1);	/* if error, close */
+		    doclose(wPair,1);
+		} else {
+		    if (wPair->len <= 0) {	/* all written */
+			if (wPair->proto & proto_first_w)
+			    wPair->proto &= ~proto_first_w;
+			if (rPair && ValidSocket(rsd)
+			    && !(rPair->proto & proto_close)
+			    && !(wPair->proto & proto_close)) {
+			    FD_SET(rsd,&ri);
+			}
+		    } else {	/* EINTR */
+			FD_SET(wsd,&wi);
+		    }
+		}
 	    }
-	} else {		/* EINTR */
-	    waitMutex(FdWinMutex);
-	    FD_SET(wsd,&win);
-	    freeMutex(FdWinMutex);
 	}
     }
- end:
+    waitMutex(FdRinMutex);
+    waitMutex(FdWinMutex);
+    for (i=0; i < npairs; i++) {
+	if (p[i]) {
+	    if (FD_ISSET(p[i]->sd,&ri)) FD_SET(p[i]->sd,&rin);
+	    if (FD_ISSET(p[i]->sd,&wi)) FD_SET(p[i]->sd,&win);
+	}
+    }
+    freeMutex(FdWinMutex);
+    freeMutex(FdRinMutex);
+    if (Debug > 8) message(LOG_DEBUG,"TCP %d, %d: asyncReadWrite end",
+			   (p[0] ? p[0]->sd : INVALID_SOCKET),
+			   (p[1] ? p[1]->sd : INVALID_SOCKET));
     ASYNC_END;
-}
-
-void asyncRead(pair)
-Pair *pair;
-{
-    doReadWrite(pair,0);
-}
-
-void asyncWrite(pair)
-Pair *pair;
-{
-    doReadWrite(pair,1);
 }
 
 int scanPairs(rop,wop,eop)
@@ -2742,32 +2726,44 @@ fd_set *rop, *wop, *eop;
 		doclose(pair,1);	/* wait mutex */
 	    } else {
 		waitMutex(FdRinMutex);
-		isset = (FD_ISSET(sd,rop) && FD_ISSET(sd,&rin));
-		if (isset) {
-		    FD_CLR(sd,&rin);
+		waitMutex(FdWinMutex);
+		isset = ((FD_ISSET(sd,rop) && FD_ISSET(sd,&rin)) ||
+			 (FD_ISSET(sd,wop) && FD_ISSET(sd,&win)));
+		if (p) {
+		    isset |=
+			((FD_ISSET(p->sd,rop) && FD_ISSET(p->sd,&rin)) ||
+			 (FD_ISSET(p->sd,wop) && FD_ISSET(p->sd,&win)));
 		}
+		if (isset) {
+		    pair->proto &= ~(proto_select_r | proto_select_w);
+		    if (FD_ISSET(sd,&rin)) {
+			FD_CLR(sd,&rin);
+			pair->proto |= proto_select_r;
+			message(LOG_DEBUG,"TCP %d: set proto_select_r",sd);
+		    }
+		    if (FD_ISSET(sd,&win)) {
+			FD_CLR(sd,&win);
+			pair->proto |= proto_select_w;
+			message(LOG_DEBUG,"TCP %d: set proto_select_w",sd);
+		    }
+		    if (p) {
+			SOCKET psd = p->sd;
+			p->proto &= ~(proto_select_r | proto_select_w);
+			if (FD_ISSET(psd,&rin)) {
+			    FD_CLR(psd,&rin);
+			    p->proto |= proto_select_r;
+			}
+			if (FD_ISSET(psd,&win)) {
+			    FD_CLR(psd,&win);
+			    p->proto |= proto_select_w;
+			}
+		    }
+		}
+		freeMutex(FdWinMutex);
 		freeMutex(FdRinMutex);
 		if (isset) {
 		    idle = 0;
-		    pair->count++;
-		    if (p) p->count++;
-		    ASYNC(asyncRead,pair);
-		}
-		waitMutex(FdWinMutex);
-		isset = (FD_ISSET(sd,wop) && FD_ISSET(sd,&win));
-		if (isset) {
-		    FD_CLR(sd,&win);
-		}
-		freeMutex(FdWinMutex);
-		if (isset) {
-		    idle = 0;
-		    if ((pair->proto & proto_command) == command_ihead) {
-			if (insheader(pair) >= 0)	/* insert header */
-			    pair->proto &= ~proto_command;
-		    }
-		    pair->count++;
-		    if (p) p->count++;
-		    ASYNC(asyncWrite,pair);
+		    ASYNC(asyncReadWrite,pair);
 		}
 	    }
 	    if (idle && pair->timeout > 0
@@ -2862,22 +2858,6 @@ void rmoldconfig() {
     OldConfigArgc = 0;
     free(OldConfigArgv);
     OldConfigArgv = NULL;
-}
-
-static void select_debug(rout, wout, eout)
-fd_set *rout, *wout, *eout;
-{
-    int i, r, w, e;
-    if (Debug > 11) {
-	for (i=0; i < FD_SETSIZE; i++) {
-	    r = FD_ISSET(i,rout);
-	    w = FD_ISSET(i,wout);
-	    e = FD_ISSET(i,eout);
-	    if (r || w || e)
-		message(LOG_DEBUG,"select %d: %c%c%c",
-			i, (r ? 'r' : ' '), (w ? 'w' : ' '), (e ? 'e' : ' '));
-	}
-    }
 }
 
 void repeater() {

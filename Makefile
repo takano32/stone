@@ -72,7 +72,7 @@ linux-ssl:
 	$(MAKE) TARGET=linux ssl_stone
 
 bsd:
-	$(MAKE) FLAGS="-DCPP='\"/usr/bin/cpp -traditional\"' $(FLAGS)" stone
+	$(MAKE) FLAGS="-DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD $(FLAGS)" LIBS="-pthread $(LIBS)" stone
 
 bsd-pop:
 	$(MAKE) TARGET=bsd pop_stone
