@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.199 2004/10/22 23:28:17 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.200 2004/10/23 01:47:53 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2247,37 +2247,10 @@ void message_conn(int pri, Conn *conn) {
     message(pri, "Conn %d: %08x %s", sd, proto, str);
 }
 
-int reqconn(Pair *pair,		/* request pair to connect to destination */
-	    struct sockaddr_in *sinp) {	/* connect to */
-    Conn *conn;
-    Pair *p = pair->pair;
-    if ((pair->proto & proto_command) == command_proxy
-	|| (pair->proto & proto_command) == command_health) {
-	if (p && !(p->proto & (proto_eof | proto_close)))
-	    p->proto |= proto_select_r;	/* must read request header */
-	return 0;
-    }
-    conn = malloc(sizeof(Conn));
-    if (!conn) {
-	message(LOG_CRIT, "TCP %d: out of memory", (p ? p->sd : -1));
-	return -1;
-    }
-    time(&pair->clock);
-    p->clock = pair->clock;
-    pair->count += REF_UNIT;	/* request to connect */
-    conn->pair = pair;
-    conn->sin = *sinp;
-    conn->lock = 0;
-    waitMutex(ConnMutex);
-    conn->next = conns.next;
-    conns.next = conn;
-    freeMutex(ConnMutex);
-    return 0;
-}
-
-void asyncConn(Conn *conn) {
+int doconnect(Pair *p1, struct sockaddr *sa, socklen_t salen) {
+    struct sockaddr_storage sas;	/* destination */
     int ret;
-    Pair *p1, *p2;
+    Pair *p2;
 #ifdef USE_SSL
     SSL *ssl;
 #endif
@@ -2287,14 +2260,13 @@ void asyncConn(Conn *conn) {
 #ifdef WINDOWS
     u_long param;
 #endif
-    ASYNC_BEGIN;
-    p1 = conn->pair;
-    if (p1 == NULL) goto finish;
+    if (p1 == NULL) return -1;
     p2 = p1->pair;
-    if (p2 == NULL) goto finish;
-    if (!(p2->proto & proto_connect)) goto exit;
+    if (p2 == NULL) return -1;
+    if (!(p2->proto & proto_connect)) return 0;
+    bcopy(sa, &sas, salen);
     time(&clock);
-    if (Debug > 8) message(LOG_DEBUG, "asyncConn");
+    if (Debug > 8) message(LOG_DEBUG, "doconnect");
 #ifdef USE_SSL
     ssl = p2->ssl;
     if (ssl) {
@@ -2352,14 +2324,20 @@ void asyncConn(Conn *conn) {
 	p1->stone->proto = ((p1->stone->proto & ~state_mask)
 			    | ((offset+1) & state_mask));
     }
-    if (offset >= 0) conn->sin = p1->stone->sins[offset];
+    if (offset >= 0) {
+	salen = sizeof(p1->stone->sins[0]);
+	bcopy(&p1->stone->sins[offset], &sas, salen);
+    }
     if (p1->stone->backups) {
 	Backup *backup;
 	if (offset >= 0) backup = p1->stone->backups[offset];
 	else backup = p1->stone->backups[0];
 	if (backup) {
 	    backup->used = 2;
-	    if (backup->bn) conn->sin = backup->backup;	/* unhealthy */
+	    if (backup->bn) {	/* unhealthy */
+		salen = sizeof(backup->backup);
+		bcopy(&backup->backup, &sas, salen);
+	    }
 	}
     }
     /*
@@ -2371,12 +2349,11 @@ void asyncConn(Conn *conn) {
 #else
     fcntl(p1->sd, F_SETFL, O_NONBLOCK);
 #endif
-    addrport2str(&conn->sin, sizeof(conn->sin),
-		 p1->proto, proto_all, addrport, STRMAX);
+    addrport2str(&sas, salen, p1->proto, proto_all, addrport, STRMAX);
     if (Debug > 2)
 	message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s",
 		p2->sd, p1->sd, addrport);
-    ret = connect(p1->sd, (struct sockaddr*)&conn->sin, sizeof(conn->sin));
+    ret = connect(p1->sd, (struct sockaddr*)&sas, salen);
     if (ret < 0) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
@@ -2385,14 +2362,11 @@ void asyncConn(Conn *conn) {
 	    p1->proto |= proto_conninprog;
 	    if (Debug > 3)
 		message(LOG_DEBUG, "TCP %d: connection in progress", p1->sd);
-	    goto finish;
+	    return 1;
 	} else if (errno == EINTR) {
 	    if (Debug > 4)
 		message(LOG_DEBUG, "TCP %d: connect interrupted", p1->sd);
-	    if (clock - p1->clock < CONN_TIMEOUT) {
-		conn->lock = 0;	/* unlock conn */
-		goto exit;
-	    }
+	    if (clock - p1->clock < CONN_TIMEOUT) return 0;
 	    message(priority(p2), "TCP %d: connect timeout to %s",
 		    p2->sd, addrport);
 	} else if (errno == EISCONN || errno == EADDRINUSE
@@ -2417,14 +2391,64 @@ void asyncConn(Conn *conn) {
 	if (!(p2->proto & proto_shutdown)) doshutdown(p2, 2);
 	p2->proto |= (proto_shutdown | proto_close);
 	p1->proto |= proto_close;
-	goto finish;
+	return -1;
     }
     connected(p1);
- finish:
-    if (p1) p1->count -= REF_UNIT;	/* no more request to connect */
-    conn->pair = NULL;
-    conn->lock = -1;
- exit:
+    return 1;
+}
+
+int reqconn(Pair *pair,		/* request pair to connect to destination */
+	    struct sockaddr_in *sinp) {	/* connect to */
+    int ret;
+    Conn *conn;
+    Pair *p = pair->pair;
+    if ((pair->proto & proto_command) == command_proxy
+	|| (pair->proto & proto_command) == command_health) {
+	if (p && !(p->proto & (proto_eof | proto_close)))
+	    p->proto |= proto_select_r;	/* must read request header */
+	return 0;
+    }
+    ret = doconnect(pair, (struct sockaddr*)sinp, sizeof(*sinp));
+    if (ret < 0) return -1;	/* error */
+    if (ret > 0) return 0;	/* connected or connection in progress */
+    conn = malloc(sizeof(Conn));
+    if (!conn) {
+	message(LOG_CRIT, "TCP %d: out of memory", (p ? p->sd : -1));
+	return -1;
+    }
+    time(&pair->clock);
+    p->clock = pair->clock;
+    pair->count += REF_UNIT;	/* request to connect */
+    conn->pair = pair;
+    conn->sin = *sinp;
+    conn->lock = 0;
+    waitMutex(ConnMutex);
+    conn->next = conns.next;
+    conns.next = conn;
+    freeMutex(ConnMutex);
+    return 0;
+}
+
+void asyncConn(Conn *conn) {
+    int ret;
+    Pair *p1, *p2;
+    ASYNC_BEGIN;
+    p1 = conn->pair;
+    if (p1 == NULL ||
+	doconnect(p1, (struct sockaddr*)&conn->sin, sizeof(conn->sin)) != 0) {
+	if (p1) p1->count -= REF_UNIT;	/* no more request to connect */
+	conn->pair = NULL;
+	conn->lock = -1;
+    } else {
+	conn->lock = 0;
+    }
+    if (p1) {
+	p1->proto &= ~proto_thread;
+	p2 = p1->pair;
+    } else {
+	p2 = NULL;
+    }
+    if (p2) p2->proto &= ~proto_thread;
     ASYNC_END;
 }
 
@@ -2436,8 +2460,6 @@ int scanConns(void) {
 #endif
     Conn *conn, *pconn;
     Pair *p1, *p2;
-    time_t now;
-    time(&now);
     if (Debug > 8) message(LOG_DEBUG, "scanConns");
     pconn = &conns;
     for (conn=conns.next; conn != NULL; conn=conn->next) {
@@ -2445,9 +2467,13 @@ int scanConns(void) {
 	if (p1) p2 = p1->pair;
 	if (p1 && !(p1->proto & proto_close) &&
 	    p2 && !(p2->proto & proto_close)) {
-	    if ((p2->proto & proto_connect) && conn->lock == 0) {
+	    if ((p2->proto & proto_connect) && conn->lock == 0 &&
+		!(p1->proto & proto_thread) &&
+		!(p2->proto & proto_thread)) {
 		conn->lock = 1;		/* lock conn */
 		if (Debug > 4) message_conn(LOG_DEBUG, conn);
+		p1->proto |= proto_thread;
+		p2->proto |= proto_thread;
 		ASYNC(asyncConn, conn);
 	    }
 	} else {
@@ -2460,10 +2486,6 @@ int scanConns(void) {
 	    freeMutex(ConnMutex);
 	}
 	pconn = conn;
-    }
-    if (backups && now - lastScanBackups >= MinInterval) {
-	lastScanBackups = now;
-	scanBackups();
     }
     return 1;
 }
@@ -4619,6 +4641,7 @@ void repeater(void) {
     static int spin = 0;
     static int nerrs = 0;
     Pair *pair;
+    time_t now;
     rout = rin;
     wout = win;
     eout = ein;
@@ -4670,7 +4693,12 @@ void repeater(void) {
 	}
 	usleep(TICK_SELECT);
     }
-    scanConns();
+    time(&now);
+    if (backups && now - lastScanBackups >= MinInterval) {
+	lastScanBackups = now;
+	scanBackups();
+    }
+    if (conns.next) scanConns();
     scanClose();
     if (oldstones) rmoldstone();
     if (OldConfigArgc) rmoldconfig();
