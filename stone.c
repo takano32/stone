@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.130 2004/07/11 03:42:55 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.131 2004/07/20 10:10:30 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3749,6 +3749,15 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 	    }
 	} else {
 	    ss->re[i] = NULL;
+	}
+    }
+    if (isserver) {
+	char str[SSL_MAX_SSL_SESSION_ID_LENGTH+1];
+	snprintf(str, SSL_MAX_SSL_SESSION_ID_LENGTH, "%lx",
+		 (long)ss->ctx ^ (long)&stones);	/* randomize */
+	SSL_CTX_set_session_id_context(ss->ctx, str, strlen(str));
+	if (Debug > 4) {
+	    message(LOG_DEBUG, "SSL session ID: %s", str);
 	}
     }
     return ss;
