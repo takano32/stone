@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.205 2004/10/25 02:22:30 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.206 2004/10/26 13:14:50 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -181,6 +181,10 @@ typedef void *(*aync_start_routine) (void *);
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#ifdef DJBDNS
+#include <stralloc.h>
+#include <dns.h>
+#endif
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -942,6 +946,31 @@ int isdigitaddr(char *name) {
     return ndigits;
 }
 
+#ifdef DJBDNS
+int host2addr(char *name, struct in_addr *addrp, short *familyp) {
+    char temp_buf[BUFMAX];
+    char fqdn_buf[BUFMAX];
+    char addr_buf[BUFMAX];
+    stralloc temp = {temp_buf, 0, BUFMAX};
+    stralloc fqdn = {fqdn_buf, 0, BUFMAX};
+    stralloc addr = {addr_buf, 0, BUFMAX};
+    if (!stralloc_copys(&temp, name)) {
+	message(LOG_ERR, "Out of memory in host2addr");
+	return 0;
+    }
+    if (dns_ip4_qualify(&addr, &fqdn, &temp) == -1) {
+	message(LOG_ERR, "Unknown host: %s", name);
+	return 0;
+    }
+    if (addr.len == 4) {
+	addrp->s_addr = *(unsigned long*)addr.s;
+	if (familyp) *familyp = AF_INET;
+	return 1;
+    }
+    message(LOG_ERR, "No IP address for %s", name);
+    return 0;
+}
+#else
 #ifdef NO_ADDRINFO
 int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     struct hostent *hp;
@@ -995,6 +1024,7 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     freeaddrinfo(ai);
     return 1;
 }
+#endif
 #endif
 
 /* *addrp is permitted to connect to *stonep ? */
