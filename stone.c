@@ -2565,7 +2565,7 @@ Pair *pair;
     int npairs = 1;
     Pair *p[2];
     Pair *rPair, *wPair;
-    SOCKET rsd, wsd;
+    SOCKET sd, rsd, wsd;
     int established;
     int len;
     int i;
@@ -2580,35 +2580,40 @@ Pair *pair;
 			   (p[1] ? p[1]->sd : INVALID_SOCKET));
     if (p[1]) npairs++;
     for (i=0; i < npairs; i++) {
+	sd = p[i]->sd;
+	if (InvalidSocket(sd)) continue;
 	if (p[i]->proto & proto_select_r) {
-	    FD_SET(p[i]->sd,&ri);
+	    FD_SET(sd,&ri);
 	    p[i]->proto &= ~proto_select_r;
 	}
 	if ((p[i]->proto & proto_select_w)
 	    && npairs > 1
 	    && (p[i]->proto & proto_connect)
 	    && (p[1-i]->proto & proto_connect)) {
-	    FD_SET(p[i]->sd,&wi);	/* never write unless establish */
+	    FD_SET(sd,&wi);	/* never write unless establish */
 	    p[i]->proto &= ~proto_select_w;
 	}
-	FD_SET(p[i]->sd,&ei);
+	FD_SET(sd,&ei);
     }
     tv.tv_sec = 0;
     tv.tv_usec = TICK_SELECT;
     if (Debug > 10) select_debug("selectReadWrite1",&ri,&wi,&ei);
     while (ro=ri, wo=wi, eo=ei, select(FD_SETSIZE,&ro,&wo,&eo,&tv) > 0) {
 	for (i=0; i < npairs; i++) {
-	    if (p[i] && FD_ISSET(p[i]->sd,&eo)) {	/* exception */
-		message(LOG_ERR,"TCP %d: exception",p[i]->sd);
+	    if (!p[i]) continue;
+	    sd = p[i]->sd;
+	    if (InvalidSocket(sd)) continue;
+	    if (FD_ISSET(sd,&eo)) {	/* exception */
+		message(LOG_ERR,"TCP %d: exception",sd);
 		message_pair(p[i]);
-		FD_CLR(p[i]->sd,&ri);
-		FD_CLR(p[i]->sd,&wi);
-		FD_CLR(p[i]->sd,&ei);
+		FD_CLR(sd,&ri);
+		FD_CLR(sd,&wi);
+		FD_CLR(sd,&ei);
 		doclose(p[i]);
-	    } else if (p[i] && FD_ISSET(p[i]->sd,&ro)) {	/* read */
+	    } else if (FD_ISSET(sd,&ro)) {	/* read */
 		rPair = p[i];
 		wPair = p[1-i];
-		rsd = rPair->sd;
+		rsd = sd;
 		if (wPair) wsd = wPair->sd; else wsd = INVALID_SOCKET;
 		FD_CLR(rsd,&ri);
 		rPair->count++;
@@ -2634,10 +2639,10 @@ Pair *pair;
 			FD_SET(rsd,&ri);
 		    }
 		}
-	    } else if (p[i] && FD_ISSET(p[i]->sd,&wo)) {	/* write */
+	    } else if (FD_ISSET(sd,&wo)) {	/* write */
 		wPair = p[i];
 		rPair = p[1-i];
-		wsd = wPair->sd;
+		wsd = sd;
 		if (rPair) rsd = rPair->sd; else rsd = INVALID_SOCKET;
 		FD_CLR(wsd,&wi);
 		if ((wPair->proto & proto_command) == command_ihead) {
@@ -2680,8 +2685,8 @@ Pair *pair;
     waitMutex(FdEinMutex);
     for (i=0; i < npairs; i++) {
 	if (p[i]) {
-	    SOCKET sd = p[i]->sd;
 	    int proto = p[i]->proto;
+	    sd = p[i]->sd;
 	    if (ValidSocket(sd) && !(proto & proto_close)) {
 		if (FD_ISSET(sd,&ri)) FD_SET(sd,&rin);
 		if (FD_ISSET(sd,&wi)) FD_SET(sd,&win);
@@ -2731,9 +2736,12 @@ fd_set *rop, *wop, *eop;
 		isset = ((FD_ISSET(sd,rop) && FD_ISSET(sd,&rin)) ||
 			 (FD_ISSET(sd,wop) && FD_ISSET(sd,&win)));
 		if (p) {
-		    isset |=
-			((FD_ISSET(p->sd,rop) && FD_ISSET(p->sd,&rin)) ||
-			 (FD_ISSET(p->sd,wop) && FD_ISSET(p->sd,&win)));
+		    SOCKET psd = p->sd;
+		    if (ValidSocket(psd)) {
+			isset |=
+			    ((FD_ISSET(sd,rop) && FD_ISSET(sd,&rin)) ||
+			     (FD_ISSET(sd,wop) && FD_ISSET(sd,&win)));
+		    }
 		}
 		if (isset) {
 		    pair->proto &= ~(proto_select_r | proto_select_w);
