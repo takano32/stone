@@ -1,7 +1,7 @@
 
 			    Simple Repeater
 
-			   stone version 2.1v
+			   stone version 2.1w
 
 		Copyright(c)1995-2001 by Hiroaki Sengoku
 			    sengoku@gcd.org
