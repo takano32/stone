@@ -1,21 +1,23 @@
 # stone		simple repeater
-# Copyright(c)1995-1999 by Hiroaki Sengoku <sengoku@gcd.org>
+# Copyright(c)1995-2004 by Hiroaki Sengoku <sengoku@gcd.org>
 #
 # -DUSE_POP	use POP -> APOP conversion
 # -DUSE_SSL	use OpenSSL
 # -DCPP		preprocessor for reading config. file
-# -DH_ERRNO	h_errno is not defined in header files
 # -DIGN_SIGTERM	ignore SIGTERM signal
-# -DINET_ADDR	use custom inet_addr(3)
-# -DNO_ALRM	without SIGALRM signal
+# -DUNIX_DAEMON	fork into background and become a UNIX Daemon
 # -DNO_BCOPY	without bcopy(3)
 # -DNO_SNPRINTF	without snprintf(3)
 # -DNO_SYSLOG	without syslog(2)
+# -DNO_RINDEX	without rindex(3)
 # -DNO_THREAD	without thread
+# -DNO_PID_T	without pid_t
+# -DNO_ADDRINFO without getaddrinfo
+# -DPTHREAD     use Posix Thread
+# -DPRCTL	use prctl(2) - operations on a process
 # -DOS2		OS/2 with EMX
 # -DWINDOWS	Windows95/98/NT
 # -DNT_SERVICE	WindowsNT/2000 native service
-# -DUNIX_DAEMON	fork into background and become a UNIX Daemon
 
 CFLAGS=		# -g
 
@@ -172,16 +174,16 @@ mingw.exe: stone.c
 	$(CC) $(FLAGS) -o stone.exe $? $(LIBS)
 
 mingw:
-	$(MAKE) CC=gcc FLAGS="-DWINDOWS -DNO_RINDEX $(FLAGS)" LIBS="-lwsock32 $(LIBS)" mingw.exe
+	$(MAKE) CC=gcc FLAGS="-DWINDOWS -DNO_RINDEX -DNO_ADDRINFO -DNO_SNPRINTF -DNO_VSNPRINTF $(FLAGS)" LIBS="-lwsock32 -lregex $(LIBS)" mingw.exe
 
 mingw-pop:
 	$(MAKE) CC=gcc TARGET=mingw pop_stone
 
 mingw-ssl:
-	$(MAKE) CC=gcc FLAGS="$(SSL_FLAGS)" SSL_LIBS="-lssl32 -leay32 -lregex" TARGET=mingw ssl_stone
+	$(MAKE) CC=gcc FLAGS="$(SSL_FLAGS)" SSL_LIBS="-lssl32 -leay32" TARGET=mingw ssl_stone
 
 mingw-svc:
-	$(MAKE) CC=gcc CFLAGS="-DWINDOWS -DNT_SERVICE $(POP_FLAGS) $(SSL_FLAGS) $(CFLAGS)" SSL_LIBS="-lssl32 -leay32 -lregex" TARGET=mingw svc_stone
+	$(MAKE) CC=gcc CFLAGS="-DWINDOWS -DNT_SERVICE $(POP_FLAGS) $(SSL_FLAGS) $(CFLAGS)" SSL_LIBS="-lssl32 -leay32" TARGET=mingw svc_stone
 
 emx:
 	$(MAKE) CC=gcc FLAGS="-DOS2 -Zmts -Zsysv-signals $(FLAGS)" LIBS="$(LIBS) -lsocket" stone.exe
