@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.126 2004/05/05 13:14:36 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.127 2004/05/05 15:01:59 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -271,6 +271,7 @@ typedef struct {
     int verbose;
     int mode;
     int depth;
+    long off;
     long serial;
     int (*callback)(int, X509_STORE_CTX *);
     char *keyFile;
@@ -3697,6 +3698,7 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 	message(LOG_ERR, "SSL_CTX_new error");
 	goto error;
     }
+    SSL_CTX_set_options(ss->ctx, opts->off);
     SSL_CTX_set_mode(ss->ctx, SSL_MODE_ENABLE_PARTIAL_WRITE);
     SSL_CTX_set_verify(ss->ctx, opts->mode, opts->callback);
     SSL_CTX_set_verify_depth(ss->ctx, opts->depth + 1);
@@ -4217,6 +4219,11 @@ void help(char *com) {
 	    "       uniq             ; check serial # of peer's certificate\n"
 	    "       re<n>=<regex>    ; verify depth <n> with <regex>\n"
 	    "       depth=<n>        ; set verification depth to <n>\n"
+	    "       no_tls1          ; turn off TLSv1\n"
+	    "       no_ssl3          ; turn off SSLv3\n"
+	    "       no_ssl2          ; turn off SSLv2\n"
+	    "       bugs             ; SSL implementation bug workarounds\n"
+	    "       serverpref       ; use server's cipher preferences (SSLv2)\n"
 	    "       key=<file>       ; key file\n"
 	    "       cert=<file>      ; certificate file\n"
 	    "       CAfile=<file>    ; certificate file of CA\n"
@@ -4524,6 +4531,7 @@ void sslopts_default(SSLOpts *opts, int isserver) {
     opts->verbose = 0;
     opts->mode = SSL_VERIFY_NONE;
     opts->depth = DEPTH_MAX - 1;
+    opts->off = 0;
     opts->serial = -2;
     opts->callback = verify_callback;
     if (isserver) {
@@ -4575,6 +4583,16 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	opts->depth = atoi(argv[i]+6);
 	if (opts->depth >= DEPTH_MAX) opts->depth = DEPTH_MAX - 1;
 	else if (opts->depth < 0) opts->depth = 0;
+    } else if (!strcmp(argv[i], "bugs")) {
+	opts->off |= SSL_OP_ALL;
+    } else if (!strcmp(argv[i], "no_tls1")) {
+	opts->off |= SSL_OP_NO_TLSv1;
+    } else if (!strcmp(argv[i], "no_ssl3")) {
+	opts->off |= SSL_OP_NO_SSLv3;
+    } else if (!strcmp(argv[i], "no_ssl2")) {
+	opts->off |= SSL_OP_NO_SSLv2;
+    } else if (!strcmp(argv[i], "serverpref")) {
+	opts->off |= SSL_OP_CIPHER_SERVER_PREFERENCE;
     } else if (!strcmp(argv[i], "uniq")) {
 	opts->serial = -1;
     } else if (!strncmp(argv[i], "key=", 4)) {
