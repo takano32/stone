@@ -39,6 +39,7 @@ all:
 	@echo "hp        ; for HP-UX with gcc"
 	@echo "irix      ; for IRIX"
 	@echo "win       ; for Windows 95/NT with VC++"
+	@echo "win-svc   ; for Windows NT service with VC++"
 	@echo "mingw     ; for Windows 95/NT with MinGW"
 	@echo "mingw-svc ; for Windows NT service with MinGW"
 	@echo "emx       ; for OS/2 with EMX"
@@ -78,6 +79,9 @@ pop_stone.exe: md5c.obj
 ssl_stone.exe:
 	$(MAKE) FLAGS="-DUSE_POP -DUSE_SSL" LIBS="ssleay32.lib libeay32.lib" $(TARGET)
 #	$(MAKE) FLAGS=-DUSE_SSL LIBS="ssl32.lib crypt32.lib" $(TARGET)
+
+svc_stone.exe: logmsg.res service.obj svcbody.obj
+	$(MAKE) FLAGS="/DNT_SERVICE $(FLAGS)" LIBS="logmsg.res service.obj svcbody.obj advapi32.lib user32.lib gdi32.lib shell32.lib kernel32.lib" $(TARGET)
 
 linux:
 	$(MAKE) FLAGS="-DINET_ADDR -DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON -DPRCTL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
@@ -162,7 +166,7 @@ win-ssl:
 	$(MAKE) TARGET=win ssl_stone.exe
 
 win-svc:
-	$(MAKE) FLAGS="/DNT_SERVICE $(FLAGS)" TARGET=win svc_stone.exe
+	$(MAKE) TARGET=win svc_stone.exe
 
 mingw.exe: stone.c
 	$(CC) $(FLAGS) -o stone.exe $? $(LIBS)
