@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.146 2004/08/16 09:46:07 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.147 2004/08/17 01:44:05 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3865,14 +3865,19 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 		opts->caFile, opts->caPath);
 	goto error;
     }
-    if (opts->sid_ctx) {
-	SSL_CTX_set_session_id_context(ss->ctx, opts->sid_ctx,
-				       strlen(opts->sid_ctx)+1);
-	if (isserver) {
-	    SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_SERVER);
-	} else {
-	    SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_CLIENT);
+    if (isserver) {
+	if (opts->sid_ctx) {
+	    int ret;
+	    int len = strlen(opts->sid_ctx);
+	    ret = SSL_CTX_set_session_id_context(ss->ctx, opts->sid_ctx, len);
+	    if (!ret) {
+		len = SSL_MAX_SSL_SESSION_ID_LENGTH;
+		opts->sid_ctx[len] = '\0';
+		message(LOG_ERR, "Too long sid_ctx, truncated to '%s'",
+			opts->sid_ctx);
+	    }
 	}
+	SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_SERVER);
     }
     if (opts->keyFile
 	&& !SSL_CTX_use_PrivateKey_file
@@ -4762,8 +4767,8 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	opts->off |= SSL_OP_CIPHER_SERVER_PREFERENCE;
     } else if (!strcmp(argv[i], "uniq")) {
 	opts->serial = -1;
-    } else if (!strncmp(argv[i], "sid_ctx=", 7)) {
-	opts->sid_ctx = strdup(argv[i]+7);
+    } else if (!strncmp(argv[i], "sid_ctx=", 8)) {
+	opts->sid_ctx = strdup(argv[i]+8);
     } else if (!strncmp(argv[i], "key=", 4)) {
 	opts->keyFile = strdup(argv[i]+4);
     } else if (!strncmp(argv[i], "cert=", 5)) {
