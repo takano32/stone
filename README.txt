@@ -1,7 +1,7 @@
 
 			    Simple Repeater
 
-			   stone version 2.2a
+			   stone version 2.2b
 
 		Copyright(c)1995-2003 by Hiroaki Sengoku
 			    sengoku@gcd.org
@@ -194,6 +194,16 @@ UDP パケットを中継します。
 
 	<sport> に「/http」を付けると、http リクエスト上のパケットを中継
 	します。
+
+使用方法 (NT サービス版)
+
+	stone -install		stone サービスをインストールします。
+	stone -remove		stone サービスを削除します。
+	stone -debug <params>	stone をアプリとして起動します。
+
+	stone には自動的に「-C stone.cfg」が指定されます。すなわち、
+	stone.exe と同じディレクトリにある設定ファイル stone.cfg に指定
+	されたオプションが読み込まれます。
 
 
 例

@@ -1,7 +1,7 @@
 
 			    Simple Repeater
 
-			   stone version 2.2a
+			   stone version 2.2b
 
 		Copyright(c)1995-2003 by Hiroaki Sengoku
 			    sengoku@gcd.org
@@ -196,6 +196,16 @@ HOWTO USE
 	base64 decoding.
 
 	If the ``<sport>/http'' is used, repeats packets over http.
+
+HOWTO USE (NT service version)
+
+	stone -install		to install the stone service
+	stone -remove		to remove the service
+	stone -debug <params>	to run as a console application for debugging
+
+	The option ``-C stone.cfg'' is automatically designated.  That
+	is, the stone read options from the file named ``stone.cfg'' in
+	the same directory where the ``stone.exe'' exists.
 
 
 EXAMPLES

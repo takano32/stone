@@ -9,10 +9,11 @@ esac
 shift
 stone=stone22
 stones=stone22s
+stonent=stone22nt
 if [ -n "$1" ]
 then	stamp=$1
 fi
-rm -rf stone-$ver stone-$ver.lzh stones-$ver.lzh
+rm -rf stone-$ver stone-$ver.lzh stones-$ver.lzh stonent-$ver.lzh
 
 nkf_s() {
 	nkf -sc $1 > $2/$1
@@ -39,20 +40,30 @@ nkf_s	service.c	$stones
 nkf_s	service.h	$stones
 nkf_s	svcbody.c	$stones
 nkf_s	svcbody.h	$stones
+nkf_s	README.txt	$stonent
+nkf_s	README.en.txt	$stonent
+nkf_s	stone.c		$stonent
+nkf_s	Makefile	$stonent
+nkf_s	GPL.txt		$stonent
+nkf_s	logmsg.mc	$stonent
+nkf_s	service.c	$stonent
+nkf_s	service.h	$stonent
+nkf_s	svcbody.c	$stonent
+nkf_s	svcbody.h	$stonent
 mkdir stone-$ver
 cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt logmsg.mc service.c service.h svcbody.c svcbody.h stone-$ver/.
 sed -e "s/^Version: .*/Version: $ver/" stone.spec > stone-$ver/stone.spec
 if [ -n "$stamp" ]
-then	touch -t $stamp $stone $stones stone-$ver  \
-		$stone/README.*  $stones/README.*  \
-		$stone/stone.c   $stones/stone.c   \
-		$stone/stone.exe $stones/stone.exe \
-		$stone/Makefile  $stones/Makefile  \
-		$stone/logmsg.mc $stones/logmsg.mc \
-		$stone/service.c $stones/service.c \
-		$stone/service.h $stones/service.h \
-		$stone/svcbody.c $stones/svcbody.c \
-		$stone/svcbody.h $stones/svcbody.h \
+then	touch -t $stamp $stone $stones $stonent stone-$ver  \
+		$stone/README.*  $stones/README.*  $stonent/README.*  \
+		$stone/stone.c   $stones/stone.c   $stonent/stone.c   \
+		$stone/stone.exe $stones/stone.exe $stonent/stone.exe \
+		$stone/Makefile  $stones/Makefile  $stonent/Makefile  \
+		$stone/logmsg.mc $stones/logmsg.mc $stonent/logmsg.mc \
+		$stone/service.c $stones/service.c $stonent/service.c \
+		$stone/service.h $stones/service.h $stonent/service.h \
+		$stone/svcbody.c $stones/svcbody.c $stonent/svcbody.c \
+		$stone/svcbody.h $stones/svcbody.h $stonent/svcbody.h \
 		stone-$ver/README.* stone-$ver/stone.c stone-$ver/Makefile \
 		stone-$ver/stone.spec \
 		stone-$ver/logmsg.mc \
@@ -62,5 +73,7 @@ then	touch -t $stamp $stone $stones stone-$ver  \
 	tar czf stone-$ver.tar.gz stone-$ver
 	lha u stone-$ver.lzh $stone
 	lha u stones-$ver.lzh $stones
-	touch -t $stamp stone-$ver.tar.gz stone-$ver.lzh stones-$ver.lzh
+	lha u stonent-$ver.lzh $stonent
+	touch -t $stamp stone-$ver.tar.gz \
+		stone-$ver.lzh stones-$ver.lzh stonent-$ver.lzh
 fi
