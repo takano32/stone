@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1w"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.27 2002/11/24 16:26:09 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.28 2002/12/11 09:09:41 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1030,7 +1030,11 @@ Stone *stonep;
     SOCKET dsd;
     int len;
     Origin *origin;
-    if ((len=recvUDP(stonep->sd,&from)) <= 0) return NULL;	/* drop */
+    len = recvUDP(stonep->sd,&from);
+    waitMutex(FdRinMutex);
+    FD_SET(stonep->sd,&rin);
+    freeMutex(FdRinMutex);
+    if (len <= 0) return NULL;	/* drop */
     if (!checkXhost(stonep,&from.sin_addr)) {
 	message(LOG_WARNING,"stone %d: recv UDP denied: from %s:%s",
 		stonep->sd,
