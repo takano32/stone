@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.45 2003/05/05 16:42:33 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.46 2003/05/05 17:44:23 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1637,6 +1637,26 @@ Pair *doaccept(Stone *stonep) {
     return pair1;
 }
 
+int strnparse(char *buf, int limit, char *p) {
+    int i = 0;
+    char c;
+    while (i < limit && (c = *p++)) {
+	if (c == '\\') {
+	    switch(c = *p++) {
+	      case 'n':  c = '\n';  break;
+	      case 'r':  c = '\r';  break;
+	      case 't':  c = '\t';  break;
+	      case '\0':
+		c = '\\';
+		p--;
+	    }
+	}
+	buf[i++] = c;
+    }
+    buf[i] = '\0';
+    return i;
+}
+
 void asyncAccept(Stone *stone) {
     Pair *p1, *p2;
     ASYNC_BEGIN;
@@ -1654,11 +1674,12 @@ void asyncAccept(Stone *stone) {
 	p2->start = strlen(p2->buf);
     }
     if (p2->proto & proto_ohttp_d) {
-	sprintf(p2->buf,
-		"%s\r%c"
-		"\r%c",
-		stone->p,'\n','\n');
-	p2->len = strlen(p2->buf);
+	int i = strnparse(p2->buf, p2->bufmax - 5, stone->p);
+	p2->buf[i++] = '\r';
+	p2->buf[i++] = '\n';
+	p2->buf[i++] = '\r';
+	p2->buf[i++] = '\n';
+	p2->len = i;
     }
     if (reqconn(p2,NULL,&stone->sin) < 0) {
 	if (ValidSocket(p2->sd)) closesocket(p2->sd);
@@ -2360,17 +2381,20 @@ int docomm(Pair *pair, fd_set *rinp, fd_set *winp, Comm *comm) {
 
 int insheader(Pair *pair) {	/* insert header */
     char buf[BUFMAX];
-    int i;
-    for (i=0; i < pair->len; i++) {
-	if (pair->buf[pair->start+i] == '\n') break;
+    int len, i;
+    len = pair->start + pair->len;
+    for (i=pair->start; i < len; i++) {
+	if (pair->buf[i] == '\n') break;
     }
-    if (i >= pair->len) return -1;
+    if (i >= len) return -1;
     i++;
-    bcopy(&pair->buf[pair->start],buf,i);	/* save leading header */
-    bcopy(pair->buf,pair->buf+i,pair->start);	/* insert */
-    bcopy(buf,pair->buf,i);			/* restore */
-    pair->len += pair->start;
-    pair->start = 0;
+    len -= i;
+    if (len > 0) bcopy(&pair->buf[i], buf, len);	/* save rest header */
+    i += strnparse(&pair->buf[i], pair->bufmax - i, pair->stone->p);
+    pair->buf[i++] = '\r';
+    pair->buf[i++] = '\n';
+    if (len > 0) bcopy(buf, &pair->buf[i], len);	/* restore */
+    pair->len = i - pair->start + len;
     return pair->len;
 }
 
@@ -3466,31 +3490,6 @@ int getdist(
     }
 }
 
-char *argstr(char *p) {
-    char *ret = malloc(strlen(p)+1);
-    char c, *q;
-    if (ret == NULL) {
-	message(LOG_ERR,"Out of memory.");
-	exit(1);
-    }
-    q = ret;
-    while ((c = *p++)) {
-	if (c == '\\') {
-	    switch(c = *p++) {
-	      case 'n':  c = '\n';  break;
-	      case 'r':  c = '\r';  break;
-	      case 't':  c = '\t';  break;
-	      case '\0':
-		c = '\\';
-		p--;
-	    }
-	}
-	*q++ = c;
-    }
-    *q = '\0';
-    return ret;
-}
-
 #ifdef USE_SSL
 void sslopts_default(SSLOpts *opts, int isserver) {
     int i;
@@ -3764,9 +3763,9 @@ void doargs(int argc, int i, char *argv[]) {
 	}
 	stone = mkstone(host,port,shost,sport,j,&argv[k],proto);
 	if (proto & proto_ohttp_d) {
-	    stone->p = argstr(p);
+	    stone->p = strdup(p);
 	} else if ((proto & proto_command) == command_ihead) {
-	    stone->p = argstr(p);
+	    stone->p = strdup(p);
 	}
 	stone->next = stones;
 	stones = stone;
