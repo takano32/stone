@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.67 2003/08/06 02:51:19 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.68 2003/08/07 03:55:43 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3992,6 +3992,7 @@ void message_conns(void) {	/* dump for debug */
 #ifdef FD_SET_BUG
 void checkFdSetBug(void) {
     fd_set set;
+    FD_ZERO(&set);
     FD_SET(0, &set);
     FD_SET(0, &set);
     FD_CLR(0, &set);
