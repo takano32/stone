@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.40 2003/05/03 10:00:50 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.41 2003/05/04 04:16:01 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3967,13 +3967,6 @@ char *argv[];
     SSL_CTX_set_mode(ssl_ctx_server,SSL_MODE_ENABLE_PARTIAL_WRITE);
     SSL_CTX_set_mode(ssl_ctx_client,SSL_MODE_ENABLE_PARTIAL_WRITE);
     if (!cipher_list) cipher_list = getenv("SSL_CIPHER");
-    if ((CAfile || CApath)
-	&& !SSL_CTX_load_verify_locations(ssl_ctx_server,CAfile,CApath)) {
-	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s,%s) error",
-		CAfile,CApath);
-	if (ssl_verbose_flag)
-	    message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
-    }
 #endif
     pairs.next = NULL;
     conns.next = NULL;
@@ -4088,6 +4081,15 @@ char *argv[];
     }
     if (SetUID) if (setuid(SetUID) < 0) {
 	message(LOG_WARNING,"Can't set uid err=%d.",errno);
+    }
+#endif
+#ifdef USE_SSL
+    if ((CAfile || CApath)
+	&& !SSL_CTX_load_verify_locations(ssl_ctx_server,CAfile,CApath)) {
+	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s,%s) error",
+		CAfile,CApath);
+	if (ssl_verbose_flag)
+	    message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
     }
 #endif
 }
