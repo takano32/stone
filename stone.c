@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.143 2004/08/15 01:54:42 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.144 2004/08/15 13:23:58 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -276,6 +276,7 @@ typedef struct {
     long off;
     long serial;
     int (*callback)(int, X509_STORE_CTX *);
+    char *sid_ctx;
     char *keyFile;
     char *certFile;
     char *caFile;
@@ -1882,7 +1883,15 @@ void asyncConn(Conn *conn) {
 	SSL *ssl = p2->ssl;
 	SSL_SESSION *sess;
 	if (ssl && (sess = SSL_get_session(ssl))) {
-	    char **match = SSL_SESSION_get_ex_data(sess, MatchIndex);
+	    char **match;
+	    if (Debug > 2) {
+		unsigned char str[SSL_MAX_SSL_SESSION_ID_LENGTH * 2 + 1];
+		int i;
+		for (i=0; i < sess->session_id_length; i++)
+		    sprintf(&str[i*2], "%02x", sess->session_id[i]);
+		message(LOG_DEBUG, "TCP %d: SSL session ID=%s", p2->sd, str);
+	    }
+	    match = SSL_SESSION_get_ex_data(sess, MatchIndex);
 	    if (match && p2->stone->ssl_server) {
 		int lbparm = p2->stone->ssl_server->lbparm;
 		int lbmod = p2->stone->ssl_server->lbmod;
@@ -3831,6 +3840,15 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 		opts->caFile, opts->caPath);
 	goto error;
     }
+    if (opts->sid_ctx) {
+	SSL_CTX_set_session_id_context(ss->ctx, opts->sid_ctx,
+				       strlen(opts->sid_ctx)+1);
+	if (isserver) {
+	    SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_SERVER);
+	} else {
+	    SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_CLIENT);
+	}
+    }
     if (opts->keyFile
 	&& !SSL_CTX_use_PrivateKey_file
 		(ss->ctx, opts->keyFile, X509_FILETYPE_PEM)) {
@@ -4346,6 +4364,7 @@ void help(char *com) {
 	    "       no_ssl2          ; turn off SSLv2\n"
 	    "       bugs             ; SSL implementation bug workarounds\n"
 	    "       serverpref       ; use server's cipher preferences (SSLv2)\n"
+	    "       sid_ctx=<str>     ; set session ID context\n"
 	    "       key=<file>       ; key file\n"
 	    "       cert=<file>      ; certificate file\n"
 	    "       CAfile=<file>    ; certificate file of CA\n"
@@ -4656,6 +4675,7 @@ void sslopts_default(SSLOpts *opts, int isserver) {
     opts->off = 0;
     opts->serial = -2;
     opts->callback = verify_callback;
+    opts->sid_ctx = NULL;
     if (isserver) {
 	char path[BUFMAX];
 	snprintf(path, BUFMAX-1, "%s/stone.pem", X509_get_default_cert_dir());
@@ -4717,6 +4737,8 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	opts->off |= SSL_OP_CIPHER_SERVER_PREFERENCE;
     } else if (!strcmp(argv[i], "uniq")) {
 	opts->serial = -1;
+    } else if (!strncmp(argv[i], "sid_ctx=", 7)) {
+	opts->sid_ctx = strdup(argv[i]+7);
     } else if (!strncmp(argv[i], "key=", 4)) {
 	opts->keyFile = strdup(argv[i]+4);
     } else if (!strncmp(argv[i], "cert=", 5)) {

@@ -125,6 +125,7 @@ HOWTO USE
 	no_ssl2		Turn off SSLv2 protocol.
 	bugs		Switch on all SSL implementation bug workarounds.
 	serverpref	Use server's cipher preferences (only SSLv2).
+	sid_ctx=<str>	Set session ID context.
 	key=<file>	The filename of the secret key of the certificate.
 	cert=<file>	The filename of the certificate.
 	CAfile=<file>	The filename of the certificate of the CA.
