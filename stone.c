@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2a"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.111 2003/11/23 16:03:32 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.112 2003/12/13 08:20:15 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3101,6 +3101,7 @@ void asyncReadWrite(Pair *pair) {
 		FD_CLR(sd, &wi);
 		FD_CLR(sd, &ei);
 		doclose(p[i]);
+		goto leave;
 	    } else if (!(p[i]->proto & proto_eof)
 		       && FD_ISSET(sd, &ro)) {	/* read */
 		rPair = p[i];
@@ -3123,12 +3124,16 @@ void asyncReadWrite(Pair *pair) {
 			   and peer is not yet shutdowned, */
 			&& ValidSocket(wsd)) {	/* and pair is valid, */
 			rPair->proto |= proto_eof;	/* no more to read */
-			if (doshutdown(wPair, 1) < 0) doclose(rPair);
+			if (doshutdown(wPair, 1) < 0) {
+			    doclose(rPair);
+			    goto leave;
+			}
 		    } else {
 			/* error or already shutdowned
 			   or bi-directional EOF */
 			if (wPair) doclose(wPair);
 			doclose(rPair);
+			goto leave;
 		    }
 		} else {
 		    if (len > 0) {
@@ -3169,6 +3174,7 @@ void asyncReadWrite(Pair *pair) {
 		    }
 		    FD_CLR(wsd, &wi);
 		    doclose(wPair);
+		    goto leave;
 		} else {
 		    /* (wPair->proto & proto_eof) may be true */
 		    if (wPair->len <= 0) {	/* all written */
