@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.139 2004/08/09 15:30:37 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.140 2004/08/12 04:38:34 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -271,6 +271,7 @@ typedef struct {
 
 typedef struct {
     int verbose;
+    int cache;
     int mode;
     int depth;
     long off;
@@ -289,6 +290,7 @@ typedef struct {
 SSLOpts ServerOpts;
 SSLOpts ClientOpts;
 int PairIndex;
+int MatchIndex;
 #ifdef WINDOWS
 HANDLE *SSLMutex = NULL;
 #else
@@ -367,7 +369,6 @@ typedef struct _Pair {
     Stone *stone;	/* parent */
 #ifdef USE_SSL
     SSL *ssl;		/* SSL handle */
-    char **match;
     int ssl_flag;
 #endif
     time_t clock;
@@ -1518,18 +1519,6 @@ static void printSSLinfo(SSL *ssl) {
     }
 }
 
-void rmMatch(Pair *pair) {
-    if (pair->match) {
-	int i;
-	char **match = pair->match;
-	pair->match = NULL;
-	for (i=0; i <= NMATCH_MAX; i++) {
-	    if (match[i]) free(match[i]);
-	}
-	free(match);
-    }
-}
-
 int trySSL_accept(Pair *pair) {
     int ret;
     unsigned long err;
@@ -1574,7 +1563,6 @@ int trySSL_accept(Pair *pair) {
 	    }
 	    message_pair(pair);
 	    SSL_free(ssl);
-	    rmMatch(pair);
 	    return -1;
 	}
     }
@@ -1586,7 +1574,6 @@ int trySSL_accept(Pair *pair) {
 	    message_pair(pair);
 	}
 	SSL_free(ssl);
-	rmMatch(pair);
 	return -1;	/* unexpected EOF */
     }
  finished:
@@ -1634,7 +1621,6 @@ int doSSL_connect(Pair *pair) {
 			pair->sd, ERR_error_string(err, NULL));
 	    message_pair(pair);
 	    SSL_free(ssl);
-	    rmMatch(pair);
 	    return -1;
 	}
     }
@@ -1672,7 +1658,6 @@ void freePair(Pair *pair) {
     ssl = pair->ssl;
     pair->ssl = NULL;
     if (ssl) SSL_free(ssl);
-    rmMatch(pair);
 #endif
     free(pair);
 }
@@ -1885,26 +1870,31 @@ void asyncConn(Conn *conn) {
 	ret = trySSL_accept(p2);	/* accept not completed */
     else ret = 1;
     if (ret > 0) {
-	if (p2->match && p2->stone->ssl_server) {
-	    int lbparm = p2->stone->ssl_server->lbparm;
-	    int lbmod = p2->stone->ssl_server->lbmod;
-	    int ofs = 0;
-	    unsigned char *s;
-	    if (0 <= lbparm && lbparm <= 9) s = p2->match[lbparm];
-	    else s = p2->match[1];
-	    if (lbmod) {
-		while (*s) {
-		    ofs <<= 6;
-		    ofs += (*s & 0x3f);
-		    s++;
-		}
-		ofs %= lbmod;
-		if (Debug > 2)
-		    message(LOG_DEBUG, "TCP %d: pair %d lb%d=%d",
-			    p1->sd, p2->sd, lbparm, ofs);
-		conn->sin = p1->stone->sins[ofs];
-		if (p1->stone->backups) {
-		    backup = p1->stone->backups[ofs];
+	SSL *ssl = p2->ssl;
+	SSL_SESSION *sess;
+	if (ssl && (sess = SSL_get_session(ssl))) {
+	    char **match = SSL_SESSION_get_ex_data(sess, MatchIndex);
+	    if (match && p2->stone->ssl_server) {
+		int lbparm = p2->stone->ssl_server->lbparm;
+		int lbmod = p2->stone->ssl_server->lbmod;
+		int ofs = 0;
+		unsigned char *s;
+		if (0 <= lbparm && lbparm <= 9) s = match[lbparm];
+		else s = match[1];
+		if (lbmod) {
+		    while (*s) {
+			ofs <<= 6;
+			ofs += (*s & 0x3f);
+			s++;
+		    }
+		    ofs %= lbmod;
+		    if (Debug > 2)
+			message(LOG_DEBUG, "TCP %d: pair %d lb%d=%d",
+				p1->sd, p2->sd, lbparm, ofs);
+		    conn->sin = p1->stone->sins[ofs];
+		    if (p1->stone->backups) {
+			backup = p1->stone->backups[ofs];
+		    }
 		}
 	    }
 	}
@@ -2227,7 +2217,6 @@ Pair *doaccept(Stone *stonep) {
     pair1->pair = pair2->pair = NULL;
 #ifdef USE_SSL
     pair1->ssl = pair2->ssl = NULL;
-    pair1->match = pair2->match = NULL;
     pair1->ssl_flag = pair2->ssl_flag = 0;
     if (stonep->proto & proto_ssl_s) {
 	ret = doSSL_accept(pair1);
@@ -2285,14 +2274,18 @@ int strnparse(char *buf, int limit, char *p, Pair *pair) {
 	    c = *p++;
 #ifdef USE_SSL
 	    if ('0' <= c && c <= '9') {
-		if (pair->match) {
-		    char **match = pair->match;
-		    c -= '0';
-		    if (match[c]) {
-			int len = strlen(match[c]);
-			if (len >= limit - i) len = limit - i;
-			strncpy(buf+i, match[c], len);
-			i += len;
+		SSL *ssl = pair->ssl;
+		SSL_SESSION *sess;
+		if (ssl && (sess = SSL_get_session(ssl))) {
+		    char **match = SSL_SESSION_get_ex_data(sess, MatchIndex);
+		    if (match) {
+			c -= '0';
+			if (match[c]) {
+			    int len = strlen(match[c]);
+			    if (len >= limit - i) len = limit - i;
+			    strncpy(buf+i, match[c], len);
+			    i += len;
+			}
 		    }
 		}
 		continue;
@@ -2418,7 +2411,6 @@ int scanClose(void) {	/* scan close request */
 		    ssl = p2->ssl;
 		    p2->ssl = NULL;
 		    if (ssl) SSL_free(ssl);
-		    rmMatch(p2);
 #endif
 		} else {
 		    FD_CLR(p2->sd, &rin);
@@ -3674,11 +3666,33 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 /* stone */
 
 #ifdef USE_SSL
+static int newMatch(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+			      int idx, long argl, void *argp) {
+    char **match = malloc(sizeof(char*) * (NMATCH_MAX+1));
+    if (match) {
+	int i;
+	for (i=0; i <= NMATCH_MAX; i++) match[i] = NULL;
+	return CRYPTO_set_ex_data(ad, idx, match);
+    }
+    return 0;
+}
+
+static void freeMatch(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+		      int idx, long argl, void *argp) {
+    char **match = ptr;
+    int i;
+    for (i=0; i <= NMATCH_MAX; i++) {
+	if (match[i]) free(match[i]);
+    }
+    free(match);
+}
+
 static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     X509 *err_cert;
     int err, depth;
     long serial = -1;
     SSL *ssl;
+    SSL_SESSION *sess;
     Pair *pair;
     StoneSSL *ss;
     char buf[BUFMAX];
@@ -3688,6 +3702,7 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     depth = X509_STORE_CTX_get_error_depth(ctx);
     ssl = X509_STORE_CTX_get_ex_data
 		(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+    sess = SSL_get_session(ssl);
     pair = SSL_get_ex_data(ssl, PairIndex);
     if (!pair) {
 	message(LOG_ERR, "SSL callback don't have ex_data, verify fails...");
@@ -3721,18 +3736,12 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     if (!preverify_ok) return 0;
     if (depth < DEPTH_MAX && ss->re[depth]) {
 	regmatch_t pmatch[NMATCH_MAX];
+	char **match;
 	err = regexec(ss->re[depth], p, (size_t)NMATCH_MAX, pmatch, 0);
 	if (Debug > 3) message(LOG_DEBUG, "TCP %d: regexec%d=%d",
 			       pair->sd, depth, err);
 	if (err) return 0;	/* not match */
-	if (!pair->match) {
-	    pair->match = malloc(sizeof(char*) * (NMATCH_MAX+1));
-	    if (pair->match) {
-		int i;
-		for (i=0; i <= NMATCH_MAX; i++) pair->match[i] = NULL;
-	    }
-	}
-	if (pair->match) {
+	if (sess && (match = SSL_SESSION_get_ex_data(sess, MatchIndex))) {
 	    int i;
 	    int j = 1;
 	    if (serial >= 0) {
@@ -3740,23 +3749,23 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 		int len;
 		snprintf(str, STRMAX-1, "%lx", serial);
 		len = strlen(str);
-		if (pair->match[0]) free(pair->match[0]);
-		pair->match[0] = malloc(len+1);
-		if (pair->match[0]) {
-		    strncpy(pair->match[0], str, len);
-		    pair->match[0][len] = '\0';
+		if (match[0]) free(match[0]);
+		match[0] = malloc(len+1);
+		if (match[0]) {
+		    strncpy(match[0], str, len);
+		    match[0][len] = '\0';
 		}
 	    }
 	    for (i=1; i <= NMATCH_MAX; i++) {
-		if (pair->match[i]) continue;
+		if (match[i]) continue;
 		if (pmatch[j].rm_so >= 0) {
 		    int len = pmatch[j].rm_eo - pmatch[j].rm_so;
-		    pair->match[i] = malloc(len+1);
-		    if (pair->match[i]) {
-			strncpy(pair->match[i], p + pmatch[j].rm_so, len);
-			pair->match[i][len] = '\0';
+		    match[i] = malloc(len+1);
+		    if (match[i]) {
+			strncpy(match[i], p + pmatch[j].rm_so, len);
+			match[i][len] = '\0';
 			if (Debug > 4) message(LOG_DEBUG, "TCP %d: \\%d=%s",
-					       pair->sd, i+1, pair->match[i]);
+					       pair->sd, i+1, match[i]);
 		    }
 		    j++;
 		}
@@ -3837,7 +3846,20 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 	    ss->re[i] = NULL;
 	}
     }
-    SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_OFF);
+    if (opts->cache) {
+	if (isserver) {
+	    char str[SSL_MAX_SSL_SESSION_ID_LENGTH+1];
+	    SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_SERVER);
+	    snprintf(str, SSL_MAX_SSL_SESSION_ID_LENGTH, "%lx",
+		     (long)ss->ctx ^ (long)&stones ^ MyPid);	/* randomize */
+	    SSL_CTX_set_session_id_context(ss->ctx, str, strlen(str));
+	    if (Debug > 1) {
+		message(LOG_DEBUG, "SSL session ID: %s", str);
+	    }
+	}
+    } else {
+	SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_OFF);
+    }
     return ss;
  error:
     if (opts->verbose)
@@ -4305,6 +4327,7 @@ void help(char *com) {
 #ifdef USE_SSL
 	    "SSL:   default          ; reset to default\n"
 	    "       verbose          ; verbose mode\n"
+	    "       cache            ; enable session cache\n"
 	    "       verify           ; require peer's certificate\n"
 	    "       verify,once      ; verify client's certificate only once\n"
 	    "       verify,ifany     ; verify client's certificate if any\n"
@@ -4622,6 +4645,7 @@ int getdist(
 void sslopts_default(SSLOpts *opts, int isserver) {
     int i;
     opts->verbose = 0;
+    opts->cache = 0;
     opts->mode = SSL_VERIFY_NONE;
     opts->depth = DEPTH_MAX - 1;
     opts->off = 0;
@@ -4646,6 +4670,8 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	sslopts_default(opts, isserver);
     } else if (!strcmp(argv[i], "verbose")) {
 	opts->verbose++;
+    } else if (!strcmp(argv[i], "cache")) {
+	opts->cache = 1;
     } else if (!strncmp(argv[i], "verify", 6)
 	       && (argv[i][6] == '\0' || argv[i][6] == ',')) {
 	if (!strcmp(argv[i]+6, ",none")) {
@@ -5235,6 +5261,8 @@ void initialize(int argc, char *argv[]) {
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
     PairIndex = SSL_get_ex_new_index(0, "Pair index", NULL, NULL, NULL);
+    MatchIndex = SSL_SESSION_get_ex_new_index(0, "Match index",
+					      newMatch, NULL, freeMatch);
     sslopts_default(&ServerOpts, 1);
     sslopts_default(&ClientOpts, 0);
 #endif
