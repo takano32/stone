@@ -78,6 +78,7 @@
  * -DNO_BCOPY	  without bcopy(3)
  * -DNO_SNPRINTF  without snprintf(3)
  * -DNO_SYSLOG	  without syslog(2)
+ * -DRINDEX	  without rindex(3)
  * -DNO_THREAD	  without thread
  * -DNO_PID_T	  without pid_t
  * -DPTHREAD      use Posix Thread
@@ -89,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.134 2004/08/05 10:24:19 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.135 2004/08/05 15:10:56 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -121,7 +122,7 @@ typedef void (*FuncPtr)(void*);
 #define EINTR	WSAEINTR
 #define NO_BCOPY
 #define bzero(b,n)	memset(b,0,n)
-#define	usleep(usec)	sleep(1)
+#define	usleep(usec)	Sleep(usec)
 #define ASYNC(func,arg)	\
     waitMutex(AsyncMutex);\
     if (Debug > 7) message(LOG_DEBUG,"ASYNC: %d",AsyncCount);\
@@ -560,6 +561,16 @@ void bcopy(void *b1, void *b2, int len) {
     } else {
 	memcpy(b2, b1, len);
     }
+}
+#endif
+
+#ifdef NO_RINDEX
+char *rindex(char *p, int ch) {
+    char *save = NULL;
+    do {
+	if (*p == ch) save = p;
+    } while (*p++);
+    return save;
 }
 #endif
 

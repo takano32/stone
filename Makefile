@@ -168,16 +168,16 @@ mingw.exe: stone.c
 	$(CC) $(FLAGS) -o stone.exe $? $(LIBS)
 
 mingw:
-	$(MAKE) CC=gcc FLAGS="-DWINDOWS $(FLAGS)" LIBS="-lwsock32 $(LIBS)" mingw.exe
+	$(MAKE) CC=gcc FLAGS="-DWINDOWS -DNO_RINDEX $(FLAGS)" LIBS="-lwsock32 $(LIBS)" mingw.exe
 
 mingw-pop:
 	$(MAKE) CC=gcc TARGET=mingw pop_stone
 
 mingw-ssl:
-	$(MAKE) CC=gcc FLAGS="$(SSL_FLAGS)" SSL_LIBS="-LC:/mingw/lib/openssl -lssl32 -leay32 -lregex" TARGET=mingw ssl_stone
+	$(MAKE) CC=gcc FLAGS="$(SSL_FLAGS)" SSL_LIBS="-lssl32 -leay32 -lregex" TARGET=mingw ssl_stone
 
 mingw-svc:
-	$(MAKE) CC=gcc CFLAGS="-DWINDOWS -DNT_SERVICE $(POP_FLAGS) $(SSL_FLAGS) $(CFLAGS)" SSL_LIBS="-LC:/mingw/lib/openssl -lssl32 -leay32 -lregex" TARGET=mingw svc_stone
+	$(MAKE) CC=gcc CFLAGS="-DWINDOWS -DNT_SERVICE $(POP_FLAGS) $(SSL_FLAGS) $(CFLAGS)" SSL_LIBS="-lssl32 -leay32 -lregex" TARGET=mingw svc_stone
 
 emx:
 	$(MAKE) CC=gcc FLAGS="-DOS2 -Zmts -Zsysv-signals $(FLAGS)" LIBS="$(LIBS) -lsocket" stone.exe
