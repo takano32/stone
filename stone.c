@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.147 2004/08/17 01:44:05 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.148 2004/08/19 07:36:03 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2548,6 +2548,12 @@ int dowrite(Pair *pair) {	/* write from buf from pair->start */
 #ifdef WINDOWS
 		    errno = WSAGetLastError();
 #endif
+		    if (errno == EINTR) {
+			if (Debug > 4)
+			    message(LOG_DEBUG,
+				    "TCP %d: SSL_write I/O interrupted", sd);
+			return 0;
+		    }
 		    message(priority(pair),
 			    "TCP %d: SSL_write I/O error err=%d, closing",
 			    sd, errno);
@@ -2761,6 +2767,12 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 #ifdef WINDOWS
 		    errno = WSAGetLastError();
 #endif
+		    if (errno == EINTR) {
+			if (Debug > 4)
+			    message(LOG_DEBUG,
+				    "TCP %d: SSL_read I/O interrupted", sd);
+			return 0;
+		    }
 		    message(priority(pair),
 			    "TCP %d: SSL_read I/O error err=%d, closing",
 			    sd, errno);
