@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.162 2004/09/12 15:33:11 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.163 2004/09/13 02:15:19 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1997,6 +1997,9 @@ int doshutdown(Pair *pair, int how) {
     err = shutdown(pair->sd, how);
     if (err < 0) {
 	ret = err;
+#ifdef WINDOWS
+	errno = WSAGetLastError();
+#endif
 	message(priority(pair), "TCP %d: shutdown %d err=%d",
 		pair->sd, how, errno);
     }
@@ -2070,10 +2073,6 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
 		return -1;
 	    }
 	}
-	/* successfuly connected */
-#ifndef WINDOWS
-	fcntl(pair->sd, F_SETFL, O_NONBLOCK);
-#endif
 	pair->proto |= proto_connect;	/* pair & dst is connected */
 	if (Debug > 2)
 	    message(LOG_DEBUG, "TCP %d: established to %d",
@@ -2225,7 +2224,7 @@ void asyncConn(Conn *conn) {
 	    }
 	}
 #endif
-	/* successfuly accepted */
+	/* successfully accepted */
 #ifndef WINDOWS
 	fcntl(p2->sd, F_SETFL, O_NONBLOCK);
 #endif
@@ -2261,9 +2260,12 @@ void asyncConn(Conn *conn) {
 	|| (p2->proto & proto_close)) {	
 	doclose(p2);
 	doclose(p1);
-    } else {	/* success to connect */
+    } else {	/* successfully connected */
 	int set1 = 0;
 	int set2 = 0;
+#ifndef WINDOWS
+	fcntl(p1->sd, F_SETFL, O_NONBLOCK);
+#endif
 	waitMutex(FdRinMutex);
 	waitMutex(FdWinMutex);
 	if (p1->len > 0) {
