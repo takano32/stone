@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.201 2004/10/23 05:03:24 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.202 2004/10/23 06:21:06 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2890,46 +2890,6 @@ int strnparse(char *buf, int limit, char **pp, Pair *pair, char term) {
     return i;
 }
 
-void asyncAccept(Stone *stone) {
-    Pair *p1, *p2;
-    ASYNC_BEGIN;
-    if (Debug > 8) message(LOG_DEBUG, "asyncAccept");
-    p1 = doaccept(stone);
-    if (p1 == NULL) goto exit;
-    p2 = p1->pair;
-    p1->next = p2;	/* link pair each other */
-    p2->prev = p1;
-    if (p2->proto & proto_ohttp_d) {
-	int i;
-	char *p = stone->p;
-	i = strnparse(p2->buf, p2->bufmax - 5, &p, p1, 0xFF);
-	p2->buf[i++] = '\r';
-	p2->buf[i++] = '\n';
-	p2->buf[i++] = '\r';
-	p2->buf[i++] = '\n';
-	p2->len = i;
-    }
-    if (p1->proto & proto_connect) {
-	if (reqconn(p2, &stone->sins[0]) < 0) {	/* 0 is default */
-	    freePair(p2);
-	    freePair(p1);
-	    goto exit;
-	}
-    }
-    waitMutex(PairMutex);
-    p2->next = pairs.next;	/* insert pair */
-    if (pairs.next != NULL) pairs.next->prev = p2;
-    p1->prev = &pairs;
-    pairs.next = p1;
-    freeMutex(PairMutex);
-    if (Debug > 4) {
-	message(LOG_DEBUG, "TCP %d: pair %d inserted", p1->sd, p2->sd);
-	message_pair(LOG_DEBUG, p1);
-    }
- exit:
-    ASYNC_END;
-}
-
 int scanClose(void) {	/* scan close request */
     Pair *p1, *p2, *p;
     int n = 0;
@@ -4010,7 +3970,7 @@ void proto2fdset(Pair *pair, int isthread,
     }
 }
 
-void asyncReadWrite(Pair *pair) {	/* pair must be source side */
+void doReadWrite(Pair *pair) {	/* pair must be source side */
     fd_set ri, wi, ei;
     fd_set ro, wo, eo;
     struct timeval tv;
@@ -4020,13 +3980,12 @@ void asyncReadWrite(Pair *pair) {	/* pair must be source side */
     SOCKET sd, rsd, wsd;
     int len;
     int i;
-    ASYNC_BEGIN;
     FD_ZERO(&ri);
     FD_ZERO(&wi);
     FD_ZERO(&ei);
     p[0] = pair;
     p[1] = pair->pair;
-    if (Debug > 8) message(LOG_DEBUG, "TCP %d, %d: asyncReadWrite",
+    if (Debug > 8) message(LOG_DEBUG, "TCP %d, %d: doReadWrite",
 			   (p[0] ? p[0]->sd : INVALID_SOCKET),
 			   (p[1] ? p[1]->sd : INVALID_SOCKET));
     if (p[1]) npairs++;
@@ -4250,9 +4209,55 @@ void asyncReadWrite(Pair *pair) {	/* pair must be source side */
 	p[i]->proto &= ~proto_thread;
 	p[i]->count -= REF_UNIT;
     }
-    if (Debug > 8) message(LOG_DEBUG, "TCP %d, %d: asyncReadWrite end",
+    if (Debug > 8) message(LOG_DEBUG, "TCP %d, %d: doReadWrite end",
 			   (p[0] ? p[0]->sd : INVALID_SOCKET),
 			   (p[1] ? p[1]->sd : INVALID_SOCKET));
+}
+
+void asyncReadWrite(Pair *pair) {	/* pair must be source side */
+    ASYNC_BEGIN;
+    doReadWrite(pair);
+    ASYNC_END;
+}
+
+void asyncAccept(Stone *stone) {
+    Pair *p1, *p2;
+    ASYNC_BEGIN;
+    if (Debug > 8) message(LOG_DEBUG, "asyncAccept");
+    p1 = doaccept(stone);
+    if (p1 == NULL) goto exit;
+    p2 = p1->pair;
+    p1->next = p2;	/* link pair each other */
+    p2->prev = p1;
+    if (p2->proto & proto_ohttp_d) {
+	int i;
+	char *p = stone->p;
+	i = strnparse(p2->buf, p2->bufmax - 5, &p, p1, 0xFF);
+	p2->buf[i++] = '\r';
+	p2->buf[i++] = '\n';
+	p2->buf[i++] = '\r';
+	p2->buf[i++] = '\n';
+	p2->len = i;
+    }
+    if (p1->proto & proto_connect) {
+	if (reqconn(p2, &stone->sins[0]) < 0) {	/* 0 is default */
+	    freePair(p2);
+	    freePair(p1);
+	    goto exit;
+	}
+    }
+    waitMutex(PairMutex);
+    p2->next = pairs.next;	/* insert pair */
+    if (pairs.next != NULL) pairs.next->prev = p2;
+    p1->prev = &pairs;
+    pairs.next = p1;
+    freeMutex(PairMutex);
+    if (Debug > 4) {
+	message(LOG_DEBUG, "TCP %d: pair %d inserted", p1->sd, p2->sd);
+	message_pair(LOG_DEBUG, p1);
+    }
+    doReadWrite(p1);
+ exit:
     ASYNC_END;
 }
 
