@@ -176,7 +176,11 @@ HOWTO USE
 	If the ``<xhost>/<mask>'' are used, only machines on specified
 	networks are permitted to connect to the program.  In the case
 	of class C network 192.168.1.0, for example, use
-	``192.168.1.0/255.255.255.0''.
+	``192.168.1.0/255.255.255.0''.  ``<mask>'' may be a number such
+	as ``192.168.1.0/24''.
+
+	Use ``!'' instead of ``<xhost>'', to deny machines by following
+	``<xhost>''.
 
 	If the ``<sport>/udp'' is used, repeats UDP packets instead of
 	TCP packets.
@@ -196,6 +200,9 @@ HOWTO USE
 	base64 decoding.
 
 	If the ``<sport>/http'' is used, repeats packets over http.
+
+	If the ``<sport>/ident'' is used, identifies the owner of the
+	incoming connection on the peer using ident protocol (RFC1413).
 
 HOWTO USE (NT service version)
 
