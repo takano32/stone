@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2a"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.113 2003/12/14 15:54:34 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.114 2003/12/14 16:14:02 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -4311,11 +4311,17 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 
 /* SSL callback */
 unsigned long sslthread_id_callback(void) {
-    return (unsigned long)pthread_self();
+    unsigned long ret;
+    ret = (unsigned long)pthread_self();
+    if (Debug > 8) message(LOG_DEBUG, "SSL_thread id=%ld", ret);
+    return ret;
 }
 
 void sslthread_lock_callback(int mode, int n, const char *file, int line) {
     if (mode & CRYPTO_LOCK) {
+	if (Debug > 8)
+	    message(LOG_DEBUG, "SSL_lock mode=%x n=%d file=%s line=%d",
+		    mode, n, file, line);
 #ifdef WINDOWS
 	WaitForSingleObject(SSLMutex[n]);
 #else
@@ -4324,6 +4330,9 @@ void sslthread_lock_callback(int mode, int n, const char *file, int line) {
 #endif
 #endif
     } else {
+	if (Debug > 8)
+	    message(LOG_DEBUG, "SSL_unlock mode=%x n=%d file=%s line=%d",
+		    mode, n, file, line);
 #ifdef WINDOWS
 	ReleaseMutex(SSLMutex[n]);
 #else
@@ -4339,6 +4348,7 @@ int sslthread_initialize(void) {
     NSSLMutexs = CRYPTO_num_locks();
     SSLMutex = malloc(NSSLMutexs * sizeof(*SSLMutex));
     if (!SSLMutex) return -1;
+    if (Debug > 1) message(LOG_DEBUG, "SSL thread nlocks=%d", NSSLMutexs);
     for (i=0; i < NSSLMutexs; i++) {
 #ifdef WINDOWS
 	SSLMutex[i] = CreateMutex(NULL, FALSE, NULL);
@@ -4798,9 +4808,6 @@ void initialize(int argc, char *argv[]) {
     PairIndex = SSL_get_ex_new_index(0, "Pair index", NULL, NULL, NULL);
     sslopts_default(&ServerOpts, 1);
     sslopts_default(&ClientOpts, 0);
-    if (sslthread_initialize() < 0) {
-	message(LOG_ERR, "Fail to initialize SSL callback");
-    }
 #endif
     i = doopts(argc, argv);
     if (ConfigFile) {
@@ -4937,6 +4944,11 @@ void initialize(int argc, char *argv[]) {
 	(j=DosCreateMutexSem(NULL, &FdWinMutex, 0, FALSE)) ||
 	(j=DosCreateMutexSem(NULL, &FdEinMutex, 0, FALSE))) {
 	message(LOG_ERR, "Can't create Mutex err=%d", j);
+    }
+#endif
+#ifdef USE_SSL
+    if (sslthread_initialize() < 0) {
+	message(LOG_ERR, "Fail to initialize SSL callback");
     }
 #endif
 #ifndef NO_CHROOT
