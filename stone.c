@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.59 2003/07/12 05:34:47 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.60 2003/07/12 10:14:27 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1411,26 +1411,6 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
     pair->count++;	/* request to connect */
     conn->pair = pair;
     conn->sin = *sinp;
-#ifdef USE_SSL
-    if (p->match && p->stone->ssl_server) {
-	unsigned char *s = p->match[0];	/* \1 */
-	int lbmod = p->stone->ssl_server->lbmod;
-	int ofs = 0;
-	if (lbmod) {
-	    while (*s) {
-		ofs <<= 6;
-		ofs += (*s & 0x3f);
-		s++;
-	    }
-	    ofs %= lbmod;
-	    if (Debug > 2)
-		message(LOG_DEBUG, "TCP %d: pair %d lb=%d",
-			pair->sd, p->sd, ofs);
-	    conn->sin.sin_addr.s_addr
-		= htonl(ntohl(conn->sin.sin_addr.s_addr) + ofs);
-	}
-    }
-#endif
     conn->lock = 0;
     waitMutex(ConnMutex);
     conn->next = conns.next;
@@ -1454,9 +1434,30 @@ void asyncConn(Conn *conn) {
     if (p2->proto & proto_ssl_intr)
 	ret = trySSL_accept(p2);	/* accept not completed */
     else ret = 1;
-    if (ret > 0)
+    if (ret > 0) {
+	if (p2->match && p2->stone->ssl_server) {
+	    unsigned char *s = p2->match[0];	/* \1 */
+	    int lbmod = p2->stone->ssl_server->lbmod;
+	    int ofs = 0;
+	    if (lbmod) {
+		while (*s) {
+		    ofs <<= 6;
+		    ofs += (*s & 0x3f);
+		    s++;
+		}
+		ofs %= lbmod;
+		if (Debug > 2)
+		    message(LOG_DEBUG, "TCP %d: pair %d lb=%d",
+			    p1->sd, p2->sd, ofs);
+		conn->sin.sin_addr.s_addr
+		    = htonl(ntohl(conn->sin.sin_addr.s_addr) + ofs);
+	    }
+	}
 #endif
 	ret = doconnect(p1,&conn->sin);
+#ifdef USE_SSL
+    }
+#endif
     if (ret == 0) {	/* EINTR */
 	if (clock - p1->clock < CONN_TIMEOUT) {
 	    conn->lock = 0;	/* unlock conn */
