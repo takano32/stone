@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.136 2004/08/05 16:05:02 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.137 2004/08/06 03:33:25 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -368,6 +368,7 @@ typedef struct _Pair {
 #ifdef USE_SSL
     SSL *ssl;		/* SSL handle */
     char **match;
+    int ssl_flag;
 #endif
     time_t clock;
     int timeout;
@@ -444,7 +445,6 @@ const proto_select_w =	   0x80000;	  /* select to write */
 const proto_shutdown =	  0x100000;	  /* sent shutdown */
 const proto_close =	  0x200000;	  /* request to close */
 const proto_eof =	  0x400000;	  /* EOF */
-const proto_ssl_intr =	  0x800000;	  /* SSL accept/connect interrupted */
 const proto_ohttp_s =	 0x4000000;	/* over http source */
 const proto_ohttp_d =	 0x8000000;	/*           destination */
 const proto_base_s =	0x10000000;	/* base64 source */
@@ -464,6 +464,12 @@ const proto_base_d =	0x20000000;	/*        destination */
 			 proto_ohttp_d|proto_base_d|\
 			 proto_command)
 #define proto_all	(proto_src|proto_dest)
+
+#ifdef USE_SSL
+const sf_intr =		0x00001;	/* SSL accept/connect interrupted */
+const sf_wb_on_r =	0x00004;	/* SSL_write blocked on read */
+const sf_rb_on_w =	0x00008;	/* SSL_read blocked on write */
+#endif
 
 int BacklogMax = BACKLOG_MAX;
 int XferBufMax = 1000;	/* TCP packet buffer initial size (must < 1024 ?) */
@@ -1527,7 +1533,7 @@ void rmMatch(Pair *pair) {
 int trySSL_accept(Pair *pair) {
     int ret;
     unsigned long err;
-    if (pair->proto & proto_ssl_intr) {
+    if (pair->ssl_flag & sf_intr) {
 	if (SSL_want_nothing(pair->ssl)) goto finished;
     }
     ret = SSL_accept(pair->ssl);
@@ -1547,7 +1553,7 @@ int trySSL_accept(Pair *pair) {
 	    if (Debug > 4)
 		message(LOG_DEBUG, "TCP %d: SSL_accept interrupted WANT=%d",
 			pair->sd, err);
-	    pair->proto |= proto_ssl_intr;
+	    pair->ssl_flag |= sf_intr;
 	    return 0;	/* EINTR */
 	} else if (err) {
 	    SSL *ssl = pair->ssl;
@@ -1575,7 +1581,7 @@ int trySSL_accept(Pair *pair) {
     }
  finished:
     if (pair->stone->ssl_server->verbose) printSSLinfo(pair->ssl);
-    pair->proto &= ~proto_ssl_intr;
+    pair->ssl_flag &= ~sf_intr;
     return 1;
 }
 
@@ -1590,7 +1596,7 @@ int doSSL_accept(Pair *pair) {
 
 int doSSL_connect(Pair *pair) {
     int err, ret;
-    if (!(pair->proto & proto_ssl_intr)) {
+    if (!(pair->ssl_flag & sf_intr)) {
 	pair->ssl = SSL_new(pair->stone->ssl_client->ctx);
 	SSL_set_ex_data(pair->ssl, PairIndex, pair);
 	SSL_set_fd(pair->ssl, pair->sd);
@@ -1606,7 +1612,7 @@ int doSSL_connect(Pair *pair) {
 	    if (Debug > 4)
 		message(LOG_DEBUG, "TCP %d: SSL_connect interrupted WANT=%d",
 			pair->sd, err);
-	    pair->proto |= proto_ssl_intr;
+	    pair->ssl_flag |= sf_intr;
 	    return 0;	/* EINTR */
 	} else if (err) {
 	    SSL *ssl = pair->ssl;
@@ -1624,7 +1630,7 @@ int doSSL_connect(Pair *pair) {
     }
  finished:
     if (pair->stone->ssl_client->verbose) printSSLinfo(pair->ssl);
-    pair->proto &= ~proto_ssl_intr;
+    pair->ssl_flag &= ~sf_intr;
     if (Debug > 3) {
 	message(LOG_DEBUG, "TCP %d: SSL_connect succeeded", pair->sd);
 	message_pair(pair);
@@ -1731,7 +1737,9 @@ void doclose(Pair *pair) {	/* close pair */
 int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
     int ret;
     Pair *p = pair->pair;
-    if (!(pair->proto & proto_ssl_intr)) {
+#ifdef USE_SSL
+    if (!(pair->ssl_flag & sf_intr)) {
+#endif
 	if (Debug > 2)
 	    message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s:%s ...",
 		    p->sd, pair->sd,
@@ -1775,7 +1783,9 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
 	    message(LOG_DEBUG, "TCP %d: established to %d",
 		    p->sd, pair->sd);
 	time(&lastEstablished);
+#ifdef USE_SSL
     }
+#endif
     ret = 1;
 #ifdef USE_SSL
     if (pair->stone->proto & proto_ssl_d) ret = doSSL_connect(pair);
@@ -1861,7 +1871,7 @@ void asyncConn(Conn *conn) {
 	backup = p1->stone->backups[ofs];
     }
 #ifdef USE_SSL
-    if (p2->proto & proto_ssl_intr)
+    if (p2->ssl_flag & sf_intr)
 	ret = trySSL_accept(p2);	/* accept not completed */
     else ret = 1;
     if (ret > 0) {
@@ -1904,7 +1914,7 @@ void asyncConn(Conn *conn) {
 	    return;
 	}
 #ifdef USE_SSL
-	if (p2->proto & proto_ssl_intr)
+	if (p2->ssl_flag & sf_intr)
 	    message(LOG_ERR, "TCP %d: SSL_accept timeout", p2->sd);
 	else
 #endif
@@ -2208,6 +2218,7 @@ Pair *doaccept(Stone *stonep) {
 #ifdef USE_SSL
     pair1->ssl = pair2->ssl = NULL;
     pair1->match = pair2->match = NULL;
+    pair1->ssl_flag = pair2->ssl_flag = 0;
     if (stonep->proto & proto_ssl_s) {
 	ret = doSSL_accept(pair1);
 	if (ret < 0) goto error;
@@ -2498,11 +2509,17 @@ int dowrite(Pair *pair) {	/* write from buf from pair->start */
 	    int err;
 	    err = SSL_get_error(pair->ssl, len);
 	    if (err == SSL_ERROR_NONE
-		|| err == SSL_ERROR_WANT_READ
 		|| err == SSL_ERROR_WANT_WRITE) {
 		if (Debug > 4)
 		    message(LOG_DEBUG, "TCP %d: SSL_write interrupted err=%d",
 			    sd, err);
+		return 0;	/* EINTR */
+	    } else if (err == SSL_ERROR_WANT_READ) {
+		if (Debug > 4)
+		    message(LOG_DEBUG,
+			    "TCP %d: SSL_write blocked on read err=%d",
+			    sd, err);
+		pair->ssl_flag |= sf_wb_on_r;
 		return 0;	/* EINTR */
 	    }
 	    if (err != SSL_ERROR_ZERO_RETURN) {
@@ -2686,11 +2703,17 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 	    int err;
 	    err = SSL_get_error(pair->ssl, len);
 	    if (err == SSL_ERROR_NONE
-		|| err == SSL_ERROR_WANT_READ
-		|| err == SSL_ERROR_WANT_WRITE) {
+		|| err == SSL_ERROR_WANT_READ) {
 		if (Debug > 4)
 		    message(LOG_DEBUG, "TCP %d: SSL_read interrupted err=%d",
 			    sd, err);
+		return 0;	/* EINTR */
+	    } else if (err == SSL_ERROR_WANT_WRITE) {
+		if (Debug > 4)
+		    message(LOG_DEBUG,
+			    "TCP %d: SSL_read blocked on write err=%d",
+			    sd, err);
+		pair->ssl_flag |= sf_rb_on_w;
 		return 0;	/* EINTR */
 	    }
 	    if (err == SSL_ERROR_SYSCALL) {
@@ -3381,8 +3404,17 @@ void asyncReadWrite(Pair *pair) {
 		FD_CLR(sd, &ei);
 		doclose(p[i]);
 		goto leave;
-	    } else if (!(p[i]->proto & proto_eof)
-		       && FD_ISSET(sd, &ro)) {	/* read */
+	    } else if ((!(p[i]->proto & proto_eof)
+			&& FD_ISSET(sd, &ro)	/* read */
+#ifdef USE_SSL
+			&& !(p[i]->ssl_flag & sf_wb_on_r))
+		       || ((p[i]->ssl_flag & sf_rb_on_w)
+			   && FD_ISSET(sd, &wo)	/* WANT_WRITE */
+#endif
+			   )) {
+#ifdef USE_SSL
+		p[i]->ssl_flag &= ~sf_rb_on_w;
+#endif
 		rPair = p[i];
 		wPair = p[1-i];
 		rsd = sd;
@@ -3432,8 +3464,21 @@ void asyncReadWrite(Pair *pair) {
 			FdSet(rsd, &ri);
 		    }
 		}
-	    } else if (!(p[i]->proto & proto_shutdown)
-		       && FD_ISSET(sd, &wo)) {	/* write */
+#ifdef USE_SSL
+		if (rPair->ssl_flag & sf_rb_on_w) {	/* WANT_WRITE */
+		    FdSet(rsd, &wi);
+		}
+#endif
+	    } else if ((!(p[i]->proto & proto_shutdown)
+			&& FD_ISSET(sd, &wo))	/* write */
+#ifdef USE_SSL
+		       || ((p[i]->ssl_flag & sf_wb_on_r)
+			   && FD_ISSET(sd, &ro))	/* WANT_READ */
+#endif
+		) {
+#ifdef USE_SSL
+		p[i]->ssl_flag &= ~sf_wb_on_r;
+#endif
 		wPair = p[i];
 		rPair = p[1-i];
 		wsd = sd;
@@ -3482,6 +3527,11 @@ void asyncReadWrite(Pair *pair) {
 			FdSet(wsd, &wi);
 		    }
 		}
+#ifdef USE_SSL
+		if (wPair->ssl_flag & sf_wb_on_r) {	/* WANT_READ */
+		    FdSet(wsd, &ri);
+		}
+#endif
 	    }
 	}
 	if (Debug > 10)
