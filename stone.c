@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.92 2003/10/27 17:19:53 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.93 2003/10/27 18:15:27 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1500,17 +1500,15 @@ int doSSL_connect(Pair *pair) {
 #endif	/* USE_SSL */
 
 void message_time_log(Pair *pair) {
-    TimeLog *log;
-    log = pair->log;
-    pair->log = NULL;
-    if (log) {
+    TimeLog *log = pair->log;
+    if (log && log->clock) {
 	struct tm *t = localtime(&log->clock);
 	time_t now;
 	time(&now);
 	message(log->pri, "%02d:%02d:%02d %d %s",
 		t->tm_hour, t->tm_min, t->tm_sec,
 		(int)(now - log->clock), log->str);
-	free(log);
+	log->clock = 0;
     }
 }
 
@@ -2038,7 +2036,6 @@ int scanClose(void) {	/* scan close request */
     while (p1 != NULL) {
 	p2 = p1;
 	p1 = p1->next;
-	message_time_log(p2);	/* free(p2->log) if p2->log != NULL */
 	free(p2);
     }
     p1 = pairs.next;
@@ -2083,6 +2080,7 @@ int scanClose(void) {	/* scan close request */
 		    p2->p = NULL;
 		    free(p);
 		}
+		message_time_log(p2);
 		if (p2->log) {
 		    TimeLog *log = p2->log;
 		    p2->log = NULL;
