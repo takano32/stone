@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.75 2003/09/20 11:27:32 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.76 2003/09/20 13:08:14 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3447,6 +3447,7 @@ void help(char *com) {
 	    "       verify,once      ; verify client's certificate only once\n"
 	    "       verify,ifany     ; verify client's certificate if any\n"
 	    "       verify,none      ; don't require peer's certificate\n"
+	    "       uniq             ; check serial # of peer's certificate\n"
 	    "       re<n>=<regex>    ; verify depth <n> with <regex>\n"
 	    "       depth=<n>        ; set verification depth to <n>\n"
 	    "       key=<file>       ; key file\n"
