@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1w"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.28 2002/12/11 09:09:41 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.29 2002/12/23 11:49:27 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -381,6 +381,7 @@ char *LogFileName = NULL;
 FILE *AccFp = NULL;
 char *AccFileName = NULL;
 char *ConfigFile = NULL;
+char *PidFile = NULL;
 int ConfigArgc = 0;
 int OldConfigArgc = 0;
 char **ConfigArgv = NULL;
@@ -3105,6 +3106,7 @@ char *com;
 #endif
 	    "      -L <file>         ; write log to <file>\n"
 	    "      -a <file>         ; write accounting to <file>\n"
+	    "      -i <file>         ; write process ID to <file>\n"
 	    "      -X <n>            ; size [byte] of Xfer buffer\n"
 	    "      -T <n>            ; timeout [sec] of TCP sessions\n"
 #ifndef NO_SETUID
@@ -3473,6 +3475,7 @@ char *argv[];
 {
     int i;
     char *p;
+    FILE *fp;
     for (i=1; i < argc; i++) {
 	p = argv[i];
 	if (*p == '-') {
@@ -3522,6 +3525,9 @@ char *argv[];
 		    AccFileName = strdup(argv[i]);
 		}
 		setbuf(AccFp,NULL);
+		break;
+	    case 'i':
+		PidFile = strdup(argv[++i]);
 		break;
 #ifndef NO_CHROOT
 	    case 't':
@@ -3870,6 +3876,13 @@ char *argv[];
 #ifdef UNIX_DAEMON
     if (DaemonMode) daemonize();
 #endif
+    if (PidFile) {
+	FILE *fp = fopen(PidFile,"w");
+	if (fp) {
+	    fprintf(fp,"%d\n",getpid());
+	    fclose(fp);
+	}
+    }
 #ifndef NO_SYSLOG
     if (Syslog) {
 	sprintf(SyslogName,"stone[%d]",getpid());
