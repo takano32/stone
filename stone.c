@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.149 2004/08/26 07:55:31 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.150 2004/08/30 04:22:37 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -320,11 +320,19 @@ typedef struct {
     struct in_addr mask;
 } XHost;
 
+typedef struct _Chat {
+    struct _Chat *next;
+    char *send;
+    int len;
+    regex_t expect;
+} Chat;
+
 typedef struct _Backup {
     struct _Backup *next;
     struct sockaddr_in master;
     struct sockaddr_in backup;
     int proto;
+    Chat *chat;		/* chat script for health check */
     short interval;	/* interval of health check */
     short bn;		/* 0: health, 1: backup */
     short used;		/* 0: not used, 1: assigned, 2: used */
@@ -410,6 +418,7 @@ typedef struct _Comm {
 Stone *stones = NULL;
 Stone *oldstones = NULL;
 int ReuseAddr = 0;
+Chat *healthChat = NULL;
 Backup *backups = NULL;
 LBSet *lbsets = NULL;
 int MinInterval = 0;
@@ -955,9 +964,11 @@ void freeMutex(int h) {
 
 /* backup */
 
-int healthCheck(struct sockaddr_in *sinp, int proto, int timeout) {
+int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
     SOCKET sd;
     int ret;
+    char addr[STRMAX];
+    char port[STRMAX];
     time_t start, now;
     time(&start);
     sd = socket(AF_INET, SOCK_STREAM, 0);
@@ -969,20 +980,67 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout) {
 		sd, errno);
 	return 1;	/* I can't tell the master is healthy or not */
     }
-    if (Debug > 2) {
-	char addr[STRMAX];
-	char port[STRMAX];
-	addr2str(&sinp->sin_addr, addr, STRMAX);
-	port2str(sinp->sin_port, proto, proto_dest, port, STRMAX);
-	message(LOG_DEBUG, "health check: %s:%s", addr, port);
-    }
+    addr2str(&sinp->sin_addr, addr, STRMAX);
+    port2str(sinp->sin_port, proto, proto_dest, port, STRMAX);
+    if (Debug > 2) message(LOG_DEBUG, "health check: %s:%s", addr, port);
     ret = connect(sd, (struct sockaddr*)sinp, sizeof(*sinp));
+    if (ret < 0) {
+#ifdef WINDOWS
+	errno = WSAGetLastError();
+#endif
+	message(LOG_ERR, "health check: connect %s:%s err=%d",
+		addr, port, errno);
+	goto fail;
+    }
     time(&now);
-    if (ret < 0 || now - start >= timeout) goto fail;
-
+    if (now - start >= timeout) goto timeout;
+    while (chat) {
+	char buf[BUFMAX+1];
+	int len;
+	int err;
+	ret = send(sd, chat->send, chat->len, 0);
+	if (ret < 0 || ret != chat->len) {
+#ifdef WINDOWS
+	    errno = WSAGetLastError();
+#endif
+	    message(LOG_ERR, "health check: send %s:%s err=%d",
+		    addr, port, errno);
+	    goto fail;
+	}
+	len = 0;
+	do {
+	    time(&now);
+	    if (now - start >= timeout) goto timeout;
+	    ret = recv(sd, buf+len, BUFMAX-len, 0);
+	    if (ret < 0) {
+#ifdef WINDOWS
+		errno = WSAGetLastError();
+#endif
+		message(LOG_ERR, "health check: recv from %s:%s err=%d",
+			addr, port, errno);
+		goto fail;
+	    }
+	    len += ret;
+	    buf[len] = '\0';
+	    err = regexec(&chat->expect, buf, 0, NULL, 0);
+	    if (Debug > 8)
+		message(LOG_DEBUG, "health check: %s:%s regexec=%d",
+			addr, port, err);
+	    if (len > BUFMAX/2) {
+		bcopy(buf+(len-BUFMAX/2), buf, BUFMAX/2);
+		len = BUFMAX/2;
+	    }
+	} while (ret > 0 && err == REG_NOMATCH);
+	if (err != REG_NOERROR) goto fail;
+	chat = chat->next;
+    }
     shutdown(sd, 2);
     closesocket(sd);
     return 1;	/* healthy ! */
+ timeout:
+    if (Debug > 1)
+	message(LOG_DEBUG, "health check timeout: %s",
+		(chat ? chat->send : "(end of chat)"));
  fail:
     shutdown(sd, 2);
     closesocket(sd);
@@ -1001,7 +1059,8 @@ void asyncHealthCheck(Backup *b) {
 	port2str(b->master.sin_port, b->proto, proto_dest, port, STRMAX);
 	message(LOG_DEBUG, "asyncHealthCheck %s:%s ...", addr, port);
     }
-    if (healthCheck(&b->master, b->proto, b->interval)) {	/* healthy ? */
+    if (healthCheck(&b->master, b->proto,
+		    b->interval, b->chat)) {	/* healthy ? */
 	if (b->bn) {
 	    if (Debug > 1) {
 		char addr[STRMAX];
@@ -1119,6 +1178,7 @@ void mkBackup(int interval, char *master, char *backup) {
 	return;
     }
     b->proto = proto_tcp;
+    b->chat = healthChat;
     b->interval = interval;
     if (MinInterval > 0) {
 	MinInterval = gcd(MinInterval, interval);
@@ -1140,6 +1200,89 @@ void mkBackup(int interval, char *master, char *backup) {
     b->used = 0;
     b->next = backups;
     backups = b;
+}
+
+int str2num(char **pp, int rad) {
+    char *p;
+    int num;
+    int i;
+    p = *pp;
+    num = 0;
+    for (i=0; i < 3; i++) {	/* 3 digit at most */
+	char c = p[i];
+	if ('0' <= c && c <= '9') {
+	    num = num * rad + c;
+	} else {
+	    c = toupper(c);
+	    if (rad > 10 && ('A' <= c && c <= ('A' + rad - 11))) {
+		num = num * rad + (c - 'A' + 10);
+	    } else {
+		break;
+	    }
+	}
+    }
+    *pp = p;
+    return num;
+}
+
+char *str2bin(char *p, int *lenp) {
+    char buf[BUFMAX];
+    char c;
+    int i = 0;
+    while (c=*p++) {
+	if (c == '\\') {
+	    c = *p++;
+	    switch(c) {
+	    case 'n':  c = '\n';  break;
+	    case 'r':  c = '\r';  break;
+	    case 't':  c = '\t';  break;
+	    case '0':  c = str2num(&p,  8);  break;
+	    case 'x':  c = str2num(&p, 16);  break;
+	    case '\0':
+		c = '\\';
+		p--;
+	    }
+	}
+	buf[i++] = c;
+    }
+    p = malloc(i);
+    if (!p) {
+	message(LOG_ERR, "Out of memory, can't make str");
+	exit(1);
+    }
+    bcopy(buf, p, i);
+    *lenp = i;
+    return p;
+}
+
+int mkChat(int argc, int i, char *argv[]) {
+    Chat *top, *bot;
+    top = bot = NULL;
+    i++;
+    for ( ; i < argc; i+=2) {
+	Chat *cur;
+	int err;
+	if (argv[i][0] == '-' && argv[i][1] == '-') break;
+	cur = malloc(sizeof(Chat));
+	if (!cur) {
+	memerr:
+	    message(LOG_ERR, "Out of memory, can't make Chat");
+	    exit(1);
+	}
+	cur->send = str2bin(argv[i], &cur->len);
+	if (!cur->send) goto memerr;
+	err = regcomp(&cur->expect, argv[i+1], REG_EXTENDED);
+	if (err) {
+	    message(LOG_ERR, "RegEx compiling error %d: %s", err, argv[i+1]);
+	    exit(1);
+	}
+	cur->next = NULL;
+	if (!top) top = cur;
+	if (bot) bot->next = cur;
+	bot = cur;
+    }
+    healthChat = top;
+    return i;
 }
 
 LBSet *findLBSet(struct sockaddr_in *sinp, int proto) {
@@ -2313,7 +2456,7 @@ Pair *doaccept(Stone *stonep) {
 #endif
 	message(priority(pair1), "TCP %d: can't create socket err=%d.",
 		pair1->sd, errno);
-      error:
+    error:
 	freePair(pair1);
 	freePair(pair2);
 	return NULL;
@@ -4424,9 +4567,13 @@ void help(char *com) {
 	    "      -T <n>            ; timeout [sec] of TCP sessions\n"
 	    "      -A <n>            ; length of backlog\n"
 	    "      -r                ; reuse socket\n"
+	    "      -s <send> <expect>... --\n"
+	    "                        ; health check script\n"
 	    "      -b <n> <master>:<port> <backup>:<port>\n"
-	    "                        ; backup host:port for master\n"
-	    "      -B <host>:<port>..; load balancing hosts\n"
+	    "                        ; check <master>:<port> every <n> sec\n"
+	    "                        ; use <backup>:<port>, if check failed\n"
+	    "      -B <host>:<port>... --\n"
+	    "                        ; load balancing hosts\n"
 #ifndef NO_SETUID
 	    "      -o <n>            ; set uid to <n>\n"
 	    "      -g <n>            ; set gid to <n>\n"
@@ -4552,6 +4699,11 @@ static int gettoken(FILE *fp, char *buf) {
 	    if (c == '\\') {	/* escape a char */
 		c = getc(fp);
 		if (c == EOF) break;
+		switch(c) {
+		case 'n':  c = '\n';  break;
+		case 'r':  c = '\r';  break;
+		case 't':  c = '\t';  break;
+		}
 	    }
 	}
 	if (quote) {
@@ -5030,6 +5182,9 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
 #endif
     case 'r':
 	ReuseAddr = 1;
+	break;
+    case 's':
+	argi = mkChat(argc, argi, argv);
 	break;
     case 'b':
 	mkBackup(atoi(argv[argi+1]), argv[argi+2], argv[argi+3]);
