@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.184 2004/09/23 04:14:13 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.185 2004/09/23 07:21:26 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1971,6 +1971,7 @@ int doSSL_connect(Pair *pair) {
     pair->ssl_flag &= ~(sf_cb_on_r | sf_cb_on_w);
     ret = SSL_connect(ssl);
     if (ret > 0) {	/* success */
+	pair->proto |= proto_connect;	/* pair & dst is connected */
 	if (Debug > 3) {
 	    SSL_CTX *ctx = pair->stone->ssl_client->ctx;
 	    message(LOG_DEBUG, "TCP %d: SSL_connect succeeded "
@@ -2147,42 +2148,9 @@ void message_time_log(Pair *pair) {
     }
 }
 
-/* pair connect to destination */
-int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
-    char addrport[STRMAX];
+/* after connect(2) successfully completed */
+void connected(Pair *pair) {
     Pair *p = pair->pair;
-    if (pair->proto & proto_close) return -1;
-    addrport2str(sinp, sizeof(*sinp),
-		 pair->proto, proto_all, addrport, STRMAX);
-    if (Debug > 2)
-	message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s",
-		p->sd, pair->sd, addrport);
-    if (connect(pair->sd, (struct sockaddr*)sinp, sizeof(*sinp)) < 0) {
-#ifdef WINDOWS
-	errno = WSAGetLastError();
-#endif
-	if (errno == EINTR) {
-	    if (Debug > 4)
-		message(LOG_DEBUG, "TCP %d: connect interrupted", pair->sd);
-	    return 0;
-	} else if (errno == EISCONN || errno == EADDRINUSE
-#ifdef EALREADY
-		   || errno == EALREADY
-#endif
-	    ) {
-	    if (Debug > 4) {	/* SunOS's bug ? */
-		message(LOG_DEBUG, "TCP %d: connect bug err=%d",
-			pair->sd, errno);
-		message_pair(LOG_DEBUG, pair);
-	    }
-	} else {
-	    message(priority(pair),
-		    "TCP %d: can't connect err=%d: to %s",
-		    pair->sd, errno, addrport);
-	    return -1;
-	}
-    }
-    pair->proto |= proto_connect;	/* pair & dst is connected */
     if (Debug > 2)
 	message(LOG_DEBUG, "TCP %d: established to %d",
 		p->sd, pair->sd);
@@ -2192,10 +2160,43 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
     fcntl(pair->sd, F_SETFL, O_NONBLOCK);
 #endif
 #ifdef USE_SSL
-    if (pair->stone->proto & proto_ssl_d)
-	if (doSSL_connect(pair) < 0) return -1;
+    if (pair->stone->proto & proto_ssl_d) {
+	if (doSSL_connect(pair) < 0) {
+	    /* SSL_connect fails, shutdown pairs */
+	    if (!(p->proto & proto_shutdown)) doshutdown(p, 2);
+	    p->proto |= (proto_shutdown | proto_close);
+	    pair->proto |= proto_close;
+	    return;
+	}
+    } else
 #endif
-    return 1;
+	pair->proto |= proto_connect;	/* pair & dst is connected */
+    /*
+      SSL connection may not be established yet,
+      but we can prepare for read/write
+    */
+    if (pair->len > 0) {
+	if (Debug > 8)
+	    message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
+		    pair->sd, pair->len);
+	if (!(pair->proto & proto_shutdown)) pair->proto |= proto_select_w;
+    } else if (!(pair->proto & proto_ohttp_d)) {
+	if (Debug > 8)
+	    message(LOG_DEBUG, "TCP %d: request to read 1st", p->sd);
+	if (!(p->proto & proto_eof)) p->proto |= proto_select_r;
+    }
+    if (!(p->proto & proto_ohttp_s)) {
+	if (p->len > 0) {
+	    if (Debug > 8)
+		message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
+			p->sd, p->len);
+	    if (!(p->proto & proto_shutdown)) p->proto |= proto_select_w;
+	} else {
+	    if (Debug > 8)
+		message(LOG_DEBUG, "TCP %d: request to read", pair->sd);
+	    if (!(pair->proto & proto_eof)) pair->proto |= proto_select_r;
+	}
+    }
 }
 
 void message_conn(int pri, Conn *conn) {
@@ -2256,6 +2257,7 @@ void asyncConn(Conn *conn) {
 #endif
     int offset = -1;	/* offset in load balancing group */
     time_t clock;
+    char addrport[STRMAX];
     ASYNC_BEGIN;
     p1 = conn->pair;
     if (p1 == NULL) goto finish;
@@ -2330,18 +2332,43 @@ void asyncConn(Conn *conn) {
 	    if (backup->bn) conn->sin = backup->backup;	/* unhealthy */
 	}
     }
-    ret = doconnect(p1, &conn->sin);
-    if (ret == 0) {	/* EINTR */
-	char addrport[STRMAX];
-	if (clock - p1->clock < CONN_TIMEOUT) {
-	    conn->lock = 0;	/* unlock conn */
-	    goto exit;
+    /*
+      now destination is determined, engage
+    */
+    addrport2str(&conn->sin, sizeof(conn->sin),
+		 p1->proto, proto_all, addrport, STRMAX);
+    if (Debug > 2)
+	message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s",
+		p2->sd, p1->sd, addrport);
+    ret = connect(p1->sd, (struct sockaddr*)&conn->sin, sizeof(conn->sin));
+    if (ret < 0) {
+#ifdef WINDOWS
+	errno = WSAGetLastError();
+#endif
+	if (errno == EINTR) {
+	    if (Debug > 4)
+		message(LOG_DEBUG, "TCP %d: connect interrupted", p1->sd);
+	    if (clock - p1->clock < CONN_TIMEOUT) {
+		conn->lock = 0;	/* unlock conn */
+		goto exit;
+	    }
+	    message(priority(p2), "TCP %d: connect timeout to %s",
+		    p2->sd, addrport);
+	} else if (errno == EISCONN || errno == EADDRINUSE
+#ifdef EALREADY
+		   || errno == EALREADY
+#endif
+	    ) {
+	    if (Debug > 4) {	/* SunOS's bug ? */
+		message(LOG_DEBUG, "TCP %d: connect bug err=%d",
+			p1->sd, errno);
+		message_pair(LOG_DEBUG, p1);
+	    }
+	} else {
+	    message(priority(p1),
+		    "TCP %d: can't connect err=%d: to %s",
+		    p1->sd, errno, addrport);
 	}
-	addrport2str(&conn->sin, sizeof(conn->sin),
-		     p1->proto, proto_all, addrport, STRMAX);
-	message(priority(p2), "TCP %d: connect timeout to %s",
-		p2->sd, addrport);
-	ret = -1;
     }
     if (ret < 0		/* fail to connect */
 	|| (p1->proto & proto_close)
@@ -2351,28 +2378,7 @@ void asyncConn(Conn *conn) {
 	p1->proto |= proto_close;
 	goto finish;
     }
-    if (p1->len > 0) {
-	if (Debug > 8)
-	    message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
-		    p1->sd, p1->len);
-	if (!(p1->proto & proto_shutdown)) p1->proto |= proto_select_w;
-    } else if (!(p1->proto & proto_ohttp_d)) {
-	if (Debug > 8)
-	    message(LOG_DEBUG, "TCP %d: request to read 1st", p2->sd);
-	if (!(p2->proto & proto_eof)) p2->proto |= proto_select_r;
-    }
-    if (!(p2->proto & proto_ohttp_s)) {
-	if (p2->len > 0) {
-	    if (Debug > 8)
-		message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
-			p2->sd, p2->len);
-	    if (!(p2->proto & proto_shutdown)) p2->proto |= proto_select_w;
-	} else {
-	    if (Debug > 8)
-		message(LOG_DEBUG, "TCP %d: request to read", p1->sd);
-	    if (!(p1->proto & proto_eof)) p1->proto |= proto_select_r;
-	}
-    }
+    connected(p1);
  finish:
     if (p1) p1->count -= REF_UNIT;	/* no more request to connect */
     conn->pair = NULL;
@@ -3818,12 +3824,13 @@ static void message_select(int pri, char *msg,
 
 /* main event loop */
 
-void proto2fdset(Pair *pair, fd_set *routp, fd_set *woutp, fd_set *eoutp) {
+void proto2fdset(Pair *pair, int isthread,
+		 fd_set *routp, fd_set *woutp, fd_set *eoutp) {
     SOCKET sd;
-    Pair *p;
     if (!pair) return;
     sd = pair->sd;
     if (InvalidSocket(sd)) return;
+    if (!isthread && (pair->proto & proto_thread)) return;
 #ifdef USE_SSL
     if (pair->ssl_flag & (sf_sb_on_r | sf_sb_on_w)) {
 	FD_CLR(sd, routp);
@@ -3837,10 +3844,11 @@ void proto2fdset(Pair *pair, fd_set *routp, fd_set *woutp, fd_set *eoutp) {
 	FD_CLR(sd, routp);
 	FdSet(sd, woutp);
     } else if (pair->ssl_flag & (sf_cb_on_r | sf_cb_on_w)) {
-	p = pair->pair;
+	Pair *p = pair->pair;
 	if (p) {
 	    /*
-	      suppress hasty read/write until established connection
+	      suppress hasty read/write until established connection.
+	      assumes p is located before pair in pairs list
 	    */
 	    SOCKET psd = p->sd;
 	    if (ValidSocket(psd)) {
@@ -3870,7 +3878,7 @@ void proto2fdset(Pair *pair, fd_set *routp, fd_set *woutp, fd_set *eoutp) {
 	}
 }
 
-void asyncReadWrite(Pair *pair) {
+void asyncReadWrite(Pair *pair) {	/* pair must be source side */
     fd_set ri, wi, ei;
     fd_set ro, wo, eo;
     struct timeval tv;
@@ -3896,7 +3904,7 @@ void asyncReadWrite(Pair *pair) {
 	ro = ri;
 	wo = wi;
 	eo = ei;
-	for (i=0; i < npairs; i++) proto2fdset(p[i], &ro, &wo, &eo);
+	for (i=0; i < npairs; i++) proto2fdset(p[i], 1, &ro, &wo, &eo);
 	if (Debug > 10)
 	    message_select(LOG_DEBUG, "selectReadWrite1", &ro, &wo, &eo);
 	if (select(FD_SETSIZE, &ro, &wo, &eo, &tv) <= 0) goto leave;
@@ -4124,9 +4132,11 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
     int ret = 1;
     if (Debug > 8) message(LOG_DEBUG, "scanPairs");
     for (pair=pairs.next; pair != NULL; pair=pair->next) {
-	Pair *p = pair->pair;
 	SOCKET sd = pair->sd;
-	if (!(pair->proto & (proto_close | proto_thread)) && ValidSocket(sd)) {
+	if (!(pair->proto & (proto_close | proto_thread))
+	    && ValidSocket(sd)) {
+	    SOCKET psd;
+	    Pair *p = pair->pair;
 	    time_t clock;
 	    int idle = 1;	/* assume no events happen on sd */
 	    if (FD_ISSET(sd, eop)) {
@@ -4135,22 +4145,16 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 		message_pair(LOG_ERR, pair);
 		pair->proto |= proto_thread;
 		ASYNC(asyncClose, pair);
-	    } else {
-		int isset = (FD_ISSET(sd, rop) || FD_ISSET(sd, wop));
-		if (p) {
-		    SOCKET psd = p->sd;
-		    if (!(p->proto & (proto_close | proto_thread))
-			&& ValidSocket(psd))
-			isset |= (FD_ISSET(psd, rop) || FD_ISSET(psd, wop));
-		}
-		if (isset) {
+	    } else if ((pair->proto & proto_source) && p
+		       && !(pair->proto & (proto_close | proto_thread))
+		       && (psd = p->sd, ValidSocket(psd))) {
+		if (FD_ISSET(sd, rop) || FD_ISSET(sd, wop) ||
+		    FD_ISSET(psd, rop) || FD_ISSET(psd, wop)) {
 		    idle = 0;
 		    pair->count += REF_UNIT;
+		    p->count += REF_UNIT;
 		    pair->proto |= proto_thread;
-		    if (p) {
-			p->count += REF_UNIT;
-			p->proto |= proto_thread;
-		    }
+		    p->proto |= proto_thread;
 		    ASYNC(asyncReadWrite, pair);
 		}
 	    }
@@ -4478,7 +4482,7 @@ void repeater(void) {
     eout = ein;
     for (pair=pairs.next; pair != NULL; pair=pair->next)
 	if (!(pair->proto & proto_thread))
-	    proto2fdset(pair, &rout, &wout, &eout);
+	    proto2fdset(pair, 0, &rout, &wout, &eout);
     if (conns.next || trash.next || spin > 0 || AsyncCount > 0) {
 	if (AsyncCount == 0 && spin > 0) spin--;
 	timeout = &tv;
