@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2a"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.114 2003/12/14 16:14:02 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.115 2003/12/15 15:46:22 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -4312,7 +4312,13 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 /* SSL callback */
 unsigned long sslthread_id_callback(void) {
     unsigned long ret;
+#ifdef WINDOWS
+    ret = (unsigned long)GetCurrentThreadId();
+#else
+#ifdef PTHREAD
     ret = (unsigned long)pthread_self();
+#endif
+#endif
     if (Debug > 8) message(LOG_DEBUG, "SSL_thread id=%ld", ret);
     return ret;
 }
@@ -4323,7 +4329,7 @@ void sslthread_lock_callback(int mode, int n, const char *file, int line) {
 	    message(LOG_DEBUG, "SSL_lock mode=%x n=%d file=%s line=%d",
 		    mode, n, file, line);
 #ifdef WINDOWS
-	WaitForSingleObject(SSLMutex[n]);
+	WaitForSingleObject(SSLMutex[n], 500);
 #else
 #ifdef PTHREAD
 	pthread_mutex_lock(&SSLMutex[n]);
