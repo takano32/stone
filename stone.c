@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.121 2004/03/07 07:36:52 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.122 2004/03/18 04:21:01 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -409,6 +409,8 @@ Backup *backups = NULL;
 LBSet *lbsets = NULL;
 int MinInterval = 0;
 time_t lastScanBackups = 0;
+time_t lastEstablished = 0;
+time_t lastReadWrite = 0;
 Pair pairs;
 Pair *trash = NULL;
 Conn conns;
@@ -444,6 +446,7 @@ const proto_base_d =	0x20000000;	/*        destination */
 #define command_proxy	    0x0100	/* http proxy */
 #define command_ihead	    0x0200	/* insert header */
 #define command_pop	    0x0300	/* POP -> APOP conversion */
+#define command_health	    0x0400	/* is stone healthy ? */
 
 #define proto_ssl	(proto_ssl_s|proto_ssl_d)
 #define proto_ohttp	(proto_ohttp_s|proto_ohttp_d)
@@ -1746,6 +1749,7 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
 	if (Debug > 2)
 	    message(LOG_DEBUG, "TCP %d: established to %d",
 		    p->sd, pair->sd);
+	time(&lastEstablished);
     }
     ret = 1;
 #ifdef USE_SSL
@@ -1783,7 +1787,8 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
 	    struct sockaddr_in *sinp) {	/* connect to */
     Conn *conn;
     Pair *p = pair->pair;
-    if ((pair->proto & proto_command) == command_proxy) {
+    if ((pair->proto & proto_command) == command_proxy
+	|| (pair->proto & proto_command) == command_health) {
 	if (p && !(p->proto & (proto_eof | proto_close))) {
 	    if (rinp) {
 		FdSet(p->sd, rinp);	/* must read request header */
@@ -2433,6 +2438,8 @@ int dowrite(Pair *pair) {	/* write from buf from pair->start */
     }
     pair->len -= len;
     pair->tx += len;
+    if ((p->proto & proto_command) != command_health)
+	lastReadWrite = pair->clock;
     return len;
 }
 
@@ -2652,6 +2659,8 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 	    message(LOG_DEBUG, "TCP %d: save %d bytes \"%s\")", sd, len, buf);
 	}
     }
+    if ((p->proto & proto_command) != command_health)
+	lastReadWrite = pair->clock;
     return p->len;
 }
 
@@ -2677,6 +2686,18 @@ int commOutput(Pair *pair, fd_set *winp, char *fmt, ...) {
     else p->len += strlen(str);
     FdSet(psd, winp);		/* need to write */
     return p->len;
+}
+
+static char *comm_match(char *buf, char *str) {
+    while (*str) {
+	if (toupper(*buf++) != *str++) return NULL;	/* unmatch */
+    }
+    if (*buf) {
+	if (!isspace(*buf)) return NULL;
+/*	while (isspace(*buf)) buf++;	*/
+	if (*buf == ' ') buf++;
+    }
+    return buf;
 }
 
 int doproxy(Pair *pair, fd_set *rinp, char *host, int port) {
@@ -2876,17 +2897,118 @@ Comm popComm[] = {
 };
 #endif
 
-static char *comm_match(char *buf, char *str) {
-    while (*str) {
-	if (toupper(*buf++) != *str++) return NULL;	/* unmatch */
-    }
-    if (*buf) {
-	if (!isspace(*buf)) return NULL;
-/*	while (isspace(*buf)) buf++;	*/
-	if (*buf == ' ') buf++;
-    }
-    return buf;
+int nStones(void) {
+    int n = 0;
+    Stone *stone;
+    for (stone=stones; stone != NULL; stone=stone->next) n++;
+    return n;
 }
+
+int nPairs(void) {
+    int n = 0;
+    Pair *pair;
+    for (pair=pairs.next; pair != NULL; pair=pair->next) n++;
+    return n;
+}
+
+int nConns(void) {
+    int n = 0;
+    Conn *conn;
+    for (conn=conns.next; conn != NULL; conn=conn->next) n++;
+    return n;
+}
+
+int limitCommon(Pair *pair, fd_set *winp, int var, int limit, char *str) {
+    if (var < limit) {
+	commOutput(pair, winp, "200 %s=%d is less than %d\r\n",
+		   str, var, limit);
+    } else {
+	commOutput(pair, winp, "500 %s=%d is not less than %d\r\n",
+		   str, var, limit);
+    }
+    return -2;	/* read more */
+}
+
+int limitPair(Pair *pair, fd_set *rinp, fd_set *winp,
+	      char *parm, int start) {
+    return limitCommon(pair, winp, nStones(), atoi(parm), "pair");
+}
+
+int limitConn(Pair *pair, fd_set *rinp, fd_set *winp,
+	      char *parm, int start) {
+    return limitCommon(pair, winp, nConns(), atoi(parm), "conn");
+}
+
+int limitEstablished(Pair *pair, fd_set *rinp, fd_set *winp,
+		     char *parm, int start) {
+    time_t now;
+    time(&now);
+    return limitCommon(pair, winp, (int)(now - lastEstablished),
+		       atoi(parm), "established");
+}
+
+int limitReadWrite(Pair *pair, fd_set *rinp, fd_set *winp,
+		   char *parm, int start) {
+    time_t now;
+    time(&now);
+    return limitCommon(pair, winp, (int)(now - lastReadWrite),
+		       atoi(parm), "readwrite");
+}
+
+int limitErr(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+    commOutput(pair, winp, "500 Illegal LIMIT\r\n");
+    return -2;	/* read more */
+}
+
+Comm limitComm[] = {
+    { "PAIR", limitPair },
+    { "CONN", limitConn },
+    { "ESTABLISHED", limitEstablished },
+    { "READWRITE", limitReadWrite },
+    { NULL, limitErr },
+};
+
+int healthHELO(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+    time_t now;
+    time(&now);
+    if (Debug) message(LOG_DEBUG, ": HELO %s", parm);
+    commOutput(pair, winp,
+	       "200 stone:%s debug=%d stone=%d pair=%d conn=%d "
+	       "established=%d readwrite=%d\r\n",
+	       VERSION, Debug, nStones(), nPairs(), nConns(),
+	       (int)(now - lastEstablished), (int)(now - lastReadWrite));
+    return -2;	/* read more */
+}
+
+int healthLIMIT(Pair *pair, fd_set *rinp, fd_set *winp,
+		char *parm, int start) {
+    Comm *comm = limitComm;
+    char *q;
+    if (Debug) message(LOG_DEBUG, ": LIMIT %s", parm);
+    while (comm->str) {
+	if ((q=comm_match(parm, comm->str)) != NULL) break;
+	comm++;
+    }
+    if (!q) return limitErr(pair, rinp, winp, parm, start);
+    return (*comm->func)(pair, rinp, winp, q, start);
+}
+
+int healthQUIT(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+    if (Debug) message(LOG_DEBUG, ": QUIT %s", parm);
+    return -1;
+}
+
+int healthErr(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+    message(LOG_ERR, "Unknown health command: %s", parm);
+    return -1;
+}
+
+Comm healthComm[] = {
+    { "HELO", healthHELO },
+    { "LIMIT", healthLIMIT },
+    { "QUIT", healthQUIT },
+    { NULL, healthErr },
+};
 
 int docomm(Pair *pair, fd_set *rinp, fd_set *winp, Comm *comm) {
     char buf[BUFMAX];
@@ -3002,6 +3124,9 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
 	    if (p->p) len = docomm(p, rinp, winp, popComm);
 	    break;
 #endif
+	case command_health:
+	    len = docomm(p, rinp, winp, healthComm);
+	    break;
 	default:
 	    ;
 	}
@@ -3107,7 +3232,8 @@ void asyncReadWrite(Pair *pair) {
 	if (!(p[i]->proto & proto_shutdown) && (p[i]->proto & proto_select_w)
 	    && npairs > 1
 	    && (p[i]->proto & proto_connect)
-	    && (p[1-i]->proto & proto_connect)) {
+	    && ((p[1-i]->proto & proto_command) == command_health
+		|| (p[1-i]->proto & proto_connect))) {
 	    FdSet(sd, &wi);	/* never write unless establish */
 	    p[i]->proto &= ~proto_select_w;
 	    isset = 1;
@@ -3715,7 +3841,8 @@ Stone *mkstone(
 	}
 	sin.sin_family = family;
     }
-    if ((proto & proto_command) == command_proxy) {
+    if ((proto & proto_command) == command_proxy
+	|| (proto & proto_command) == command_health) {
 	stonep->nsins = 1;
 	stonep->sins = malloc(sizeof(struct sockaddr_in));	/* dummy */
     } else {
@@ -3845,6 +3972,13 @@ Stone *mkstone(
 			(allow ? "permit" : "deny"),
 			xhost,
 			ntohl((unsigned long)stonep->xhosts[i].mask.s_addr));
+	    } else if ((proto & proto_command) == command_health) {
+		message(LOG_DEBUG,
+			"stone %d: %s (mask %x) %s check health",
+			stonep->sd,
+			xhost,
+			ntohl((unsigned long)stonep->xhosts[i].mask.s_addr),
+			(allow ? "can" : "can't"));
 	    } else {
 		message(LOG_DEBUG,
 			"stone %d: %s %s (mask %x) to connecting to %s:%s",
@@ -3870,6 +4004,10 @@ Stone *mkstone(
 	message(LOG_INFO, "stone %d: proxy <- %s",
 		stonep->sd,
 		xhost);
+    } else if ((proto & proto_command) == command_health) {
+	message(LOG_INFO, "stone %d: health <- %s",
+		stonep->sd,
+		xhost);
     } else {
 	message(LOG_INFO, "stone %d: %s:%s <- %s",
 		stonep->sd,
@@ -3878,7 +4016,8 @@ Stone *mkstone(
 		xhost);
     }
     stonep->backups = NULL;
-    if ((proto & proto_command) != command_proxy) {
+    if ((proto & proto_command) != command_proxy
+	&& (proto & proto_command) != command_health) {
 	Backup *bs[LB_MAX];
 	int found = 0;
 	for (i=0; i < stonep->nsins; i++) {
@@ -4260,6 +4399,12 @@ int getdist(
 	if (!strcmp(top, "proxy")) {
 	    *protop &= ~proto_command;
 	    *protop |= command_proxy;
+	    *portp = 0;
+	    return 1;
+	}
+	if (!strcmp(top, "health")) {
+	    *protop &= ~proto_command;
+	    *protop |= command_health;
 	    *portp = 0;
 	    return 1;
 	}
@@ -4651,6 +4796,9 @@ void doargs(int argc, int i, char *argv[]) {
 		p = argv[k++];
 		j--;
 		if (k > argc || j < 0) help(argv[0]);
+	    } else if ((dproto & proto_command) == command_health) {
+		proto &= ~proto_command;
+		proto |= command_health;
 	    }
 	    if (dproto & proto_ssl) proto |= proto_ssl_d;
 	    if (dproto & proto_base) proto |= proto_base_d;
@@ -5035,6 +5183,8 @@ void initialize(int argc, char *argv[]) {
     if (MinInterval > 0) {
 	if (Debug > 1) message(LOG_DEBUG, "MinInterval: %d", MinInterval);
     }
+    time(&lastEstablished);
+    lastReadWrite = lastEstablished;
 }
 
 #ifdef NT_SERVICE
