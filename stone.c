@@ -85,7 +85,7 @@
  * -DWINDOWS	  Windows95/98/NT
  * -DNT_SERVICE	  WindowsNT/2000 native service
  */
-#define VERSION	"2.1r"
+#define VERSION	"2.1s"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -330,11 +330,11 @@ const proto_udp =	    0x2000;	/* user datagram protocol */
 const proto_source =	    0x4000;	/* source flag */
 const proto_first_r =	   0x10000;	/* first read packet */
 const proto_first_w =	   0x20000;	/* first written packet */
-/* const proto_ready_r =   0x40000;	   ready to read */
-/* const proto_ready_w =   0x80000;	   ready to write */
+const proto_now_r =	   0x40000;	/* now reading */
+const proto_now_w =	   0x80000;	/* now writing */
 const proto_connect =	  0x100000;	/* connection established */
 const proto_close =	  0x200000;	/* request to close */
-/* const proto_shutdown = 0x400000;	   request to shutdown */
+const proto_ssl_req =	  0x400000;	/* SSL read/write requested */
 const proto_ssl_intr =	  0x800000;	/* SSL accept/connect interrupted */
 const proto_ssl_s =    	 0x1000000;	/* SSL source */
 const proto_ssl_d =	 0x2000000;	/*     destination */
@@ -387,6 +387,7 @@ int NForks = 0;
 pid_t *Pid;
 #endif
 int Debug = 0;		/* debugging level */
+int PacketDump = 0;
 #ifdef PTHREAD
 pthread_mutex_t FastMutex = PTHREAD_MUTEX_INITIALIZER;
 char FastMutexs[7];
@@ -1283,7 +1284,7 @@ char *cert;
 int doSSL_connect(pair)
 Pair *pair;
 {
-    unsigned long err;
+    int err, ret;
     if (!(pair->proto & proto_ssl_intr)) {
 	pair->ssl = SSL_new(ssl_ctx_client);
 	SSL_set_fd(pair->ssl,pair->sd);
@@ -1295,15 +1296,18 @@ Pair *pair;
 	    return 1;
 	}
     }
-    if (SSL_connect(pair->ssl) < 0) {
-	err = ERR_get_error();
+    ret = SSL_connect(pair->ssl);
+    if (ret < 0) {
+	err = SSL_get_error(pair->ssl,ret);
 	if (err) {
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
 	    message(LOG_ERR,"TCP %d: SSL_connect error err=%d",pair->sd,err);
+#ifdef FIXME
 	    if (ssl_verbose_flag)
 		message(LOG_INFO,"TCP %d: %s",
 			pair->sd,ERR_error_string(err,NULL));
+#endif
 	    message_pair(pair);
 	    SSL_free(ssl);
 	    return -1;
@@ -1321,51 +1325,20 @@ void doclose(pair,wait)		/* close pair */
 Pair *pair;
 int wait;
 {
-    Pair *p = NULL;
-    SOCKET sd;
-#ifdef USE_SSL
-    if (pair->ssl) {
-	SSL *ssl = pair->ssl;
-	pair->ssl = NULL;
-	SSL_free(ssl);
-    }
-#endif
-    if (pair->p) {
-	char *p = pair->p;
-	pair->p = NULL;
-	free(p);
-    }
+    Pair *p = pair->pair;
+    SOCKET sd = pair->sd;
     if (!(pair->proto & proto_close)) {
 	pair->proto |= proto_close;	/* request to close */
-	if (ValidSocket(pair->sd)) {
-	    p = pair->pair;
-	    sd = pair->sd;
-	    if (Debug > 2) message(LOG_DEBUG,"TCP %d: close",sd);
-	    if (wait) {
-		waitMutex(FdRinMutex);
-		waitMutex(FdWinMutex);
-		waitMutex(FdEinMutex);
-	    }
-	    FD_CLR(sd,&rin);
-	    FD_CLR(sd,&win);
-	    FD_CLR(sd,&ein);
-	    if (wait) {
-		freeMutex(FdEinMutex);
-		freeMutex(FdWinMutex);
-		freeMutex(FdRinMutex);
-	    }	    
-	}
+	if (ValidSocket(sd))
+	    if (Debug > 2) message(LOG_DEBUG,"TCP %d: closing...",sd);
     }
     if (p && !(p->proto & proto_close)
 	&& ValidSocket(p->sd) && (p->proto & proto_connect)) {
-#ifdef USE_SSL
-	if (p->ssl) {
-	    SSL *ssl = p->ssl;
-	    p->ssl = NULL;
-	    SSL_free(ssl);
-	}
-#endif
 	if (Debug > 2) message(LOG_DEBUG,"TCP %d: shutdown %d",sd,p->sd);
+#ifdef USE_SSL
+	if (p->ssl) SSL_shutdown(p->ssl);
+	else
+#endif
 	shutdown(p->sd,2);
     }
 }
@@ -1795,9 +1768,21 @@ int scanClose() {	/* scan close request */
 		!FD_ISSET(p2->sd,&win) &&
 		!FD_ISSET(p2->sd,&ein) &&
 		p2->count <= 0) {
+#ifdef USE_SSL
+		if (p2->ssl) {
+		    SSL *ssl = p2->ssl;
+		    p2->ssl = NULL;
+		    SSL_free(ssl);
+		}
+#endif
 		if (Debug > 3) message(LOG_DEBUG,"TCP %d: closesocket",p2->sd);
 		closesocket(p2->sd);
 		p2->sd = INVALID_SOCKET;
+		if (p2->p) {
+		    char *p = p2->p;
+		    p2->p = NULL;
+		    free(p);
+		}
 	    } else {
 		FD_CLR(p2->sd,&rin);
 		FD_CLR(p2->sd,&win);
@@ -1878,8 +1863,8 @@ Pair *pair;
 	len = SSL_write(pair->ssl,&pair->buf[pair->start],pair->len);
 	if (pair->proto & proto_close) return -1;
 	if (len < 0) {
-	    unsigned long err;
-	    err = ERR_get_error();
+	    int err;
+	    err = SSL_get_error(pair->ssl,len);
 	    if (!err) {
 		if (Debug > 4)
 		    message(LOG_DEBUG,"TCP %d: SSL_write interrupted",sd);
@@ -1913,7 +1898,7 @@ Pair *pair;
     }
 #endif
     if (Debug > 4) message(LOG_DEBUG,"TCP %d: %d bytes written",sd,len);
-    if (Debug > 7 || ((pair->proto & proto_first_w) && Debug > 3))
+    if (PacketDump > 7 || ((pair->proto & proto_first_w) && Debug > 3))
 	message_buf(pair,len,"");
     time(&pair->clock);
     p = pair->pair;
@@ -2068,8 +2053,8 @@ Pair *pair;		/* read into buf from pair->pair->start */
 	len = SSL_read(pair->ssl,&p->buf[start],bufmax);
 	if (pair->proto & proto_close) return -1;
 	if (len < 0) {
-	    unsigned long err;
-	    err = ERR_get_error();
+	    int err;
+	    err = SSL_get_error(pair->ssl,len);
 	    if (!err) {
 		if (Debug > 4)
 		    message(LOG_DEBUG,"TCP %d: SSL_read interrupted",sd);
@@ -2077,7 +2062,6 @@ Pair *pair;		/* read into buf from pair->pair->start */
 	    }
 	    message(LOG_ERR,"TCP %d: SSL_read error err=%d, closing",sd,err);
 	    message_pair(pair);
-	    doclose(p,1);	/* close pair, wait mutex */
 	    return len;	/* error */
 	}
 	if (ssl_verbose_flag &&
@@ -2098,7 +2082,6 @@ Pair *pair;		/* read into buf from pair->pair->start */
 	    }
 	    message(LOG_ERR,"TCP %d: read error err=%d, closing",sd,errno);
 	    message_pair(pair);
-	    doclose(p,1);	/* close pair, wait mutex */
 	    return len;	/* error */
 	}
 #ifdef USE_SSL
@@ -2551,6 +2534,7 @@ Pair *pair;
 int write_flag;
 {
     SOCKET sd = pair->sd;
+    Pair *p = pair->pair;
     struct timeval tv;
     fd_set set;
     int ret;
@@ -2560,14 +2544,20 @@ int write_flag;
     tv.tv_sec = 0;
     tv.tv_usec = TICK_SELECT;
     if (Debug > 8) {
-	Pair *p = pair->pair;
 	message(LOG_DEBUG,"TCP %d: select to %s %d...", 
-		sd, (write_flag ? "write to" : "read from"),
+		sd, (write_flag ? "write data from" : "read data into"),
 		(p ? p->sd : INVALID_SOCKET));
     }
     if (write_flag) {
 	return select(FD_SETSIZE,NULL,&set,NULL,&tv);
     } else {
+#ifdef USE_SSL
+	if (pair->ssl && SSL_pending(pair->ssl) > 0) {
+	    if (Debug > 8)
+		message(LOG_DEBUG,"TCP %d: data ready for read in ssl",sd);
+	    return 1;
+	}
+#endif
 	return select(FD_SETSIZE,&set,NULL,NULL,&tv);
     }
 }
@@ -2599,17 +2589,38 @@ int write_flag;
     if (len < 0 || (rPair->proto & proto_close) || wPair == NULL) {
 	doclose(rPair,1);	/* EOF or error, wait mutex */
     } else {
+#ifdef USE_SSL
+	if (rPair->proto & proto_ssl_req) {
+	    rPair->proto &= ~proto_ssl_req;
+	    FD_SET(rsd,&win);
+	}
+#endif
 	if (len > 0) {
-	    int first_flag = (rPair->proto & proto_first_r);
+	    int first_flag;
+	    rPair->proto &= ~proto_now_r;
+	    first_flag = (rPair->proto & proto_first_r);
 	    if (first_flag) len = first_read(rPair);
 	    wsd = wPair->sd;
 	    if (len > 0
 		&& ValidSocket(wsd)
 		&& !(wPair->proto & proto_close)
 		&& !(rPair->proto & proto_close)) {
+#ifdef USE_SSL
+		if (/* wPair->ssl && */ (wPair->proto & proto_now_r)) {
+		    if (Debug > 2) {
+			message(LOG_DEBUG,"TCP %d: write but reading",wsd);
+		    }
+		} else
+#endif
 		if (!first_flag
 		    && !(wPair->proto & proto_first_w)
-		    && waitFd(wPair,1) > 0) goto write;
+		    && waitFd(wPair,1) > 0) {
+		    wPair->count++;
+		    if (wPair->pair) rPair->count++;
+		    goto write;
+		}
+		if (Debug > 8)
+		    message(LOG_DEBUG,"TCP %d: write timeout, set &win",wsd);
 		waitMutex(FdWinMutex);
 		FD_SET(wsd,&win);
 		freeMutex(FdWinMutex);
@@ -2631,17 +2642,37 @@ int write_flag;
     utimer(0);
     wPair->count--;
     if (rPair) rPair->count--;
-    if (len < 0 || (wPair->proto & proto_close)) {
+    if (len < 0 || (wPair->proto & proto_close) || rPair == NULL) {
 	if (rPair) doclose(rPair,1);	/* if error, close, wait mutex */
 	doclose(wPair,1);
     } else {
+#ifdef USE_SSL
+	if (wPair->proto & proto_ssl_req) {
+	    wPair->proto &= ~proto_ssl_req;
+	    FD_SET(wsd,&rin);
+	}
+#endif
 	if (wPair->len <= 0) {	/* all written */
+	    wPair->proto &= ~proto_now_w;
 	    if (wPair->proto & proto_first_w) wPair->proto &= ~proto_first_w;
 	    rsd = rPair->sd;
 	    if (rPair && ValidSocket(rsd)
 		&& !(rPair->proto & proto_close)
 		&& !(wPair->proto & proto_close)) {
-		if (waitFd(rPair,0) > 0) goto read;
+#ifdef USE_SSL
+		if (/* rPair->ssl && */ (rPair->proto & proto_now_w)) {
+		    if (Debug > 2) {
+			message(LOG_DEBUG,"TCP %d: read but writing",rsd);
+		    }
+		} else
+#endif
+		if (waitFd(rPair,0) > 0) {
+		    rPair->count++;
+		    if (rPair->pair) wPair->count++;
+		    goto read;
+		}
+		if (Debug > 8)
+		    message(LOG_DEBUG,"TCP %d: read timeout, set &rin",rsd);
 		waitMutex(FdRinMutex);
 		FD_SET(rsd,&rin);
 		freeMutex(FdRinMutex);
@@ -2686,42 +2717,70 @@ fd_set *rop, *wop, *eop;
 	SOCKET sd = pair->sd;
 	if (ValidSocket(sd) && !(pair->proto & proto_close)) {
 	    time_t clock;
+	    int idle = 1;	/* assume no events happen on sd */
 	    int isset;
 	    waitMutex(FdEinMutex);
 	    isset = (FD_ISSET(sd,eop) && FD_ISSET(sd,&ein));
 	    if (isset) FD_CLR(sd,&ein);
 	    freeMutex(FdEinMutex);
 	    if (isset) {
+		idle = 0;
 		message(LOG_ERR,"TCP %d: exception",sd);
 		message_pair(pair);
 		doclose(pair,1);	/* wait mutex */
-		continue;
-	    }
-	    waitMutex(FdRinMutex);
-	    isset = (FD_ISSET(sd,rop) && FD_ISSET(sd,&rin));
-	    if (isset) FD_CLR(sd,&rin);
-	    freeMutex(FdRinMutex);
-	    if (isset) {
-		pair->count++;
-		if (p) p->count++;
-		ASYNC(asyncRead,pair);
-		continue;
-	    }
-	    waitMutex(FdWinMutex);
-	    isset = (FD_ISSET(sd,wop) && FD_ISSET(sd,&win));
-	    if (isset) FD_CLR(sd,&win);
-	    freeMutex(FdWinMutex);
-	    if (isset) {
-		if ((pair->proto & proto_command) == command_ihead) {
-		    if (insheader(pair) >= 0)		/* insert header */
-			pair->proto &= ~proto_command;
+	    } else {
+		waitMutex(FdRinMutex);
+		isset = (FD_ISSET(sd,rop) && FD_ISSET(sd,&rin));
+		if (isset) FD_CLR(sd,&rin);
+		freeMutex(FdRinMutex);
+		if (isset) {
+#ifdef USE_SSL
+		    if (/* pair->ssl && */ (pair->proto & proto_now_w)) {
+			pair->proto |= proto_ssl_req;
+			if (Debug > 2) {
+			    message(LOG_DEBUG,
+				    "TCP %d: read but now writing",sd);
+			}
+		    } else {
+			pair->proto |= proto_now_r;
+#endif
+			idle = 0;
+			pair->count++;
+			if (p) p->count++;
+			ASYNC(asyncRead,pair);
+#ifdef USE_SSL
+		    }
+#endif
 		}
-		pair->count++;
-		if (p) p->count++;
-		ASYNC(asyncWrite,pair);
-		continue;
+		waitMutex(FdWinMutex);
+		isset = (FD_ISSET(sd,wop) && FD_ISSET(sd,&win));
+		if (isset) FD_CLR(sd,&win);
+		freeMutex(FdWinMutex);
+		if (isset) {
+#ifdef USE_SSL
+		    if (/* pair->ssl && */ (pair->proto & proto_now_r)) {
+			pair->proto |= proto_ssl_req;
+			if (Debug > 2) {
+			    message(LOG_DEBUG,
+				    "TCP %d: write but now reading",sd);
+			}
+		    } else {
+			pair->proto |= proto_now_w;
+#endif
+			idle = 0;
+			if ((pair->proto & proto_command) == command_ihead) {
+			    if (insheader(pair) >= 0)	/* insert header */
+				pair->proto &= ~proto_command;
+			}
+			pair->count++;
+			if (p) p->count++;
+			ASYNC(asyncWrite,pair);
+#ifdef USE_SSL
+		    }
+#endif
+		}
 	    }
-	    if (pair->timeout > 0
+	    if (idle && pair->timeout > 0
 		&& time(&clock), clock - pair->clock > pair->timeout) {
 		if (pair->count > 0 || Debug > 2) {
 		    message(LOG_NOTICE,"TCP %d: idle time exceeds",sd);
@@ -2741,6 +2800,35 @@ fd_set *rop, *wop, *eop;
     if (Debug > 8) message(LOG_DEBUG,"scanPairs done");
     return ret;
 }
+
+#ifdef USE_SSL
+void scanSSLs() {
+#ifdef PTHREAD
+    pthread_t thread;
+    int err;
+#endif
+    Pair *pair;
+    for (pair=pairs.next; pair != NULL; pair=pair->next) {
+	Pair *p = pair->pair;
+	SOCKET sd = pair->sd;
+	SSL *ssl = pair->ssl;
+	int isset;
+	if (!ssl) continue;
+	waitMutex(FdRinMutex);
+	isset = (FD_ISSET(sd,&rin) && SSL_pending(ssl) > 0);
+	if (isset) FD_CLR(sd,&rin);
+	freeMutex(FdRinMutex);
+	if (isset) {
+	    pair->proto |= proto_now_r;
+	    if (Debug > 8)
+		message(LOG_DEBUG,"TCP %d: data ready for read in ssl",sd);
+	    pair->count++;
+	    if (p) p->count++;
+	    ASYNC(asyncRead,pair);
+	}
+    }
+}
+#endif
 
 /* stone */
 
@@ -2763,17 +2851,17 @@ fd_set *rop, *eop;
 	freeMutex(FdEinMutex);
 	if (isset) {
 	    message(LOG_ERR,"stone %d: exception",stone->sd);
-	    continue;
-	}
-	waitMutex(FdRinMutex);
-	isset = (FD_ISSET(stone->sd,rop) && FD_ISSET(stone->sd,&rin));
-	if (isset) FD_CLR(stone->sd,&rin);
-	freeMutex(FdRinMutex);
-	if (isset) {
-	    if (stone->proto & proto_udp) {
-		ASYNC(asyncUDP,stone);
-	    } else {
-		ASYNC(asyncAccept,stone);
+	} else {
+	    waitMutex(FdRinMutex);
+	    isset = (FD_ISSET(stone->sd,rop) && FD_ISSET(stone->sd,&rin));
+	    if (isset) FD_CLR(stone->sd,&rin);
+	    freeMutex(FdRinMutex);
+	    if (isset) {
+		if (stone->proto & proto_udp) {
+		    ASYNC(asyncUDP,stone);
+		} else {
+		    ASYNC(asyncAccept,stone);
+		}
 	    }
 	}
 #ifndef NO_ALRM
@@ -2815,6 +2903,22 @@ void rmoldconfig() {
     OldConfigArgv = NULL;
 }
 
+static void select_debug(rout, wout, eout)
+fd_set *rout, *wout, *eout;
+{
+    int i, r, w, e;
+    if (Debug > 11) {
+	for (i=0; i < FD_SETSIZE; i++) {
+	    r = FD_ISSET(i,rout);
+	    w = FD_ISSET(i,wout);
+	    e = FD_ISSET(i,eout);
+	    if (r || w || e)
+		message(LOG_DEBUG,"select %d: %c%c%c",
+			i, (r ? 'r' : ' '), (w ? 'w' : ' '), (e ? 'e' : ' '));
+	}
+    }
+}
+
 void repeater() {
     int ret;
     fd_set rout, wout, eout;
@@ -2829,7 +2933,15 @@ void repeater() {
 	timeout->tv_sec = 0;
 	timeout->tv_usec = TICK_SELECT;
     } else timeout = NULL;		/* block indefinitely */
+    if (Debug > 10) {
+	message(LOG_DEBUG,"select(%ld)...",(timeout ? timeout->tv_usec : 0));
+	select_debug(&rout, &wout, &eout);
+    }
     ret = select(FD_SETSIZE,&rout,&wout,&eout,timeout);
+    if (Debug > 10) {
+	message(LOG_DEBUG,"select: %d",ret);
+	select_debug(&rout, &wout, &eout);
+    }
 #ifndef NO_ALRM
     Generation++;
 #endif
@@ -2849,6 +2961,9 @@ void repeater() {
 	}
     }
     scanConns();
+#ifdef USE_SSL
+    scanSSLs();
+#endif
     if (oldstones) rmoldstone();
     if (OldConfigArgc) rmoldconfig();
 }
@@ -3030,6 +3145,7 @@ char *com;
 	    "      -P <command>      ; preprocessor for config. file\n"
 #endif
 	    "      -d                ; increase debug level\n"
+	    "      -p                ; packet dump\n"
 	    "      -n                ; numerical address\n"
 	    "      -u <max>          ; # of UDP sessions\n"
 #ifndef NO_FORK
@@ -3412,6 +3528,9 @@ char *argv[];
 	    while(*p) switch(*p++) {
 	    case 'd':
 		Debug++;
+		break;
+	    case 'p':
+		PacketDump = 1;
 		break;
 #ifndef NO_SYSLOG
 	    case 'l':
@@ -3799,7 +3918,11 @@ char *argv[];
 #endif
 #ifdef USE_SSL
     ssl_ctx_server = SSL_CTX_new(SSLv23_server_method());
+    SSL_CTX_set_mode(ssl_ctx_server,
+		     SSL_MODE_ENABLE_PARTIAL_WRITE|SSL_MODE_AUTO_RETRY);
     ssl_ctx_client = SSL_CTX_new(SSLv23_client_method());
+    SSL_CTX_set_mode(ssl_ctx_client,
+		     SSL_MODE_ENABLE_PARTIAL_WRITE|SSL_MODE_AUTO_RETRY);
     if (!cipher_list) cipher_list = getenv("SSL_CIPHER");
 #endif
     pairs.next = NULL;

@@ -1,0 +1,39 @@
+#!/bin/sh
+ver=2.1r
+stone=stone21
+stones=stone21s
+if [ -n "$1" ]
+then	stamp=$1
+fi
+rm -rf stone-$ver stone-$ver.lzh stones-$ver.lzh
+
+nkf_s() {
+	nkf -sc $1 > $2/$1
+	tscopy $1 $2/$1
+}
+
+nkf_s	README.txt	$stone
+nkf_s	README.en.txt	$stone
+nkf_s	stone.c		$stone
+nkf_s	Makefile	$stone
+nkf_s	GPL.txt		$stone
+nkf_s	README.txt	$stones
+nkf_s	README.en.txt	$stones
+nkf_s	stone.c		$stones
+nkf_s	Makefile	$stones
+nkf_s	GPL.txt		$stones
+mkdir stone-$ver
+cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt stone-$ver/.
+if [ -n "$stamp" ]
+then	touch -t $stamp $stone $stones stone-$ver  \
+		$stone/README.*  $stones/README.*  \
+		$stone/stone.c   $stones/stone.c   \
+		$stone/stone.exe $stones/stone.exe \
+		$stone/Makefile  $stones/Makefile  \
+		stone-$ver/README.* stone-$ver/stone.c stone-$ver/Makefile \
+		README.* stone.c Makefile
+	tar czf stone-$ver.tar.gz stone-$ver
+	lha u stone-$ver.lzh $stone
+	lha u stones-$ver.lzh $stones
+	touch -t $stamp stone-$ver.tar.gz stone-$ver.lzh stones-$ver.lzh
+fi
