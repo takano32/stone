@@ -1187,7 +1187,14 @@ Pair *pair;
 		SSL_in_accept_init(pair->ssl));
     if (ret < 0) {
 	err = SSL_get_error(pair->ssl,ret);
-	if (err) {
+	if (err== SSL_ERROR_NONE
+		|| err == SSL_ERROR_WANT_READ
+		|| err == SSL_ERROR_WANT_WRITE) {
+	    if (Debug > 4)
+		message(LOG_DEBUG,"TCP %d: SSL_accept interrupted",pair->sd);
+	    pair->proto |= proto_ssl_intr;
+	    return 0;	/* EINTR */
+	} else if (err) {
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
 	    message(LOG_ERR,"TCP %d: SSL_accept error err=%d",pair->sd,err);
@@ -1200,10 +1207,6 @@ Pair *pair;
 	    SSL_free(ssl);
 	    return -1;
 	}
-	if (Debug > 4)
-	    message(LOG_DEBUG,"TCP %d: SSL_accept interrupted",pair->sd);
-	pair->proto |= proto_ssl_intr;
-	return 0;	/* EINTR */
     }
     if (SSL_in_accept_init(pair->ssl)) {
 	SSL *ssl = pair->ssl;
@@ -1268,7 +1271,13 @@ Pair *pair;
     ret = SSL_connect(pair->ssl);
     if (ret < 0) {
 	err = SSL_get_error(pair->ssl,ret);
-	if (err) {
+	if (err== SSL_ERROR_NONE
+		|| err == SSL_ERROR_WANT_READ
+		|| err == SSL_ERROR_WANT_WRITE) {
+	    if (Debug > 4)
+		message(LOG_DEBUG,"TCP %d: SSL_connect interrupted",pair->sd);
+	    return 0;	/* EINTR */
+	} else if (err) {
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
 	    message(LOG_ERR,"TCP %d: SSL_connect error err=%d",pair->sd,err);
@@ -1281,9 +1290,6 @@ Pair *pair;
 	    SSL_free(ssl);
 	    return -1;
 	}
-	if (Debug > 4)
-	    message(LOG_DEBUG,"TCP %d: SSL_connect interrupted",pair->sd);
-	return 0;	/* EINTR */
     }
     return 1;
 }
@@ -1320,6 +1326,7 @@ struct sockaddr_in *sinp;	/* connect to */
     Pair *p = pair->pair;
     if (!(pair->proto & proto_ssl_intr)) {
 	ret = connect(pair->sd,(struct sockaddr*)sinp,sizeof(*sinp));
+	fcntl(pair->sd,F_SETFL,O_NONBLOCK);
 	if (pair->proto & proto_close) return -1;
 	if (ret < 0) {
 #ifdef WINDOWS
@@ -1532,6 +1539,7 @@ Stone *stonep;
     pair1 = pair2 = NULL;
     len = sizeof(from);
     nsd = accept(stonep->sd,(struct sockaddr*)&from,&len);
+    fcntl(nsd,F_SETFL,O_NONBLOCK);
     waitMutex(FdRinMutex);
     FD_SET(stonep->sd,&rin);
     freeMutex(FdRinMutex);
@@ -1608,7 +1616,7 @@ Stone *stonep;
     time(&pair1->clock);
     pair1->timeout = stonep->timeout;
     pair1->pair = pair2;
-    pair2->sd = socket(PF_INET,SOCK_STREAM,0);
+    pair2->sd = socket(AF_INET,SOCK_STREAM,0);
     if (InvalidSocket(pair2->sd)) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
@@ -1639,10 +1647,6 @@ Stone *stonep;
     }
 #endif
     if (ret > 0) pair1->proto |= proto_connect;
-#ifdef FIXME
-    fcntl(pair1->sd,F_SETFL,O_NONBLOCK);
-    fcntl(pair2->sd,F_SETFL,O_NONBLOCK);
-#endif
     return pair1;
 }
 
@@ -2564,6 +2568,9 @@ Pair *pair;
 	    if (p[i] && FD_ISSET(p[i]->sd,&eo)) {	/* exception */
 		message(LOG_ERR,"TCP %d: exception",p[i]->sd);
 		message_pair(p[i]);
+		FD_CLR(p[i]->sd,&ri);
+		FD_CLR(p[i]->sd,&wi);
+		FD_CLR(p[i]->sd,&ei);
 		doclose(p[i]);
 	    } else if (p[i] && FD_ISSET(p[i]->sd,&ro)) {	/* read */
 		rPair = p[i];
@@ -2575,6 +2582,7 @@ Pair *pair;
 		len = doread(rPair);
 		rPair->count--;
 		if (len < 0 || (rPair->proto & proto_close) || wPair == NULL) {
+		    FD_CLR(rsd,&ri);
 		    doclose(rPair);	/* EOF or error */
 		} else {
 		    if (len > 0) {
@@ -2604,7 +2612,11 @@ Pair *pair;
 		len = dowrite(wPair);
 		wPair->count--;
 		if (len < 0 || (wPair->proto & proto_close) || rPair == NULL) {
-		    if (rPair) doclose(rPair);	/* if error, close */
+		    if (rPair && ValidSocket(rsd)) {
+			FD_CLR(rsd,&ri);
+			doclose(rPair);	/* if error, close */
+		    }
+		    FD_CLR(wsd,&wi);
 		    doclose(wPair);
 		} else {
 		    if (wPair->len <= 0) {	/* all written */
@@ -3755,8 +3767,8 @@ char *argv[];
 #ifdef USE_SSL
     ssl_ctx_server = SSL_CTX_new(SSLv23_server_method());
     ssl_ctx_client = SSL_CTX_new(SSLv23_client_method());
-    SSL_CTX_set_mode(ssl_ctx_server,SSL_MODE_AUTO_RETRY);
-    SSL_CTX_set_mode(ssl_ctx_client,SSL_MODE_AUTO_RETRY);
+    SSL_CTX_set_mode(ssl_ctx_server,SSL_MODE_ENABLE_PARTIAL_WRITE);
+    SSL_CTX_set_mode(ssl_ctx_client,SSL_MODE_ENABLE_PARTIAL_WRITE);
     if (!cipher_list) cipher_list = getenv("SSL_CIPHER");
 #endif
     pairs.next = NULL;
