@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.44 2003/05/05 06:54:57 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.45 2003/05/05 16:42:33 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -243,6 +243,7 @@ typedef int SOCKET;
 
 typedef struct {
     int verbose;
+    int depth;
     SSL_CTX *ctx;
     regex_t *re[DEPTH_MAX];
 } StoneSSL;
@@ -2753,6 +2754,10 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 		pair->sd, err, depth, preverify_ok);
     p = X509_NAME_oneline(X509_get_subject_name(err_cert), buf, BUFMAX-1);
     if (ss->verbose && p) message(LOG_DEBUG,"[depth%d=%s]",depth,p);
+    if (depth > ss->depth) {
+	preverify_ok = 0;
+	X509_STORE_CTX_set_error(ctx, X509_V_ERR_CERT_CHAIN_TOO_LONG);
+    }
     if (!preverify_ok) return 0;
     if (depth < DEPTH_MAX && ss->re[depth]) {
 	err = regexec(ss->re[depth], p, (size_t)0, 0, 0);
@@ -2785,7 +2790,8 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
     }
     SSL_CTX_set_mode(ss->ctx,SSL_MODE_ENABLE_PARTIAL_WRITE);
     SSL_CTX_set_verify(ss->ctx,opts->mode,opts->callback);
-    SSL_CTX_set_verify_depth(ss->ctx,opts->depth);
+    SSL_CTX_set_verify_depth(ss->ctx,opts->depth + 1);
+    ss->depth = opts->depth;
     if ((opts->caFile || opts->caPath)
 	&& !SSL_CTX_load_verify_locations(ss->ctx,opts->caFile,opts->caPath)) {
 	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s,%s) error",
@@ -2811,7 +2817,7 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 	goto error;
     }
     for (i=0; i < DEPTH_MAX; i++) {
-	if (i < opts->depth && opts->regexp[i]) {
+	if (i <= opts->depth && opts->regexp[i]) {
 	    ss->re[i] = malloc(sizeof(regex_t));
 	    if (!ss->re) goto memerr;
 	    err = regcomp(ss->re[i], opts->regexp[i], REG_EXTENDED|REG_ICASE);
