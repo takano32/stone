@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.154 2004/08/31 02:31:11 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.155 2004/08/31 08:06:26 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2072,25 +2072,27 @@ void asyncConn(Conn *conn) {
     if (p2 == NULL) goto finish;
     time(&clock);
     if (Debug > 8) message(LOG_DEBUG, "asyncConn...");
-    ofs = (p1->stone->proto & state_mask) % p1->stone->nsins;
-    if (p1->stone->backups) {
-	int i;
+    if (p1->stone->nsins > 1) {	/* load balancing */
 	int n = p1->stone->nsins;
-	for (i=0; i < n; i++) {
-	    Backup *b = p1->stone->backups[(ofs+i) % n];
-	    if (!b || b->bn == 0) {	/* no backup or healthy, use it */
-		ofs = (ofs+i) % n;
-		break;
+	ofs = (p1->stone->proto & state_mask) % n;
+	if (p1->stone->backups) {
+	    int i;
+	    for (i=0; i < n; i++) {
+		Backup *b = p1->stone->backups[(ofs+i) % n];
+		if (!b || b->bn == 0) {	/* no backup or healthy, use it */
+		    ofs = (ofs+i) % n;
+		    break;
+		}
+		if (Debug > 8)
+		    message(LOG_DEBUG, "TCP %d: ofs=%d is unhealthy, skipped",
+			    p1->sd, (ofs+i) % n);
 	    }
-	    if (Debug > 8)
-		message(LOG_DEBUG, "TCP %d: ofs=%d is unhealthy, skipped",
-			p1->sd, (ofs+i) % n);
+	    backup = p1->stone->backups[ofs];
 	}
-	backup = p1->stone->backups[ofs];
+	conn->sin = p1->stone->sins[ofs];	/* round robin */
+	p1->stone->proto = ((p1->stone->proto & ~state_mask)
+			    | ((ofs+1) & state_mask));
     }
-    conn->sin = p1->stone->sins[ofs];	/* round robin */
-    p1->stone->proto = ((p1->stone->proto & ~state_mask)
-			| ((ofs+1) & state_mask));
 #ifdef USE_SSL
     if (p2->ssl_flag & sf_intr)
 	ret = trySSL_accept(p2);	/* accept not completed */
