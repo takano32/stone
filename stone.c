@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.170 2004/09/15 17:22:11 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.171 2004/09/15 17:47:20 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -158,8 +158,8 @@ typedef void *(*aync_start_routine) (void *);
     if (Debug > 7) message(LOG_DEBUG,"ASYNC: %d",AsyncCount);\
     AsyncCount++;\
     freeMutex(AsyncMutex);\
-    if (err=pthread_create(&thread,&thread_attr,\
-			   (aync_start_routine)func,arg)) {\
+    err=pthread_create(&thread,&thread_attr,(aync_start_routine)func,arg);\
+    if (err) {\
 	message(LOG_ERR,"pthread_create error err=%d",err);\
 	func(arg);\
     } else if (Debug > 7) {\
@@ -174,6 +174,7 @@ typedef void *(*aync_start_routine) (void *);
 #define NO_THREAD
 #endif	/* ! PTHREAD */
 #endif	/* ! WINDOWS & ! OS2 */
+#include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -442,34 +443,34 @@ fd_set rin, win, ein;
 int PairTimeOut = 10 * 60;	/* 10 min */
 int AsyncCount = 0;
 
-const state_mask =	    0x00ff;
-const proto_command =	    0x0f00;	/* command (destination only) */
-const proto_tcp	=	    0x1000;	/* transmission control protocol */
-const proto_udp =	    0x2000;	/* user datagram protocol */
-const proto_source =	    0x4000;	/* source flag */
-					/* only for Stone */
-const proto_ident =         0x8000;	  /* need ident */
-const proto_nobackup =     0x10000;	  /* no backup */
-const proto_ssl_s =    	 0x1000000;	  /* SSL source */
-const proto_ssl_d =	 0x2000000;	  /*     destination */
-					/* only for Pair */
-const proto_connect =	    0x8000;	  /* connection established */
-const proto_first_r =	   0x10000;	  /* first read packet */
-const proto_first_w =	   0x20000;	  /* first written packet */
-const proto_select_r =	   0x40000;	  /* select to read */
-const proto_select_w =	   0x80000;	  /* select to write */
-const proto_shutdown =	  0x100000;	  /* sent shutdown */
-const proto_close =	  0x200000;	  /* request to close */
-const proto_eof =	  0x400000;	  /* EOF */
-const proto_error =	  0x800000;	  /* error reported */
-const proto_ohttp_s =	 0x4000000;	/* over http source */
-const proto_ohttp_d =	 0x8000000;	/*           destination */
-const proto_base_s =	0x10000000;	/* base64 source */
-const proto_base_d =	0x20000000;	/*        destination */
-#define command_proxy	    0x0100	/* http proxy */
-#define command_ihead	    0x0200	/* insert header */
-#define command_pop	    0x0300	/* POP -> APOP conversion */
-#define command_health	    0x0400	/* is stone healthy ? */
+const int state_mask =		    0x00ff;
+const int proto_command =	    0x0f00;	/* command (dest. only) */
+const int proto_tcp =		    0x1000;	/* transmission control p. */
+const int proto_udp =		    0x2000;	/* user datagram protocol */
+const int proto_source =	    0x4000;	/* source flag */
+						/* only for Stone */
+const int proto_ident =		    0x8000;	  /* need ident */
+const int proto_nobackup =	   0x10000;	  /* no backup */
+const int proto_ssl_s =		 0x1000000;	  /* SSL source */
+const int proto_ssl_d =		 0x2000000;	  /*     destination */
+						/* only for Pair */
+const int proto_connect =	    0x8000;	  /* connection established */
+const int proto_first_r =	   0x10000;	  /* first read packet */
+const int proto_first_w =	   0x20000;	  /* first written packet */
+const int proto_select_r =	   0x40000;	  /* select to read */
+const int proto_select_w =	   0x80000;	  /* select to write */
+const int proto_shutdown =	  0x100000;	  /* sent shutdown */
+const int proto_close =	  	  0x200000;	  /* request to close */
+const int proto_eof =		  0x400000;	  /* EOF */
+const int proto_error =		  0x800000;	  /* error reported */
+const int proto_ohttp_s =	 0x4000000;	/* over http source */
+const int proto_ohttp_d =	 0x8000000;	/*           destination */
+const int proto_base_s =	0x10000000;	/* base64 source */
+const int proto_base_d =	0x20000000;	/*        destination */
+#define command_proxy		    0x0100	/* http proxy */
+#define command_ihead		    0x0200	/* insert header */
+#define command_pop		    0x0300	/* POP -> APOP conversion */
+#define command_health		    0x0400	/* is stone healthy ? */
 
 #define proto_ssl	(proto_ssl_s|proto_ssl_d)
 #define proto_ohttp	(proto_ohttp_s|proto_ohttp_d)
@@ -483,8 +484,8 @@ const proto_base_d =	0x20000000;	/*        destination */
 #define proto_all	(proto_src|proto_dest)
 
 #ifdef USE_SSL
-const sf_wb_on_r =	0x00004;	/* SSL_write blocked on read */
-const sf_rb_on_w =	0x00008;	/* SSL_read blocked on write */
+const int sf_wb_on_r =	0x00004;	/* SSL_write blocked on read */
+const int sf_rb_on_w =	0x00008;	/* SSL_read blocked on write */
 #endif
 
 int BacklogMax = BACKLOG_MAX;
@@ -998,7 +999,8 @@ void freeMutex(HMTX h) {
 void waitMutex(int h) {
     int err;
     for (;;) {
-	if (err=pthread_mutex_lock(&FastMutex)) {
+	err = pthread_mutex_lock(&FastMutex);
+	if (err) {
 	    message(LOG_ERR, "Mutex %d err=%d.", h, err);
 	}
 	if (FastMutexs[h] == 0) {
@@ -1014,8 +1016,8 @@ void waitMutex(int h) {
 }
 
 void freeMutex(int h) {
-    int err;
-    if (err=pthread_mutex_lock(&FastMutex)) {
+    int err = pthread_mutex_lock(&FastMutex);
+    if (err) {
 	message(LOG_ERR, "Mutex %d err=%d.", h, err);
     }
     if (FastMutexs[h] > 0) {
@@ -1324,7 +1326,7 @@ char *str2bin(char *p, int *lenp) {
     char buf[BUFMAX];
     char c;
     int i = 0;
-    while (c=*p++) {
+    while ((c=*p++)) {
 	if (c == '\\') {
 	    c = *p++;
 	    switch(c) {
@@ -2041,7 +2043,6 @@ void doclose(Pair *pair) {	/* close pair */
 
 /* pair connect to destination */
 int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
-    int ret;
     char addr[STRMAX];
     char port[STRMAX];
     Pair *p = pair->pair;
@@ -2432,8 +2433,9 @@ Pair *doaccept(Stone *stonep) {
     SOCKET nsd;
     int len;
     Pair *pair1, *pair2;
+#ifdef ENLARGE
     int prevXferBufMax = XferBufMax;
-    int ret;
+#endif
     char ident[STRMAX];
     char fromstr[STRMAX*2];
     char portstr[STRMAX];
@@ -2478,7 +2480,6 @@ Pair *doaccept(Stone *stonep) {
     addr2str(&from.sin_addr, fromstr+len, STRMAX*2-len);
     port2str(from.sin_port, stonep->proto, proto_src, portstr, STRMAX);
     if (!checkXhost(stonep, &from.sin_addr, ident)) {
-	char port[STRMAX];
 	message(LOG_WARNING, "stone %d: access denied: from %s:%s",
 		stonep->sd, fromstr, portstr);
 	shutdown(nsd, 2);
@@ -2567,7 +2568,6 @@ Pair *doaccept(Stone *stonep) {
 }
 
 int strnPeerAddr(char *buf, int limit, SOCKET sd, int isport) {
-    int i = 0;
     struct sockaddr_in name;
     int len;
     char str[STRMAX];
@@ -2622,15 +2622,15 @@ int strnparse(char *buf, int limit, char **pp, Pair *pair, char term) {
 		    /* now (match || ssl == NULL) holds */
 		}
 		if (match) {
-		    c -= '0';
-		    if (match[c]) {
+		    int num = c - '0';
+		    if (match[num]) {
 			if (cond >= 0) {
-			    if (*match[c]) cond = 1;
+			    if (*match[num]) cond = 1;
 			} else {
-			    int len = strlen(match[c]);
+			    int len = strlen(match[num]);
 			    if (len >= limit - i) len = limit - i;
 			    if (buf) {
-				strncpy(buf+i, match[c], len);
+				strncpy(buf+i, match[num], len);
 				i += len;
 			    }
 			}
@@ -2714,7 +2714,7 @@ void asyncAccept(Stone *stone) {
 }
 
 int scanClose(void) {	/* scan close request */
-    Pair *p1, *p2, *t;
+    Pair *p1, *p2;
     p1 = trash;
     trash = NULL;
     while (p1 != NULL) {
@@ -2771,7 +2771,6 @@ int scanClose(void) {	/* scan close request */
 }
 
 void message_buf(Pair *pair, int len, char *str) {	/* dump for debug */
-    int i, j, k, l;
     char head[STRMAX];
     Pair *p = pair->pair;
     if (p == NULL) return;
@@ -3727,7 +3726,6 @@ void asyncReadWrite(Pair *pair) {
     Pair *p[2];
     Pair *rPair, *wPair;
     SOCKET sd, rsd, wsd;
-    int established;
     int again = 0;
     int len;
     int i;
@@ -5348,7 +5346,6 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
 int doopts(int argc, char *argv[]) {
     int i;
     char *p;
-    FILE *fp;
     for (i=1; i < argc; i++) {
 	p = argv[i];
 	if (*p == '-') {
