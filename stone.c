@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.82 2003/10/22 12:56:08 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.83 2003/10/22 16:50:03 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -4178,6 +4178,10 @@ void doargs(int argc, int i, char *argv[]) {
 	    while(*p) switch(*p++) {
 	    case 'd':
 		Debug++;
+		break;
+	    case 'b':
+		mkBackup(atoi(argv[i+1]), argv[i+2], argv[i+3]);
+		i += 3;
 		break;
 #ifdef USE_SSL
 	    case 'q':
