@@ -119,6 +119,10 @@ typedef void (*FuncPtr)(void*);
 #define NO_BCOPY
 #define bzero(b,n)	memset(b,0,n)
 #define ASYNC(func,arg)	\
+    waitMutex(AsyncMutex);\
+    if (Debug > 7) message(LOG_DEBUG,"ASYNC: %d",AsyncCount);\
+    AsyncCount++;\
+    freeMutex(AsyncMutex);\
     if (_beginthread((FuncPtr)func,0,arg) < 0) {\
 	message(LOG_ERR,"_beginthread error err=%d",errno);\
 	func(arg);\
@@ -133,6 +137,10 @@ typedef void (*FuncPtr)(void*);
 #define NO_ALRM
 #define NO_SYSLOG
 #define ASYNC(func,arg)	\
+    waitMutex(AsyncMutex);\
+    if (Debug > 7) message(LOG_DEBUG,"ASYNC: %d",AsyncCount);\
+    AsyncCount++;\
+    freeMutex(AsyncMutex);\
     if (_beginthread((FuncPtr)func,NULL,32768,arg) < 0) {\
 	message(LOG_ERR,"_beginthread error err=%d",errno);\
 	func(arg);\
@@ -144,6 +152,10 @@ typedef void (*FuncPtr)(void*);
 pthread_attr_t thread_attr;
 typedef void *(*aync_start_routine) (void *);
 #define ASYNC(func,arg)	\
+    waitMutex(AsyncMutex);\
+    if (Debug > 7) message(LOG_DEBUG,"ASYNC: %d",AsyncCount);\
+    AsyncCount++;\
+    freeMutex(AsyncMutex);\
     if (err=pthread_create(&thread,&thread_attr,\
 			   (aync_start_routine)func,arg)) {\
 	message(LOG_ERR,"pthread_create error err=%d",err);\
@@ -152,7 +164,11 @@ typedef void *(*aync_start_routine) (void *);
 	message(LOG_DEBUG,"pthread ID=%d",thread);\
     }
 #else
-#define ASYNC(func,arg)	func(arg)
+#define ASYNC(func,arg)	\
+    waitMutex(AsyncMutex);\
+    AsyncCount++;\
+    freeMutex(AsyncMutex);\
+    func(arg)
 #define NO_THREAD
 #endif	/* ! OS2 */
 #endif	/* ! WINDOWS */
@@ -174,10 +190,7 @@ typedef int SOCKET;
 #define ASYNC_END		/* */
 #else
 #define ASYNC_BEGIN	\
-    waitMutex(AsyncMutex);\
-    AsyncCount++;\
-    if (Debug > 7) message(LOG_DEBUG,"ASYNC_BEGIN: %d",AsyncCount);\
-    freeMutex(AsyncMutex)
+    if (Debug > 7) message(LOG_DEBUG,"ASYNC_BEGIN: %d",AsyncCount)
 #define ASYNC_END	\
     waitMutex(AsyncMutex);\
     if (Debug > 7) message(LOG_DEBUG,"ASYNC_END: %d",AsyncCount);\
@@ -226,6 +239,7 @@ typedef int SOCKET;
 #include <openssl/crypto.h>
 #include <openssl/x509.h>
 #include <openssl/ssl.h>
+#include <openssl/bio.h>
 #include <openssl/err.h>
 SSL_CTX *ssl_ctx_server, *ssl_ctx_client;
 char *keyfile, *certfile;
@@ -233,6 +247,10 @@ char ssl_file_path[BUFMAX];
 int ssl_verbose_flag = 0;
 int ssl_verify_flag = SSL_VERIFY_NONE;
 char *cipher_list = NULL;
+#include <openssl/md5.h>
+#define MD5Init		MD5_Init
+#define MD5Update	MD5_Update
+#define MD5Final	MD5_Final
 #else
 #ifdef USE_POP
 #include "global.h"
@@ -757,8 +775,8 @@ int h;
 	}
 	if (FastMutexs[h] == 0) {
 	    FastMutexs[h]++;
-	    if (Debug > 8) message(LOG_DEBUG,"Lock Mutex %d = %d",
-				   h,FastMutexs[h]);
+	    if (Debug > 10) message(LOG_DEBUG,"Lock Mutex %d = %d",
+				    h,FastMutexs[h]);
 	    pthread_mutex_unlock(&FastMutex);
 	    break;
 	}
@@ -779,8 +797,8 @@ int h;
 	    message(LOG_ERR,"Mutex %d Locked Recursively (%d)",
 		    h,FastMutexs[h]);
 	FastMutexs[h]--;
-	if (Debug > 8) message(LOG_DEBUG,"Unlock Mutex %d = %d",
-			       h,FastMutexs[h]);
+	if (Debug > 10) message(LOG_DEBUG,"Unlock Mutex %d = %d",
+				h,FastMutexs[h]);
     }
     pthread_mutex_unlock(&FastMutex);
 }
@@ -1216,14 +1234,16 @@ Pair *pair;
 		SSL_in_init(pair->ssl),
 		SSL_in_accept_init(pair->ssl));
     if (ret < 0) {
-	err = ERR_get_error();
+	err = SSL_get_error(pair->ssl,ret);
 	if (err) {
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
 	    message(LOG_ERR,"TCP %d: SSL_accept error err=%d",pair->sd,err);
+#ifdef FIXME
 	    if (ssl_verbose_flag)
 		message(LOG_INFO,"TCP %d: %s",
 			pair->sd,ERR_error_string(err,NULL));
+#endif
 	    message_pair(pair);
 	    SSL_free(ssl);
 	    return -1;
@@ -1252,8 +1272,10 @@ char *key;
 char *cert;
 {
     int ret;
+    BIO *rbio = BIO_new_fd(pair->sd,BIO_CLOSE);
+    BIO *wbio = BIO_new_fd(pair->sd,BIO_CLOSE);
     pair->ssl = SSL_new(ssl_ctx_server);
-    SSL_set_fd(pair->ssl,pair->sd);
+    SSL_set_bio(pair->ssl,rbio,wbio);
     if (!SSL_use_RSAPrivateKey_file(pair->ssl,key,X509_FILETYPE_PEM)) {
 	SSL *ssl = pair->ssl;
 	pair->ssl = NULL;
@@ -1283,8 +1305,10 @@ Pair *pair;
 {
     int err, ret;
     if (!(pair->proto & proto_ssl_intr)) {
+	BIO *rbio = BIO_new_fd(pair->sd,BIO_CLOSE);
+	BIO *wbio = BIO_new_fd(pair->sd,BIO_CLOSE);
 	pair->ssl = SSL_new(ssl_ctx_client);
-	SSL_set_fd(pair->ssl,pair->sd);
+	SSL_set_bio(pair->ssl,rbio,wbio);
 	if (cipher_list) SSL_set_cipher_list(pair->ssl,cipher_list);	    
 	SSL_set_verify(pair->ssl,ssl_verify_flag,NULL);
     } else {
@@ -1380,6 +1404,9 @@ struct sockaddr_in *sinp;	/* connect to */
     ret = 1;
 #ifdef USE_SSL
     if (pair->proto & proto_ssl) {
+#ifdef FIXME
+	fcntl(pair->sd,F_SETFL,O_NONBLOCK);
+#endif
 	ret = doSSL_connect(pair);
 	if (ret == 0) {	/* EINTR */
 	    pair->proto |= proto_ssl_intr;
@@ -1666,6 +1693,9 @@ Stone *stonep;
 #ifdef USE_SSL
     pair1->ssl = pair2->ssl = NULL;
     if (stonep->proto & proto_ssl_s) {
+#ifdef FIXME
+	fcntl(nsd,F_SETFL,O_NONBLOCK);
+#endif
 	ret = doSSL_accept(pair1,stonep->keyfile,stonep->certfile);
 	if (ret < 0) {
 	    closesocket(nsd);
@@ -1857,19 +1887,35 @@ Pair *pair;
     if (InvalidSocket(sd)) return -1;
 #ifdef USE_SSL
     if (pair->ssl) {
-	len = SSL_write(pair->ssl,&pair->buf[pair->start],pair->len);
+	if (pair->len > 0) {
+	    len = SSL_write(pair->ssl,&pair->buf[pair->start],pair->len);
+	} else {	/* flush BIO buffer */
+	    BIO *bio = SSL_get_wbio(pair->ssl);
+	    if (bio) {
+		BIO_flush(bio);
+		if (Debug > 8)
+		    message(LOG_DEBUG,"TCP %d: SSL buffer flushed",sd);
+	    }
+	    return 0;
+	}
 	if (pair->proto & proto_close) return -1;
-	if (len < 0) {
+	if (len <= 0) {
 	    int err;
 	    err = SSL_get_error(pair->ssl,len);
-	    if (!err) {
+	    if (err == SSL_ERROR_NONE
+		|| err == SSL_ERROR_WANT_READ
+		|| err == SSL_ERROR_WANT_WRITE) {
 		if (Debug > 4)
-		    message(LOG_DEBUG,"TCP %d: SSL_write interrupted",sd);
+		    message(LOG_DEBUG,"TCP %d: SSL_write interrupted err=%d",
+			    sd,err);
 		return 0;	/* EINTR */
 	    }
-	    message(LOG_ERR,"TCP %d: SSL_write error err=%d, closing",sd,err);
-	    message_pair(pair);
-	    return len;	/* error */
+	    if (err != SSL_ERROR_ZERO_RETURN) {
+		message(LOG_ERR,"TCP %d: SSL_write error err=%d, closing",
+			sd,err);
+		message_pair(pair);
+		return len;	/* error */
+	    }
 	}
 	if (ssl_verbose_flag &&
 	    (pair->proto & proto_first_r) &&
@@ -2049,17 +2095,23 @@ Pair *pair;		/* read into buf from pair->pair->start */
     if (pair->ssl) {
 	len = SSL_read(pair->ssl,&p->buf[start],bufmax);
 	if (pair->proto & proto_close) return -1;
-	if (len < 0) {
+	if (len <= 0) {
 	    int err;
 	    err = SSL_get_error(pair->ssl,len);
-	    if (!err) {
+	    if (err == SSL_ERROR_NONE
+		|| err == SSL_ERROR_WANT_READ
+		|| err == SSL_ERROR_WANT_WRITE) {
 		if (Debug > 4)
-		    message(LOG_DEBUG,"TCP %d: SSL_read interrupted",sd);
+		    message(LOG_DEBUG,"TCP %d: SSL_read interrupted err=%d",
+			    sd,err);
 		return 0;	/* EINTR */
 	    }
-	    message(LOG_ERR,"TCP %d: SSL_read error err=%d, closing",sd,err);
-	    message_pair(pair);
-	    return len;	/* error */
+	    if (err != SSL_ERROR_ZERO_RETURN) {
+		message(LOG_ERR,"TCP %d: SSL_read error err=%d, closing",
+			sd,err);
+		message_pair(pair);
+		return len;	/* error */
+	    }
 	}
 	if (ssl_verbose_flag &&
 	    (pair->proto & proto_first_r) &&
@@ -2088,7 +2140,7 @@ Pair *pair;		/* read into buf from pair->pair->start */
 	if (Debug > 2) message(LOG_DEBUG,"TCP %d: EOF",sd);
 	return -1;	/* EOF */
     }
-    if (pair->len > pair->bufmax - 10
+    if (len > pair->bufmax - 10
 	&& XferBufMax < pair->bufmax * 2) {
 	XferBufMax = pair->bufmax * 2;
 	message(LOG_NOTICE,"TCP %d: XferBufMax becomes %d byte",sd,XferBufMax);
@@ -2526,29 +2578,37 @@ Pair *pair;
     return len;
 }
 
-int waitFd(pair, write_flag)
+int waitFd(pair, write_flag, timeout)
 Pair *pair;
 int write_flag;
+long timeout;
 {
     SOCKET sd = pair->sd;
     Pair *p = pair->pair;
-    struct timeval tv;
+    struct timeval tv, *tvp;
     fd_set set;
     int ret;
     if (InvalidSocket(sd)) return -1;
     FD_ZERO(&set);
     FD_SET(sd,&set);
-    tv.tv_sec = 0;
-    tv.tv_usec = TICK_SELECT;
+    tvp = &tv;
+    tvp->tv_sec = 0;
+    if (timeout) {
+	tvp->tv_usec = timeout;
+    } else {
+	tvp = NULL;
+    }
     if (Debug > 8) {
-	message(LOG_DEBUG,"TCP %d: select to %s %d...", 
-		sd, (write_flag ? "write data from" : "read data into"),
+	message(LOG_DEBUG,"TCP %d: select(%ld) to %s %d...", 
+		sd,
+		(tvp ? tvp->tv_usec : 0),
+		(write_flag ? "write data from" : "read data into"),
 		(p ? p->sd : INVALID_SOCKET));
     }
     if (write_flag) {
-	return select(FD_SETSIZE,NULL,&set,NULL,&tv);
+	return select(FD_SETSIZE,NULL,&set,NULL,tvp);
     } else {
-	return select(FD_SETSIZE,&set,NULL,NULL,&tv);
+	return select(FD_SETSIZE,&set,NULL,NULL,tvp);
     }
 }
 
@@ -2559,6 +2619,7 @@ int write_flag;
     Pair *rPair, *wPair;
     SOCKET rsd, wsd;
     int len;
+    int written = 0;	/* whether all data are written or not */
     ASYNC_BEGIN;
     if (write_flag) {
 	wPair = pair;
@@ -2588,13 +2649,9 @@ int write_flag;
 		&& ValidSocket(wsd)
 		&& !(wPair->proto & proto_close)
 		&& !(rPair->proto & proto_close)) {
-		if (
-#ifdef USE_SSL
-		    wPair->ssl || rPair->ssl ||
-#endif
-		    (!first_flag
-		     && !(wPair->proto & proto_first_w)
-		     && waitFd(wPair,1) > 0)) {
+		if (!first_flag
+		    && !(wPair->proto & proto_first_w)
+		    && waitFd(wPair,1,TICK_SELECT) > 0) {
 		    wPair->count++;
 		    if (wPair->pair) rPair->count++;
 		    if (Debug > 8)
@@ -2629,16 +2686,15 @@ int write_flag;
 	doclose(wPair,1);
     } else {
 	if (wPair->len <= 0) {	/* all written */
+#ifdef USE_SSL
+	    if (len > 0 && wPair->ssl) written = 1;
+#endif
 	    if (wPair->proto & proto_first_w) wPair->proto &= ~proto_first_w;
 	    rsd = rPair->sd;
 	    if (rPair && ValidSocket(rsd)
 		&& !(rPair->proto & proto_close)
 		&& !(wPair->proto & proto_close)) {
-		if (
-#ifdef USE_SSL
-		    wPair->ssl || rPair->ssl ||
-#endif
-		    waitFd(rPair,0) > 0) {
+		if (waitFd(rPair,0,TICK_SELECT) > 0) {
 		    rPair->count++;
 		    if (rPair->pair) wPair->count++;
 		    if (Debug > 8)
@@ -2652,12 +2708,23 @@ int write_flag;
 		freeMutex(FdRinMutex);
 	    }
 	} else {		/* EINTR */
+	    written = 0;
 	    waitMutex(FdWinMutex);
 	    FD_SET(wsd,&win);
 	    freeMutex(FdWinMutex);
 	}
     }
  end:
+#ifdef USE_SSL
+    if (written) {
+	if (Debug > 8)
+	    message(LOG_DEBUG,"TCP %d: flush SSL buffer... status=%d",
+		    wPair->sd,SSL_want(wPair->ssl));
+	waitMutex(FdWinMutex);
+	FD_SET(wPair->sd,&win);
+	freeMutex(FdWinMutex);
+    }
+#endif
     ASYNC_END;
 }
 
@@ -3838,11 +3905,13 @@ char *argv[];
 #endif
 #ifdef USE_SSL
     ssl_ctx_server = SSL_CTX_new(SSLv23_server_method());
+    ssl_ctx_client = SSL_CTX_new(SSLv23_client_method());
+#ifdef FIXME
     SSL_CTX_set_mode(ssl_ctx_server,
 		     SSL_MODE_ENABLE_PARTIAL_WRITE|SSL_MODE_AUTO_RETRY);
-    ssl_ctx_client = SSL_CTX_new(SSLv23_client_method());
     SSL_CTX_set_mode(ssl_ctx_client,
 		     SSL_MODE_ENABLE_PARTIAL_WRITE|SSL_MODE_AUTO_RETRY);
+#endif
     if (!cipher_list) cipher_list = getenv("SSL_CIPHER");
 #endif
     pairs.next = NULL;

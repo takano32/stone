@@ -49,8 +49,8 @@ stone: stone.c
 pop_stone: $(POP_LIBS)
 	$(MAKE) FLAGS="$(POP_FLAGS)" LIBS="$(POP_LIBS)" $(TARGET)
 
-ssl_stone: $(POP_LIBS)
-	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(POP_LIBS) $(SSL_LIBS)" $(TARGET)
+ssl_stone:
+	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(SSL_LIBS)" $(TARGET)
 
 stone.exe: stone.c
 	$(CC) $(FLAGS) $? $(LIBS)
@@ -58,8 +58,8 @@ stone.exe: stone.c
 pop_stone.exe: md5c.obj
 	$(MAKE) FLAGS=-DUSE_POP LIBS="md5c.obj" $(TARGET)
 
-ssl_stone.exe: md5c.obj
-	$(MAKE) FLAGS="-DUSE_POP -DUSE_SSL" LIBS="md5c.obj ssleay32.lib libeay32.lib" $(TARGET)
+ssl_stone.exe:
+	$(MAKE) FLAGS="-DUSE_POP -DUSE_SSL" LIBS="ssleay32.lib libeay32.lib" $(TARGET)
 #	$(MAKE) FLAGS=-DUSE_SSL LIBS="ssl32.lib crypt32.lib" $(TARGET)
 
 linux:
@@ -134,8 +134,8 @@ mingw:
 mingw-pop:
 	$(MAKE) TARGET=mingw pop_stone
 
-mingw-ssl: md5c.o
-	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(POP_LIBS) -lssl32 -leay32" mingw
+mingw-ssl:
+	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="-lssl32 -leay32" mingw
 
 emx:
 	$(MAKE) CC=gcc FLAGS="-DOS2 -Zmts -Zsysv-signals $(FLAGS)" LIBS="$(LIBS) -lsocket" stone.exe
