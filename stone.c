@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.165 2004/09/13 02:56:16 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.166 2004/09/13 08:08:10 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -202,15 +202,23 @@ int FdSetBug = 0;
 
 #ifdef NO_THREAD
 #define ASYNC_BEGIN		/* */
-#define ASYNC_END		/* */
+#define _ASYNC_END		/* */
 #else
 #define ASYNC_BEGIN	\
     if (Debug > 7) message(LOG_DEBUG,"ASYNC_BEGIN: %d",AsyncCount)
-#define ASYNC_END	\
+#define _ASYNC_END	\
     waitMutex(AsyncMutex);\
     if (Debug > 7) message(LOG_DEBUG,"ASYNC_END: %d",AsyncCount);\
     AsyncCount--;\
     freeMutex(AsyncMutex)
+#endif
+
+#ifdef USE_SSL
+#define ASYNC_END	\
+    _ASYNC_END;\
+    ERR_remove_state(0)
+#else
+#define ASYNC_END	_ASYNC_END
 #endif
 
 #ifdef NO_SYSLOG
@@ -1890,8 +1898,8 @@ int doSSL_connect(Pair *pair) {
     if (ret < 0) {
 	err = SSL_get_error(ssl, ret);
 	if (err== SSL_ERROR_NONE
-		|| err == SSL_ERROR_WANT_READ
-		|| err == SSL_ERROR_WANT_WRITE) {
+	    || err == SSL_ERROR_WANT_READ
+	    || err == SSL_ERROR_WANT_WRITE) {
 	    if (Debug > 4)
 		message(LOG_DEBUG, "TCP %d: SSL_connect interrupted WANT=%d",
 			pair->sd, err);
