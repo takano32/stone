@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.186 2004/09/23 08:14:30 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.187 2004/09/23 13:16:28 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3532,7 +3532,7 @@ int limitCommon(Pair *pair, int var, int limit, char *str) {
 }
 
 int limitPair(Pair *pair, char *parm, int start) {
-    return limitCommon(pair, nStones(), atoi(parm), "pair");
+    return limitCommon(pair, nPairs(pairs.next), atoi(parm), "pair");
 }
 
 int limitConn(Pair *pair, char *parm, int start) {
@@ -3972,6 +3972,7 @@ void asyncReadWrite(Pair *pair) {	/* pair must be source side */
 					     | proto_close))
 			/* and not bi-directional EOF
 			   and peer is not yet shutdowned, */
+			&& (wPair->proto & proto_connect)
 			&& ValidSocket(wsd)) {	/* and pair is valid, */
 			/*
 			  recevied EOF from rPair,
