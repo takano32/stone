@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.183 2004/09/22 05:51:35 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.184 2004/09/23 04:14:13 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -424,7 +424,7 @@ typedef struct _Origin {
 
 typedef struct _Comm {
     char *str;
-    int (*func)(Pair*, fd_set*, fd_set*, char*, int);
+    int (*func)(Pair*, char*, int);
 } Comm;
 
 Stone *stones = NULL;
@@ -466,6 +466,7 @@ const int proto_shutdown =	  0x100000;	  /* sent shutdown */
 const int proto_close =	  	  0x200000;	  /* request to close */
 const int proto_eof =		  0x400000;	  /* EOF */
 const int proto_error =		  0x800000;	  /* error reported */
+const int proto_thread =	 0x1000000;	  /* on thread */
 const int proto_ohttp_s =	 0x4000000;	/* over http source */
 const int proto_ohttp_d =	 0x8000000;	/*           destination */
 const int proto_base_s =	0x10000000;	/* base64 source */
@@ -491,7 +492,9 @@ const int sf_mask    =  0x0000f;
 const int sf_sb_on_r =  0x00010;	/* SSL_shutdown blocked on read */
 const int sf_sb_on_w =  0x00020;	/* SSL_shutdown blocked on write */
 const int sf_wb_on_r =	0x00040;	/* SSL_write blocked on read */
-const int sf_rb_on_w =	0x00080;	/* SSL_read blocked on write */
+const int sf_rb_on_w =	0x00080;	/* SSL_read  blocked on write */
+const int sf_cb_on_r =  0x00100;	/* SSL_connect blocked on read */
+const int sf_cb_on_w =  0x00200;	/* SSL_connect blocked on write */
 #endif
 
 int BacklogMax = BACKLOG_MAX;
@@ -1908,20 +1911,22 @@ int doSSL_accept(Pair *pair) {
 	tv.tv_sec = 1;
 	tv.tv_usec = 0;
     } while (select(FD_SETSIZE, &rout, &wout, NULL, &tv) >= 0);
-    if (ret < 0) {
+    if (ret <= 0) {
 	if (err == SSL_ERROR_SYSCALL) {
+	    unsigned long e = ERR_get_error();
+	    if (e == 0) {
 #ifdef WINDOWS
-	    errno = WSAGetLastError();
+		errno = WSAGetLastError();
 #endif
-	    message(priority(pair), "TCP %d: SSL_accept I/O error err=%d",
-		    pair->sd, errno);
-	} else if (err == SSL_ERROR_SSL) {
-	    message(priority(pair), "TCP %d: SSL_accept %s",
-		    pair->sd, ERR_error_string(ERR_get_error(), NULL));
+		message(priority(pair), "TCP %d: SSL_accept "
+			"I/O error errno=%d", pair->sd, errno);
+	    } else {
+		message(priority(pair), "TCP %d: SSL_accept %s",
+			pair->sd, ERR_error_string(e, NULL));
+	    }
 	} else {
-	    message(priority(pair), "TCP %d: SSL_accept err=%d %s",
-		    pair->sd, err,
-		    ERR_error_string(ERR_get_error(), NULL));
+	    message(priority(pair), "TCP %d: SSL_accept err=%d %s", pair->sd,
+		    err, ERR_error_string(ERR_get_error(), NULL));
 	}
 	message_pair(LOG_ERR, pair);
 	return -1;
@@ -1944,57 +1949,73 @@ int doSSL_accept(Pair *pair) {
     return 1;
 }
 
-/* Blocking SSL_connect (1: success, -1: if error) */
 int doSSL_connect(Pair *pair) {
-    fd_set rout, wout;
-    struct timeval tv;
+    int ret;
+    int err;
+    SOCKET sd;
     SSL *ssl;
-    int err, ret;
+    if (!pair) return -1;
+    sd = pair->sd;
+    if (InvalidSocket(sd)) return -1;
     ssl = pair->ssl;
-    pair->ssl = NULL;
-    if (ssl) SSL_free(ssl);
-    ssl = SSL_new(pair->stone->ssl_client->ctx);
     if (!ssl) {
-	message(LOG_ERR, "TCP %d: SSL_new failed", pair->sd);
-	return -1;
-    }
-    SSL_set_ex_data(ssl, PairIndex, pair);
-    SSL_set_fd(ssl, pair->sd);
-    pair->ssl = ssl;
-    do {
-	time_t now;
-	ret = SSL_connect(ssl);	/* blocking I/O */
-	if (ret <= 0) err = SSL_get_error(ssl, ret);
-	else break;
-	time(&now);
-	if (now - pair->clock >= CONN_TIMEOUT) {
-	    message(priority(pair), "TCP %d: SSL_connect timeout", pair->sd);
+	ssl = SSL_new(pair->stone->ssl_client->ctx);
+	if (!ssl) {
+	    message(LOG_ERR, "TCP %d: SSL_new failed", pair->sd);
 	    return -1;
 	}
-	FD_ZERO(&rout);
-	FD_ZERO(&wout);
-	if (err == SSL_ERROR_WANT_READ) FdSet(pair->sd, &rout);
-	else if (err == SSL_ERROR_WANT_WRITE) FdSet(pair->sd, &wout);
-	else break;
-	tv.tv_sec = 1;
-	tv.tv_usec = 0;
-    } while (select(FD_SETSIZE, &rout, &wout, NULL, &tv) >= 0);
-    if (ret < 0) {
-	message(priority(pair), "TCP %d: SSL_connect err=%d %s",
-		pair->sd, err, ERR_error_string(ERR_get_error(), NULL));
-	message_pair(LOG_ERR, pair);
-	return -1;
+	SSL_set_ex_data(ssl, PairIndex, pair);
+	SSL_set_fd(ssl, sd);
+	pair->ssl = ssl;
     }
-    if (pair->stone->ssl_client->verbose) printSSLinfo(LOG_DEBUG, ssl);
-    if (Debug > 3) {
-	SSL_CTX *ctx = pair->stone->ssl_client->ctx;
-	message(LOG_DEBUG,
-		"TCP %d: SSL_connect succeeded sess=%ld connect=%ld hits=%ld",
-		pair->sd, SSL_CTX_sess_number(ctx), SSL_CTX_sess_connect(ctx),
-		SSL_CTX_sess_hits(ctx));
-	message_pair(LOG_DEBUG, pair);
+    pair->ssl_flag &= ~(sf_cb_on_r | sf_cb_on_w);
+    ret = SSL_connect(ssl);
+    if (ret > 0) {	/* success */
+	if (Debug > 3) {
+	    SSL_CTX *ctx = pair->stone->ssl_client->ctx;
+	    message(LOG_DEBUG, "TCP %d: SSL_connect succeeded "
+		    "sess=%ld connect=%ld hits=%ld", pair->sd,
+		    SSL_CTX_sess_number(ctx), SSL_CTX_sess_connect(ctx),
+		    SSL_CTX_sess_hits(ctx));
+	    message_pair(LOG_DEBUG, pair);
+	}
+	if (pair->stone->ssl_client->verbose) printSSLinfo(LOG_DEBUG, ssl);
+	return ret;
     }
-    return 1;
+    err = SSL_get_error(ssl, ret);
+    if (err == SSL_ERROR_WANT_READ) {
+	pair->ssl_flag |= sf_cb_on_r;
+	ret = 0;
+    } else if (err == SSL_ERROR_WANT_WRITE) {
+	pair->ssl_flag |= sf_cb_on_w;
+	ret = 0;
+    } else if (err == SSL_ERROR_SYSCALL) {
+	unsigned long e = ERR_get_error();
+	if (e == 0) {
+#ifdef WINDOWS
+	    errno = WSAGetLastError();
+#endif
+	    if (errno == 0) {
+		return 1;	/* success ? */
+	    } else if (errno == EINTR || errno == EAGAIN) {
+		pair->ssl_flag |= (sf_cb_on_r | sf_cb_on_r);
+		if (Debug > 8)
+		    message(LOG_DEBUG, "TCP %d: SSL_connect "
+			    "interrupted sf=%x", sd, pair->ssl_flag);
+		return 0;
+	    }
+	    message(priority(pair), "TCP %d: SSL_connect "
+		    "I/O error sf=%x errno=%d", sd, pair->ssl_flag, errno);
+	} else {
+	    message(priority(pair), "TCP %d: SSL_connect sf=%x %s",
+		    sd, pair->ssl_flag, ERR_error_string(e, NULL));
+	}
+	return ret;
+    }
+    if (Debug > 4)
+	message(LOG_DEBUG, "TCP %d: SSL_connect interrupted sf=%x err=%d",
+		sd, pair->ssl_flag, err);
+    return ret;
 }
 
 int doSSL_shutdown(Pair *pair, int how) {
@@ -2021,8 +2042,10 @@ int doSSL_shutdown(Pair *pair, int how) {
     err = SSL_get_error(ssl, ret);
     if (err == SSL_ERROR_WANT_READ) {
 	pair->ssl_flag |= sf_sb_on_r;
+	ret = 0;
     } else if (err == SSL_ERROR_WANT_WRITE) {
 	pair->ssl_flag |= sf_sb_on_w;
+	ret = 0;
     } else if (err == SSL_ERROR_SYSCALL) {
 	unsigned long e = ERR_get_error();
 	if (e == 0) {
@@ -2030,13 +2053,13 @@ int doSSL_shutdown(Pair *pair, int how) {
 	    errno = WSAGetLastError();
 #endif
 	    if (errno == 0) {
-		return ret;
+		return 1;
 	    } else if (errno == EINTR || errno == EAGAIN) {
 		pair->ssl_flag |= (sf_sb_on_r | sf_sb_on_r);
 		if (Debug > 8)
 		    message(LOG_DEBUG, "TCP %d: SSL_shutdown "
 			    "interrupted sf=%x", sd, pair->ssl_flag);
-		return ret;
+		return 0;
 	    }
 	    message(priority(pair), "TCP %d: SSL_shutdown "
 		    "I/O error sf=%x errno=%d", sd, pair->ssl_flag, errno);
@@ -2052,6 +2075,22 @@ int doSSL_shutdown(Pair *pair, int how) {
     return ret;
 }
 #endif	/* USE_SSL */
+
+void doshutdown(Pair *pair, int how) {
+    SSL *ssl;
+    if (!pair) return;
+    ssl = pair->ssl;
+#ifdef USE_SSL
+    if (ssl) doSSL_shutdown(pair, how);
+    else {
+#endif
+	if (Debug > 4)
+	    message(LOG_DEBUG, "TCP %d: shutdown how=%d", pair->sd, how);
+	shutdown(pair->sd, how);
+#ifdef USE_SSL
+    }
+#endif
+}
 
 void freePair(Pair *pair) {
     SOCKET sd;
@@ -2148,13 +2187,13 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
 	message(LOG_DEBUG, "TCP %d: established to %d",
 		p->sd, pair->sd);
     time(&lastEstablished);
-#ifdef USE_SSL
-    if (pair->stone->proto & proto_ssl_d)
-	if (doSSL_connect(pair) <= 0) return -1;
-#endif
     /* now successfully connected */
 #ifndef WINDOWS
     fcntl(pair->sd, F_SETFL, O_NONBLOCK);
+#endif
+#ifdef USE_SSL
+    if (pair->stone->proto & proto_ssl_d)
+	if (doSSL_connect(pair) < 0) return -1;
 #endif
     return 1;
 }
@@ -2182,21 +2221,13 @@ void message_conn(int pri, Conn *conn) {
 }
 
 int reqconn(Pair *pair,		/* request pair to connect to destination */
-	    fd_set *rinp,
 	    struct sockaddr_in *sinp) {	/* connect to */
     Conn *conn;
     Pair *p = pair->pair;
     if ((pair->proto & proto_command) == command_proxy
 	|| (pair->proto & proto_command) == command_health) {
-	if (p && !(p->proto & (proto_eof | proto_close))) {
-	    if (rinp) {
-		FdSet(p->sd, rinp);	/* must read request header */
-	    } else {
-		waitMutex(FdRinMutex);
-		FdSet(p->sd, &rin);	/* must read request header */
-		freeMutex(FdRinMutex);
-	    }
-	}
+	if (p && !(p->proto & (proto_eof | proto_close)))
+	    p->proto |= proto_select_r;	/* must read request header */
 	return 0;
     }
     conn = malloc(sizeof(Conn));
@@ -2225,8 +2256,6 @@ void asyncConn(Conn *conn) {
 #endif
     int offset = -1;	/* offset in load balancing group */
     time_t clock;
-    int set1 = 0;
-    int set2 = 0;
     ASYNC_BEGIN;
     p1 = conn->pair;
     if (p1 == NULL) goto finish;
@@ -2317,60 +2346,33 @@ void asyncConn(Conn *conn) {
     if (ret < 0		/* fail to connect */
 	|| (p1->proto & proto_close)
 	|| (p2->proto & proto_close)) {
-	if (!(p2->proto & proto_shutdown)) {
-#ifdef USE_SSL
-	    if (ssl) doSSL_shutdown(p2, 2);
-	    else shutdown(p2->sd, 2);
-#else
-	    shutdown(p2->sd, 2);
-#endif
-	}
+	if (!(p2->proto & proto_shutdown)) doshutdown(p2, 2);
 	p2->proto |= (proto_shutdown | proto_close);
 	p1->proto |= proto_close;
 	goto finish;
     }
-    waitMutex(FdRinMutex);
-    waitMutex(FdWinMutex);
     if (p1->len > 0) {
 	if (Debug > 8)
 	    message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
 		    p1->sd, p1->len);
-	if (!(p1->proto & proto_shutdown)) {
-	    FdSet(p1->sd, &win);
-	    set1 = 1;
-	}
+	if (!(p1->proto & proto_shutdown)) p1->proto |= proto_select_w;
     } else if (!(p1->proto & proto_ohttp_d)) {
 	if (Debug > 8)
 	    message(LOG_DEBUG, "TCP %d: request to read 1st", p2->sd);
-	if (!(p2->proto & proto_eof)) {
-	    FdSet(p2->sd, &rin);
-	    set2 = 1;
-	}
+	if (!(p2->proto & proto_eof)) p2->proto |= proto_select_r;
     }
     if (!(p2->proto & proto_ohttp_s)) {
 	if (p2->len > 0) {
 	    if (Debug > 8)
 		message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
 			p2->sd, p2->len);
-	    if (!(p2->proto & proto_shutdown)) {
-		FdSet(p2->sd, &win);
-		set2 = 1;
-	    }
+	    if (!(p2->proto & proto_shutdown)) p2->proto |= proto_select_w;
 	} else {
 	    if (Debug > 8)
 		message(LOG_DEBUG, "TCP %d: request to read", p1->sd);
-	    if (!(p1->proto & proto_eof)) {
-		FdSet(p1->sd, &rin);
-		set1 = 1;
-	    }
+	    if (!(p1->proto & proto_eof)) p1->proto |= proto_select_r;
 	}
     }
-    freeMutex(FdWinMutex);
-    freeMutex(FdRinMutex);
-    waitMutex(FdEinMutex);
-    if (set2) FdSet(p2->sd, &ein);
-    if (set1) FdSet(p1->sd, &ein);
-    freeMutex(FdEinMutex);
  finish:
     if (p1) p1->count -= REF_UNIT;	/* no more request to connect */
     conn->pair = NULL;
@@ -2607,8 +2609,7 @@ Pair *doaccept(Stone *stonep) {
     pair1->sd = nsd;
     pair2->sd = INVALID_SOCKET;
     pair1->proto = ((stonep->proto & proto_src) |
-		    proto_first_r | proto_first_w | proto_source |
-		    proto_connect);	/* src & pair1 is connected */
+		    proto_first_r | proto_first_w | proto_source);
     pair2->proto = ((stonep->proto & proto_dest) |
 		    proto_first_r | proto_first_w);
     pair1->count = pair2->count = 0;
@@ -2629,6 +2630,7 @@ Pair *doaccept(Stone *stonep) {
     if (stonep->proto & proto_ssl_s)
 	if (doSSL_accept(pair1) <= 0) goto error;
 #endif
+    pair1->proto |= proto_connect;	/* src & pair1 is connected */
     /* now successfully accepted */
 #ifndef WINDOWS
     fcntl(pair1->sd, F_SETFL, O_NONBLOCK);
@@ -2777,7 +2779,7 @@ void asyncAccept(Stone *stone) {
 	p2->buf[i++] = '\n';
 	p2->len = i;
     }
-    if (reqconn(p2, NULL, &stone->sins[0]) < 0) {	/* 0 is default */
+    if (reqconn(p2, &stone->sins[0]) < 0) {	/* 0 is default */
 	freePair(p2);
 	freePair(p1);
 	goto exit;
@@ -2811,30 +2813,16 @@ int scanClose(void) {	/* scan close request */
 	    continue;
 	}
 	sd = p2->sd;
-	if (ValidSocket(sd)) {
-	    waitMutex(FdRinMutex);
-	    if (FD_ISSET(sd, &rin)) {
-		FD_CLR(sd, &rin);
-		p2->count = REF_UNIT;
-	    }
-	    freeMutex(FdRinMutex);
-	    waitMutex(FdWinMutex);
-	    if (FD_ISSET(sd, &win)) {
-		FD_CLR(sd, &win);
-		p2->count = REF_UNIT;
-	    }
-	    freeMutex(FdWinMutex);
-	    waitMutex(FdEinMutex);
-	    if (FD_ISSET(sd, &ein)) {
-		FD_CLR(sd, &ein);
-		p2->count = REF_UNIT;
-	    }
-	    freeMutex(FdEinMutex);
-	    if (p2->count > 0) {
-		n++;
-		continue;
-	    }
+	if (p2->proto & (proto_select_r | proto_select_w)) {
+	    p2->proto &= ~(proto_select_r | proto_select_w);
+	    p2->count = REF_UNIT;
 	}
+#ifdef USE_SSL
+	if (p2->ssl_flag) {
+	    p2->ssl_flag = 0;
+	    p2->count = REF_UNIT;
+	}
+#endif
 	p = p2->prev;
 	if (p) p->next = p1;	/* remove `p2' from trash */
 	if (p1) p1->prev = p;
@@ -3262,7 +3250,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 
 #define METHOD_LEN_MAX	10
 
-int commOutput(Pair *pair, fd_set *winp, char *fmt, ...) {
+int commOutput(Pair *pair, char *fmt, ...) {
     Pair *p = pair->pair;
     SOCKET psd;
     char *str;
@@ -3278,7 +3266,7 @@ int commOutput(Pair *pair, fd_set *winp, char *fmt, ...) {
     if (p->proto & proto_base)
 	p->len += baseEncode(str, strlen(str), BUFMAX - (p->start + p->len));
     else p->len += strlen(str);
-    FdSet(psd, winp);		/* need to write */
+    p->proto |= proto_select_w;	/* need to write */
     return p->len;
 }
 
@@ -3298,7 +3286,7 @@ int islocalhost(struct in_addr *addrp) {
     return ntohl(addrp->s_addr) == 0x7F000001L;
 }
 
-int doproxy(Pair *pair, fd_set *rinp, char *host, int port) {
+int doproxy(Pair *pair, char *host, int port) {
     struct sockaddr_in sin;
     short family;
     bzero((char *)&sin, sizeof(sin)); /* clear sin struct */
@@ -3313,11 +3301,10 @@ int doproxy(Pair *pair, fd_set *rinp, char *host, int port) {
 	pair->log = NULL;
 	if (log) free(log);
     }
-    return reqconn(pair, rinp, &sin);
+    return reqconn(pair, &sin);
 }
 
-int proxyCONNECT(Pair *pair, fd_set *rinp, fd_set *winp,
-		 char *parm, int start) {
+int proxyCONNECT(Pair *pair, char *parm, int start) {
     int port = 443;	/* host byte order */
     char *r = parm;
     Pair *p;
@@ -3337,10 +3324,10 @@ int proxyCONNECT(Pair *pair, fd_set *rinp, fd_set *winp,
     pair->start = 0;
     p = pair->pair;
     if (p) p->proto |= proto_ohttp_s;	/* remove request header */
-    return doproxy(pair, rinp, parm, port);
+    return doproxy(pair, parm, port);
 }
 
-int proxyCommon(Pair *pair, fd_set *rinp, char *parm, int start) {
+int proxyCommon(Pair *pair, char *parm, int start) {
     int port = 80;
     char *host;
     char *top = &pair->buf[start];
@@ -3383,20 +3370,20 @@ int proxyCommon(Pair *pair, fd_set *rinp, char *parm, int start) {
 	message(LOG_DEBUG, "proxy %d -> http://%s:%d",
 		(r ? r->sd : INVALID_SOCKET), host, port);
     }
-    return doproxy(pair, rinp, host, port);
+    return doproxy(pair, host, port);
 }
 
-int proxyGET(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int proxyGET(Pair *pair, char *parm, int start) {
     pair->log = message_time(LOG_INFO, "GET %s", parm);
-    return proxyCommon(pair, rinp, parm, start);
+    return proxyCommon(pair, parm, start);
 }
 
-int proxyPOST(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int proxyPOST(Pair *pair, char *parm, int start) {
     pair->log = message_time(LOG_INFO, "POST %s", parm);
-    return proxyCommon(pair, rinp, parm, start);
+    return proxyCommon(pair, parm, start);
 }
 
-int proxyErr(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int proxyErr(Pair *pair, char *parm, int start) {
     message(LOG_ERR, "Unknown method: %s", parm);
     return -1;
 }
@@ -3409,18 +3396,18 @@ Comm proxyComm[] = {
 };
 
 #ifdef USE_POP
-int popUSER(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int popUSER(Pair *pair, char *parm, int start) {
     int ulen, tlen;
     if (Debug) message(LOG_DEBUG, ": USER %s", parm);
     ulen = strlen(parm);
     tlen = strlen(pair->p);
     if (ulen + 1 + tlen + 1 >= BUFMAX) {
-	commOutput(pair, winp, "+Err Too long user name\r\n");
+	commOutput(pair, "+Err Too long user name\r\n");
 	return -1;
     }
     bcopy(pair->p, pair->p + ulen + 1, tlen + 1);
     strcpy(pair->p, parm);
-    commOutput(pair, winp, "+OK Password required for %s\r\n", parm);
+    commOutput(pair, "+OK Password required for %s\r\n", parm);
     pair->proto &= ~state_mask;
     pair->proto |= 1;
     return -2;	/* read more */
@@ -3428,7 +3415,7 @@ int popUSER(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
 
 #define DIGEST_LEN 16
 
-int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int popPASS(Pair *pair, char *parm, int start) {
     MD5_CTX context;
     unsigned char digest[DIGEST_LEN];
     char *str;
@@ -3438,7 +3425,7 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     pair->p = NULL;
     if (Debug > 5) message(LOG_DEBUG, ": PASS %s", parm);
     if (state < 1) {
-	commOutput(pair, winp, "-ERR USER first\r\n");
+	commOutput(pair, "-ERR USER first\r\n");
 	return -2;	/* read more */
     }
     ulen = strlen(p);
@@ -3446,7 +3433,7 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     tlen = strlen(str);
     plen = strlen(parm);
     if (ulen + 1 + tlen + plen + 1 >= BUFMAX) {
-	commOutput(pair, winp, "+Err Too long password\r\n");
+	commOutput(pair, "+Err Too long password\r\n");
 	return -1;
     }
     strcat(str, parm);
@@ -3466,26 +3453,26 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     return 0;
 }
 
-int popAUTH(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int popAUTH(Pair *pair, char *parm, int start) {
     if (Debug) message(LOG_DEBUG, ": AUTH %s", parm);
-    commOutput(pair, winp, "-ERR authorization first\r\n");
+    commOutput(pair, "-ERR authorization first\r\n");
     return -2;	/* read more */
 }
 
-int popCAPA(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int popCAPA(Pair *pair, char *parm, int start) {
     if (Debug) message(LOG_DEBUG, ": CAPA %s", parm);
-    commOutput(pair, winp, "-ERR authorization first\r\n");
+    commOutput(pair, "-ERR authorization first\r\n");
     return -2;	/* read more */
 }
 
-int popAPOP(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int popAPOP(Pair *pair, char *parm, int start) {
     pair->log = message_time(LOG_INFO, "APOP %s", parm);
     pair->len += pair->start - start;
     pair->start = start;
     return 0;
 }
 
-int popErr(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int popErr(Pair *pair, char *parm, int start) {
     message(LOG_ERR, "Unknown POP command: %s", parm);
     return -1;
 }
@@ -3521,52 +3508,46 @@ int nConns(void) {
     return n;
 }
 
-int limitCommon(Pair *pair, fd_set *winp, int var, int limit, char *str) {
+int limitCommon(Pair *pair, int var, int limit, char *str) {
     if (Debug) message(LOG_DEBUG, ": LIMIT %s %d: %d", str, limit, var);
     if (var < limit) {
-	commOutput(pair, winp, "200 %s=%d is less than %d\r\n",
+	commOutput(pair, "200 %s=%d is less than %d\r\n",
 		   str, var, limit);
     } else {
-	commOutput(pair, winp, "500 %s=%d is not less than %d\r\n",
-		   str, var, limit);
+	commOutput(pair, "500 %s=%d is not less than %d\r\n", str, var, limit);
     }
     return -2;	/* read more */
 }
 
-int limitPair(Pair *pair, fd_set *rinp, fd_set *winp,
-	      char *parm, int start) {
-    return limitCommon(pair, winp, nStones(), atoi(parm), "pair");
+int limitPair(Pair *pair, char *parm, int start) {
+    return limitCommon(pair, nStones(), atoi(parm), "pair");
 }
 
-int limitConn(Pair *pair, fd_set *rinp, fd_set *winp,
-	      char *parm, int start) {
-    return limitCommon(pair, winp, nConns(), atoi(parm), "conn");
+int limitConn(Pair *pair, char *parm, int start) {
+    return limitCommon(pair, nConns(), atoi(parm), "conn");
 }
 
-int limitEstablished(Pair *pair, fd_set *rinp, fd_set *winp,
-		     char *parm, int start) {
+int limitEstablished(Pair *pair, char *parm, int start) {
     time_t now;
     time(&now);
-    return limitCommon(pair, winp, (int)(now - lastEstablished),
+    return limitCommon(pair, (int)(now - lastEstablished),
 		       atoi(parm), "established");
 }
 
-int limitReadWrite(Pair *pair, fd_set *rinp, fd_set *winp,
-		   char *parm, int start) {
+int limitReadWrite(Pair *pair, char *parm, int start) {
     time_t now;
     time(&now);
-    return limitCommon(pair, winp, (int)(now - lastReadWrite),
+    return limitCommon(pair, (int)(now - lastReadWrite),
 		       atoi(parm), "readwrite");
 }
 
-int limitAsync(Pair *pair, fd_set *rinp, fd_set *winp,
-		   char *parm, int start) {
-    return limitCommon(pair, winp, AsyncCount, atoi(parm), "async");
+int limitAsync(Pair *pair, char *parm, int start) {
+    return limitCommon(pair, AsyncCount, atoi(parm), "async");
 }
 
-int limitErr(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int limitErr(Pair *pair, char *parm, int start) {
     if (Debug) message(LOG_ERR, ": Illegal LIMIT %s", parm);
-    commOutput(pair, winp, "500 Illegal LIMIT\r\n");
+    commOutput(pair, "500 Illegal LIMIT\r\n");
     return -2;	/* read more */
 }
 
@@ -3579,7 +3560,7 @@ Comm limitComm[] = {
     { NULL, limitErr },
 };
 
-int healthHELO(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int healthHELO(Pair *pair, char *parm, int start) {
     char str[BUFMAX];
     time_t now;
     time(&now);
@@ -3589,35 +3570,33 @@ int healthHELO(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
 	     (int)(now - lastEstablished), (int)(now - lastReadWrite),
 	     AsyncCount);
     if (Debug) message(LOG_DEBUG, ": HELO %s: %s", parm, str);
-    commOutput(pair, winp, "200 stone:%s debug=%d %s\r\n",
+    commOutput(pair, "200 stone:%s debug=%d %s\r\n",
 	       VERSION, Debug, str);
     return -2;	/* read more */
 }
 
-int healthCVS_ID(Pair *pair, fd_set *rinp, fd_set *winp,
-		 char *parm, int start) {
-    commOutput(pair, winp, "200 stone %s %s\r\n", VERSION, CVS_ID);
+int healthCVS_ID(Pair *pair, char *parm, int start) {
+    commOutput(pair, "200 stone %s %s\r\n", VERSION, CVS_ID);
     return -2;	/* read more */
 }
 
-int healthLIMIT(Pair *pair, fd_set *rinp, fd_set *winp,
-		char *parm, int start) {
+int healthLIMIT(Pair *pair, char *parm, int start) {
     Comm *comm = limitComm;
     char *q;
     while (comm->str) {
 	if ((q=comm_match(parm, comm->str)) != NULL) break;
 	comm++;
     }
-    if (!q) return limitErr(pair, rinp, winp, parm, start);
-    return (*comm->func)(pair, rinp, winp, q, start);
+    if (!q) return limitErr(pair, parm, start);
+    return (*comm->func)(pair, q, start);
 }
 
-int healthQUIT(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int healthQUIT(Pair *pair, char *parm, int start) {
     if (Debug) message(LOG_DEBUG, ": QUIT %s", parm);
     return -1;
 }
 
-int healthErr(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+int healthErr(Pair *pair, char *parm, int start) {
     message(LOG_ERR, "Unknown health command: %s", parm);
     return -1;
 }
@@ -3640,7 +3619,7 @@ int memCheck(void) {
     return 0;
 }
 
-int docomm(Pair *pair, fd_set *rinp, fd_set *winp, Comm *comm) {
+int docomm(Pair *pair, Comm *comm) {
     char buf[BUFMAX];
     char *p;
     char *q = &pair->buf[pair->start + pair->len];
@@ -3674,7 +3653,7 @@ int docomm(Pair *pair, fd_set *rinp, fd_set *winp, Comm *comm) {
 	buf[i] = *q++;
     }
     buf[i] = '\0';
-    return (*comm->func)(pair, rinp, winp, buf, start);
+    return (*comm->func)(pair, buf, start);
 }
 
 int insheader(Pair *pair) {	/* insert header */
@@ -3735,7 +3714,7 @@ int rmheader(Pair *pair) {	/* remove header */
     return pair->len;
 }
 
-int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
+int first_read(Pair *pair) {
     SOCKET sd = pair->sd;
     SOCKET psd;
     Pair *p = pair->pair;
@@ -3748,16 +3727,16 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
     if (p->proto & proto_command) {	/* proxy */
 	switch(p->proto & proto_command) {
 	case command_proxy:
-	    len = docomm(p, rinp, winp, proxyComm);
+	    len = docomm(p, proxyComm);
 	    break;
 #ifdef USE_POP
 	case command_pop:
-	    if (p->p) len = docomm(p, rinp, winp, popComm);
+	    if (p->p) len = docomm(p, popComm);
 	    break;
 #endif
 	case command_health:
 	    if (!memCheck()) len = -1;
-	    else len = docomm(p, rinp, winp, healthComm);
+	    else len = docomm(p, healthComm);
 	    break;
 	default:
 	    ;
@@ -3767,24 +3746,10 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
 		message(LOG_DEBUG, "TCP %d: read more from %d", psd, sd);
 	    }
 	} else if (len < 0) {
-	    if (!(pair->proto & proto_shutdown)) {
-#ifdef USE_SSL
-		if (pair->ssl) doSSL_shutdown(pair, 2);
-		else shutdown(sd, 2);
-#else
-		shutdown(sd, 2);
-#endif
-	    }
+	    if (!(pair->proto & proto_shutdown)) doshutdown(pair, 2);
 	    setclose(pair, proto_shutdown);
 	    if (ValidSocket(psd)) {
-		if (!(p->proto & proto_shutdown)) {
-#ifdef USE_SSL
-		    if (p->ssl) doSSL_shutdown(p, 2);
-		    else shutdown(psd, 2);
-#else
-		    shutdown(psd, 2);
-#endif
-		}
+		if (!(p->proto & proto_shutdown)) doshutdown(p, 2);
 		setclose(p, proto_shutdown);
 	    }
 	    return -1;
@@ -3796,14 +3761,14 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
 	len = rmheader(p);
 	if (len >= 0) {
 	    if (pair->proto & proto_ohttp_s) {
-		commOutput(p, winp, "HTTP/1.0 200 OK\r\n\r\n");
+		commOutput(p, "HTTP/1.0 200 OK\r\n\r\n");
 		pair->proto &= ~proto_ohttp_s;
 	    } else if (pair->proto & proto_ohttp_d) {
 		if (Debug > 3)
 		    message(LOG_DEBUG, "TCP %d: request to read, "
 			    "because response header from %d finished",
 			    psd, sd);
-		FdSet(psd , rinp);
+		p->proto |= proto_select_r;
 	    }
 	}
     }
@@ -3832,7 +3797,7 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
 	if (Debug > 8) {
 	    message(LOG_DEBUG, "TCP %d: read more", sd);
 	}
-	FdSet(sd, rinp);	/* read more */
+	pair->proto |= proto_select_r;	/* read more */
 	if (len < 0) pair->proto |= proto_first_r;
     }
     return len;
@@ -3852,6 +3817,58 @@ static void message_select(int pri, char *msg,
 }
 
 /* main event loop */
+
+void proto2fdset(Pair *pair, fd_set *routp, fd_set *woutp, fd_set *eoutp) {
+    SOCKET sd;
+    Pair *p;
+    if (!pair) return;
+    sd = pair->sd;
+    if (InvalidSocket(sd)) return;
+#ifdef USE_SSL
+    if (pair->ssl_flag & (sf_sb_on_r | sf_sb_on_w)) {
+	FD_CLR(sd, routp);
+	FD_CLR(sd, woutp);
+	if (pair->ssl_flag & sf_sb_on_r) FdSet(sd, routp);
+	if (pair->ssl_flag & sf_sb_on_w) FdSet(sd, woutp);
+    } else if (pair->ssl_flag & sf_wb_on_r) {
+	FD_CLR(sd, woutp);
+	FdSet(sd, routp);
+    } else if (pair->ssl_flag & sf_rb_on_w) {
+	FD_CLR(sd, routp);
+	FdSet(sd, woutp);
+    } else if (pair->ssl_flag & (sf_cb_on_r | sf_cb_on_w)) {
+	p = pair->pair;
+	if (p) {
+	    /*
+	      suppress hasty read/write until established connection
+	    */
+	    SOCKET psd = p->sd;
+	    if (ValidSocket(psd)) {
+		FD_CLR(psd, routp);
+		FD_CLR(psd, woutp);
+	    }
+	}
+	FD_CLR(sd, routp);
+	FD_CLR(sd, woutp);
+	if (pair->ssl_flag & (sf_cb_on_r)) FdSet(sd, routp);
+	if (pair->ssl_flag & (sf_cb_on_w)) FdSet(sd, woutp);
+    } else
+#endif
+	if ((pair->proto & proto_connect) && !(pair->proto & proto_close)) {
+	    int isset = 0;
+	    if (!(pair->proto & proto_eof)
+		&& (pair->proto & proto_select_r)) {
+		FdSet(sd, routp);
+		isset = 1;
+	    }
+	    if (!(pair->proto & proto_shutdown)
+		&& (pair->proto & proto_select_w)) {
+		FdSet(sd, woutp);
+		isset = 1;
+	    }
+	    if (isset) FdSet(sd, eoutp);
+	}
+}
 
 void asyncReadWrite(Pair *pair) {
     fd_set ri, wi, ei;
@@ -3873,45 +3890,18 @@ void asyncReadWrite(Pair *pair) {
 			   (p[0] ? p[0]->sd : INVALID_SOCKET),
 			   (p[1] ? p[1]->sd : INVALID_SOCKET));
     if (p[1]) npairs++;
-    for (i=0; i < npairs; i++) {
-	int isset = 0;
-	p[i]->count += REF_UNIT;
-	sd = p[i]->sd;
-	if ((p[i]->proto & proto_close) || InvalidSocket(sd)) continue;
-	if (!(p[i]->proto & proto_eof) && (p[i]->proto & proto_select_r)) {
-	    FdSet(sd, &ri);
-	    p[i]->proto &= ~proto_select_r;
-	    isset = 1;
-	}
-	if (!(p[i]->proto & proto_shutdown) && (p[i]->proto & proto_select_w)
-	    && npairs > 1
-	    && (p[i]->proto & proto_connect)
-	    && ((p[1-i]->proto & proto_command) == command_health
-		|| (p[1-i]->proto & proto_connect))) {
-	    FdSet(sd, &wi);	/* never write unless establish */
-	    p[i]->proto &= ~proto_select_w;
-	    isset = 1;
-	}
-	if (isset) FdSet(sd, &ei);
-    }
     for (;;) {	/* loop until timeout or EOF/error */
 	tv.tv_sec = 0;
 	tv.tv_usec = TICK_SELECT;
 	ro = ri;
 	wo = wi;
 	eo = ei;
-#ifdef USE_SSL
-	for (i=0; i < npairs; i++) {
-	    if (!p[i]) continue;
-	    sd = p[i]->sd;
-	    if (InvalidSocket(sd)) continue;
-	    if (p[i]->ssl_flag & (sf_sb_on_r | sf_wb_on_r)) FdSet(sd, &ro);
-	    if (p[i]->ssl_flag & (sf_sb_on_w | sf_rb_on_w)) FdSet(sd, &wo);
-	}
-#endif
+	for (i=0; i < npairs; i++) proto2fdset(p[i], &ro, &wo, &eo);
 	if (Debug > 10)
-	    message_select(LOG_DEBUG, "selectReadWrite1", &ri, &wi, &ei);
+	    message_select(LOG_DEBUG, "selectReadWrite1", &ro, &wo, &eo);
 	if (select(FD_SETSIZE, &ro, &wo, &eo, &tv) <= 0) goto leave;
+	if (Debug > 10)
+	    message_select(LOG_DEBUG, "selectReadWrite2", &ro, &wo, &eo);
 	for (i=0; i < npairs; i++) {
 	    if (!p[i] || (p[i]->proto & proto_close)) continue;
 	    sd = p[i]->sd;
@@ -3920,9 +3910,6 @@ void asyncReadWrite(Pair *pair) {
 	    if (FD_ISSET(sd, &eo)) {	/* exception */
 		message(priority(p[i]), "TCP %d: exception", sd);
 		message_pair(LOG_ERR, p[i]);
-		FD_CLR(sd, &ri);
-		FD_CLR(sd, &wi);
-		FD_CLR(sd, &ei);
 		shutdown(sd, 2);
 		setclose(p[i], proto_shutdown);
 		goto leave;
@@ -3932,6 +3919,11 @@ void asyncReadWrite(Pair *pair) {
 		) {
 		p[i]->ssl_flag &= ~(sf_sb_on_r | sf_sb_on_w);
 		doSSL_shutdown(p[i], -1);
+	    } else if (((p[i]->ssl_flag & sf_cb_on_r) && FD_ISSET(sd, &ro))
+		       || ((p[i]->ssl_flag & sf_cb_on_w) && FD_ISSET(sd, &wo))
+		) {
+		p[i]->ssl_flag &= ~(sf_cb_on_r | sf_cb_on_w);
+		doSSL_connect(p[i]);
 #endif
 	    } else if ((!(p[i]->proto & proto_eof)
 			&& FD_ISSET(sd, &ro)	/* read */
@@ -3949,7 +3941,7 @@ void asyncReadWrite(Pair *pair) {
 		rsd = sd;
 		if (wPair) wsd = wPair->sd; else wsd = INVALID_SOCKET;
 	    read_pending:
-		FD_CLR(rsd, &ri);
+		rPair->proto &= ~proto_select_r;
 		rPair->count += REF_UNIT;
 		len = doread(rPair);
 		rPair->count -= REF_UNIT;
@@ -3969,21 +3961,13 @@ void asyncReadWrite(Pair *pair) {
 			  and send SSL notify and FIN to wPair...
 			*/
 			rPair->proto |= proto_eof;	/* no more to read */
-#ifdef USE_SSL
 			/*
 			  Don't send notify, or further SSL_write will fail
 			  if (rPair->ssl) doSSL_shutdown(rPair, 0);
-			  else shutdown(rsd, 0);
 			*/
-			if (!(wPair->proto & proto_shutdown)) {
-			    if (wPair->ssl) doSSL_shutdown(wPair, 1);
-			    else shutdown(wsd, 1);
-			}
-#else
 			if (!(wPair->proto & proto_shutdown))
-			    shutdown(wsd, 1);	/* send FIN */
-#endif
-			FD_CLR(wsd, &wi);
+			    doshutdown(wPair, 1);	/* send FIN */
+			wPair->proto &= ~proto_select_w;
 			wPair->proto |= proto_shutdown;
 		    } else {
 			/*
@@ -3992,21 +3976,12 @@ void asyncReadWrite(Pair *pair) {
 			  send SSL notify to wPair and shutdown wPair,
 			  set close flag
 			*/
-#ifdef USE_SSL
-			if (!(rPair->proto & proto_shutdown)) {
-			    if (rPair->ssl) doSSL_shutdown(rPair, 2);
-			    else shutdown(rsd, 2);
-			}
-			if (!(wPair->proto & proto_shutdown)) {
-			    if (wPair->ssl) doSSL_shutdown(wPair, 2);
-			    else shutdown(wsd, 2);
-			}
-#else
-			if (!(rPair->proto & proto_shutdown)) shutdown(rsd, 2);
-			if (!(wPair->proto & proto_shutdown)) shutdown(wsd, 2);
-#endif
-			FD_CLR(rsd, &wi);
-			FD_CLR(wsd, &wi);
+			if (!(rPair->proto & proto_shutdown))
+			    doshutdown(rPair, 2);
+			if (!(wPair->proto & proto_shutdown))
+			    doshutdown(wPair, 2);
+			rPair->proto &= ~proto_select_w;
+			wPair->proto &= ~proto_select_w;
 			setclose(rPair, (proto_eof | proto_shutdown));
 			setclose(wPair, proto_shutdown);
 		    }
@@ -4014,18 +3989,18 @@ void asyncReadWrite(Pair *pair) {
 		    if (len > 0) {
 			int first_flag;
 			first_flag = (rPair->proto & proto_first_r);
-			if (first_flag) len = first_read(rPair, &ri, &wi);
+			if (first_flag) len = first_read(rPair);
 			if (len > 0 && ValidSocket(wsd)
 			    && (wPair->proto & proto_connect)
 			    && !(wPair->proto & (proto_shutdown | proto_close))
 			    && !(rPair->proto & proto_close)) {
 			    /* (wPair->proto & proto_eof) may be true */
-			    FdSet(wsd, &wi);
+			    wPair->proto |= proto_select_w;
 			} else {
 			    goto leave;
 			}
 		    } else {	/* EINTR */
-			FdSet(rsd, &ri);
+			rPair->proto |= proto_select_r;
 		    }
 		}
 	    } else if ((!(p[i]->proto & proto_shutdown)
@@ -4042,7 +4017,7 @@ void asyncReadWrite(Pair *pair) {
 		rPair = p[1-i];
 		wsd = sd;
 		if (rPair) rsd = rPair->sd; else rsd = INVALID_SOCKET;
-		FD_CLR(wsd, &wi);
+		wPair->proto &= ~proto_select_w;
 		if ((wPair->proto & proto_command) == command_ihead) {
 		    if (insheader(wPair) >= 0)	/* insert header */
 			wPair->proto &= ~proto_command;
@@ -4052,24 +4027,12 @@ void asyncReadWrite(Pair *pair) {
 		wPair->count -= REF_UNIT;
 		if (len < 0 || (wPair->proto & proto_close) || rPair == NULL) {
 		    if (rPair && ValidSocket(rsd)
-			&& !(rPair->proto & proto_shutdown)) {
-#ifdef USE_SSL
-			if (rPair->ssl) doSSL_shutdown(rPair, 2);
-			else shutdown(rsd, 2);
-#else
-			shutdown(rsd, 2);
-#endif
-		    }
-		    FD_CLR(rsd, &wi);
+			&& !(rPair->proto & proto_shutdown))
+			doshutdown(rPair, 2);
+		    rPair->proto &= ~proto_select_w;
 		    setclose(rPair, proto_shutdown);
-		    if (!(wPair->proto & proto_shutdown)) {
-#ifdef USE_SSL
-			if (wPair->ssl) doSSL_shutdown(wPair, 2);
-			else shutdown(wsd, 2);
-#else
-			shutdown(wsd, 2);
-#endif
-		    }
+		    if (!(wPair->proto & proto_shutdown))
+			doshutdown(wPair, 2);
 		    setclose(wPair, proto_shutdown);
 		} else {
 		    /* (wPair->proto & proto_eof) may be true */
@@ -4083,7 +4046,6 @@ void asyncReadWrite(Pair *pair) {
 			    ) {
 #ifdef USE_SSL
 			    if (rPair->ssl && SSL_pending(rPair->ssl)) {
-				FdSet(rPair->sd, &ro);
 				if (Debug > 4)
 				    message(LOG_DEBUG,
 					    "TCP %d: SSL_pending, read again",
@@ -4092,45 +4054,22 @@ void asyncReadWrite(Pair *pair) {
 				goto read_pending;
 			    }
 #endif
-			    FdSet(rsd, &ri);
+			    rPair->proto |= proto_select_r;
 			} else {
 			    goto leave;
 			}
 		    } else {	/* EINTR */
-			FdSet(wsd, &wi);
+			wPair->proto |= proto_select_w;
 		    }
 		}
 	    }
 	}
-	if (Debug > 10)
-	    message_select(LOG_DEBUG, "selectReadWrite2", &ri, &wi, &ei);
     }
  leave:
-    waitMutex(FdRinMutex);
-    waitMutex(FdWinMutex);
-    waitMutex(FdEinMutex);
     for (i=0; i < npairs; i++) {
-	if (p[i]) {
-	    int proto = p[i]->proto;
-	    sd = p[i]->sd;
-	    if (!(proto & proto_close) && ValidSocket(sd)) {
-		int isset = 0;
-		if (!(proto & proto_eof) && FD_ISSET(sd, &ri)) {
-		    FdSet(sd, &rin);
-		    isset = 1;
-		}
-		if (!(proto & proto_shutdown) && FD_ISSET(sd, &wi)) {
-		    FdSet(sd, &win);
-		    isset = 1;
-		}
-		if (isset) FdSet(sd, &ein);
-	    }
-	    p[i]->count -= REF_UNIT;
-	}
+	p[i]->proto &= ~proto_thread;
+	p[i]->count -= REF_UNIT;
     }
-    freeMutex(FdEinMutex);
-    freeMutex(FdWinMutex);
-    freeMutex(FdRinMutex);
     if (Debug > 8) message(LOG_DEBUG, "TCP %d, %d: asyncReadWrite end",
 			   (p[0] ? p[0]->sd : INVALID_SOCKET),
 			   (p[1] ? p[1]->sd : INVALID_SOCKET));
@@ -4172,6 +4111,7 @@ void asyncClose(Pair *pair) {
     shutdown(sd, 2);
  exit:
     setclose(pair, proto_shutdown);
+    pair->proto &= ~proto_thread;
     ASYNC_END;
 }
 
@@ -4186,69 +4126,31 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
     for (pair=pairs.next; pair != NULL; pair=pair->next) {
 	Pair *p = pair->pair;
 	SOCKET sd = pair->sd;
-	if (!(pair->proto & proto_close) && ValidSocket(sd)) {
+	if (!(pair->proto & (proto_close | proto_thread)) && ValidSocket(sd)) {
 	    time_t clock;
 	    int idle = 1;	/* assume no events happen on sd */
-	    int isset;
-	    waitMutex(FdEinMutex);
-	    isset = (FD_ISSET(sd, eop) && FD_ISSET(sd, &ein));
-	    if (isset) FD_CLR(sd, &ein);
-	    freeMutex(FdEinMutex);
-	    if (isset) {
+	    if (FD_ISSET(sd, eop)) {
 		idle = 0;
 		message(priority(pair), "TCP %d: exception", sd);
 		message_pair(LOG_ERR, pair);
-		waitMutex(FdRinMutex);
-		waitMutex(FdWinMutex);
-		FD_CLR(sd, &rin);
-		FD_CLR(sd, &win);
-		freeMutex(FdWinMutex);
-		freeMutex(FdRinMutex);
+		pair->proto |= proto_thread;
 		ASYNC(asyncClose, pair);
 	    } else {
-		waitMutex(FdRinMutex);
-		waitMutex(FdWinMutex);
-		waitMutex(FdEinMutex);
-		isset = ((FD_ISSET(sd, rop) && FD_ISSET(sd, &rin)) ||
-			 (FD_ISSET(sd, wop) && FD_ISSET(sd, &win)));
+		int isset = (FD_ISSET(sd, rop) || FD_ISSET(sd, wop));
 		if (p) {
 		    SOCKET psd = p->sd;
-		    if (!(p->proto & proto_close) && ValidSocket(psd)) {
-			isset |=
-			    ((FD_ISSET(sd, rop) && FD_ISSET(sd, &rin)) ||
-			     (FD_ISSET(sd, wop) && FD_ISSET(sd, &win)));
-		    }
+		    if (!(p->proto & (proto_close | proto_thread))
+			&& ValidSocket(psd))
+			isset |= (FD_ISSET(psd, rop) || FD_ISSET(psd, wop));
 		}
-		if (isset) {
-		    pair->proto &= ~(proto_select_r | proto_select_w);
-		    if (FD_ISSET(sd, &rin)) {
-			FD_CLR(sd, &rin);
-			pair->proto |= proto_select_r;
-		    }
-		    if (FD_ISSET(sd, &win)) {
-			FD_CLR(sd, &win);
-			pair->proto |= proto_select_w;
-		    }
-		    FD_CLR(sd, &ein);
-		    if (p) {
-			SOCKET psd = p->sd;
-			p->proto &= ~(proto_select_r | proto_select_w);
-			if (FD_ISSET(psd, &rin)) {
-			    FD_CLR(psd, &rin);
-			    p->proto |= proto_select_r;
-			}
-			if (FD_ISSET(psd, &win)) {
-			    FD_CLR(psd, &win);
-			    p->proto |= proto_select_w;
-			}
-			FD_CLR(psd, &ein);
-		    }
-		}
-		freeMutex(FdEinMutex);
-		freeMutex(FdWinMutex);
-		freeMutex(FdRinMutex);
 		if (isset) {
 		    idle = 0;
+		    pair->count += REF_UNIT;
+		    pair->proto |= proto_thread;
+		    if (p) {
+			p->count += REF_UNIT;
+			p->proto |= proto_thread;
+		    }
 		    ASYNC(asyncReadWrite, pair);
 		}
 	    }
@@ -4259,15 +4161,7 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 		    message_pair(LOG_NOTICE, pair);
 		    if (pair->count > 0) pair->count -= REF_UNIT;
 		}
-		waitMutex(FdRinMutex);
-		waitMutex(FdWinMutex);
-		waitMutex(FdEinMutex);
-		FD_CLR(sd, &rin);
-		FD_CLR(sd, &win);
-		FD_CLR(sd, &ein);
-		freeMutex(FdEinMutex);
-		freeMutex(FdWinMutex);
-		freeMutex(FdRinMutex);
+		pair->proto |= proto_thread;
 		ASYNC(asyncClose, pair);
 	    }
 	}
@@ -4578,9 +4472,13 @@ void repeater(void) {
     struct timeval tv, *timeout;
     static int spin = 0;
     static int nerrs = 0;
+    Pair *pair;
     rout = rin;
     wout = win;
     eout = ein;
+    for (pair=pairs.next; pair != NULL; pair=pair->next)
+	if (!(pair->proto & proto_thread))
+	    proto2fdset(pair, &rout, &wout, &eout);
     if (conns.next || trash.next || spin > 0 || AsyncCount > 0) {
 	if (AsyncCount == 0 && spin > 0) spin--;
 	timeout = &tv;
@@ -5395,13 +5293,13 @@ unsigned long sslthread_id_callback(void) {
     ret = (unsigned long)pthread_self();
 #endif
 #endif
-    if (Debug > 10) message(LOG_DEBUG, "SSL_thread id=%ld", ret);
+    if (Debug > 19) message(LOG_DEBUG, "SSL_thread id=%ld", ret);
     return ret;
 }
 
 void sslthread_lock_callback(int mode, int n, const char *file, int line) {
     if (mode & CRYPTO_LOCK) {
-	if (Debug > 10)
+	if (Debug > 19)
 	    message(LOG_DEBUG, "SSL_lock mode=%x n=%d file=%s line=%d",
 		    mode, n, file, line);
 #ifdef WINDOWS
@@ -5412,7 +5310,7 @@ void sslthread_lock_callback(int mode, int n, const char *file, int line) {
 #endif
 #endif
     } else {
-	if (Debug > 10)
+	if (Debug > 19)
 	    message(LOG_DEBUG, "SSL_unlock mode=%x n=%d file=%s line=%d",
 		    mode, n, file, line);
 #ifdef WINDOWS
