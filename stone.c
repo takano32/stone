@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.206 2004/10/26 13:14:50 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.207 2004/10/26 15:19:40 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -948,27 +948,28 @@ int isdigitaddr(char *name) {
 
 #ifdef DJBDNS
 int host2addr(char *name, struct in_addr *addrp, short *familyp) {
-    char temp_buf[BUFMAX];
-    char fqdn_buf[BUFMAX];
-    char addr_buf[BUFMAX];
-    stralloc temp = {temp_buf, 0, BUFMAX};
-    stralloc fqdn = {fqdn_buf, 0, BUFMAX};
-    stralloc addr = {addr_buf, 0, BUFMAX};
-    if (!stralloc_copys(&temp, name)) {
-	message(LOG_ERR, "Out of memory in host2addr");
-	return 0;
-    }
+    stralloc temp;
+    stralloc fqdn = {0};
+    stralloc addr = {0};
+    int ret = 0;
+    temp.s = name;
+    temp.len = strlen(name);
+    temp.a = temp.len + 1;
     if (dns_ip4_qualify(&addr, &fqdn, &temp) == -1) {
 	message(LOG_ERR, "Unknown host: %s", name);
-	return 0;
+	goto exit;
     }
     if (addr.len == 4) {
 	addrp->s_addr = *(unsigned long*)addr.s;
 	if (familyp) *familyp = AF_INET;
-	return 1;
+	ret = 1;
+	goto exit;
     }
     message(LOG_ERR, "No IP address for %s", name);
-    return 0;
+ exit:
+    if (fqdn.s) free(fqdn.s);
+    if (addr.s) free(addr.s);
+    return ret;
 }
 #else
 #ifdef NO_ADDRINFO
