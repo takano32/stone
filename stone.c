@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.62 2003/07/30 09:09:25 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.63 2003/08/05 05:04:42 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -382,6 +382,7 @@ const proto_select_r =	   0x40000;	/* select to read */
 const proto_select_w =	   0x80000;	/* select to write */
 const proto_connect =	  0x100000;	/* connection established */
 const proto_close =	  0x200000;	/* request to close */
+const proto_eof =	  0x400000;	/* EOF */
 const proto_ssl_intr =	  0x800000;	/* SSL accept/connect interrupted */
 const proto_ssl_s =    	 0x1000000;	/* SSL source */
 const proto_ssl_d =	 0x2000000;	/*     destination */
@@ -1298,12 +1299,13 @@ void doclose(Pair *pair) {	/* close pair */
 	free(log);
     }
     if (!(pair->proto & proto_close)) {
-	pair->proto |= proto_close;	/* request to close */
+	pair->proto |= (proto_close | proto_eof);	/* request to close */
 	if (ValidSocket(sd))
 	    if (Debug > 2) message(LOG_DEBUG,"TCP %d: closing...",sd);
     }
     if (p && !(p->proto & proto_close)
 	&& ValidSocket(p->sd) && (p->proto & proto_connect)) {
+	p->proto |= proto_eof;
 	if (Debug > 2) message(LOG_DEBUG,"TCP %d: shutdown %d",sd,p->sd);
 #ifdef USE_SSL
 	if (p->ssl) SSL_shutdown(p->ssl);
@@ -2085,7 +2087,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 	    len = recv(sd,buf,BUFMAX,0);
 	if (pair->proto & proto_close) return -1;
 	if (Debug > 4) message(LOG_DEBUG,"TCP %d: read %d bytes",sd,len);
-	if (len == 0) return -1;	/* EOF */
+	if (len == 0) return -1;	/* EOF w/o pair */
 	if (len > 0) {
 	    message(LOG_ERR,"TCP %d: no pair, closing",sd);
 	    message_pair(pair);
@@ -2161,7 +2163,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 #endif
     if (len == 0) {
 	if (Debug > 2) message(LOG_DEBUG,"TCP %d: EOF",sd);
-	return -1;	/* EOF */
+	return -2;	/* EOF w/ pair */
     }
 #ifdef ENLARGE
     if (len > pair->bufmax - 10
@@ -2682,7 +2684,17 @@ void asyncReadWrite(Pair *pair) {
 		rPair->count--;
 		if (len < 0 || (rPair->proto & proto_close) || wPair == NULL) {
 		    FD_CLR(rsd,&ri);
-		    doclose(rPair);	/* EOF or error */
+		    if (len == -2	/* EOF w/ pair */
+			&& ValidSocket(wsd)
+			&& wPair && !(wPair->proto & proto_eof)) {
+			if (Debug > 2)
+			    message(LOG_DEBUG, "TCP %d: shutdown 1, "
+				    "because %d is EOF", wsd, rsd);
+			rPair->proto |= proto_eof;
+			shutdown(wsd, 1);	/* no more sends */
+		    } else {	/* error */
+			doclose(rPair);
+		    }
 		} else {
 		    if (len > 0) {
 			int first_flag;
