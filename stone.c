@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.98 2003/10/30 17:48:52 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.99 2003/10/31 07:38:30 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -413,11 +413,12 @@ const proto_command =	    0x0f00;	/* command (destination only) */
 const proto_tcp	=	    0x1000;	/* transmission control protocol */
 const proto_udp =	    0x2000;	/* user datagram protocol */
 const proto_source =	    0x4000;	/* source flag */
+const proto_connect =	    0x8000;	/* connection established */
 const proto_first_r =	   0x10000;	/* first read packet */
 const proto_first_w =	   0x20000;	/* first written packet */
 const proto_select_r =	   0x40000;	/* select to read */
 const proto_select_w =	   0x80000;	/* select to write */
-const proto_connect =	  0x100000;	/* connection established */
+const proto_shutdown =	  0x100000;	/* sent shutdown */
 const proto_close =	  0x200000;	/* request to close */
 const proto_eof =	  0x400000;	/* EOF */
 const proto_ssl_intr =	  0x800000;	/* SSL accept/connect interrupted */
@@ -427,7 +428,6 @@ const proto_ohttp_s =	 0x4000000;	/* over http source */
 const proto_ohttp_d =	 0x8000000;	/*           destination */
 const proto_base_s =	0x10000000;	/* base64 source */
 const proto_base_d =	0x20000000;	/*        destination */
-const proto_shutdown =	0x40000000;	/* sent shutdown */
 #define command_proxy	    0x0100	/* http proxy */
 #define command_ihead	    0x0200	/* insert header */
 #define command_pop	    0x0300	/* POP -> APOP conversion */
@@ -2237,6 +2237,22 @@ void message_buf(Pair *pair, int len, char *str) {	/* dump for debug */
     }
 }
 
+void message_pairs(void) {	/* dump for debug */
+    Pair *pair;
+    for (pair=pairs.next; pair != NULL; pair=pair->next) message_pair(pair);
+}
+
+void message_origins(void) {	/* dump for debug */
+    Origin *origin;
+    for (origin=origins.next; origin != NULL; origin=origin->next)
+	message_origin(origin);
+}
+
+void message_conns(void) {	/* dump for debug */
+    Conn *conn;
+    for (conn=conns.next; conn != NULL; conn=conn->next)
+	message_conn(conn);
+}
 
 /* read write thread */
 /* no Mutex are needed because in the single thread */
@@ -2929,17 +2945,16 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
     return len;
 }
 
-static void select_debug(char *msg, fd_set *rout, fd_set *wout, fd_set *eout) {
+static void message_select(int pri, char *msg,
+			   fd_set *rout, fd_set *wout, fd_set *eout) {
     int i, r, w, e;
-    if (Debug > 11) {
-	for (i=0; i < FD_SETSIZE; i++) {
-	    r = FD_ISSET(i, rout);
-	    w = FD_ISSET(i, wout);
-	    e = FD_ISSET(i, eout);
-	    if (r || w || e)
-		message(LOG_DEBUG, "%s %d: %c%c%c", msg,
-			i, (r ? 'r' : ' '), (w ? 'w' : ' '), (e ? 'e' : ' '));
-	}
+    for (i=0; i < FD_SETSIZE; i++) {
+	r = FD_ISSET(i, rout);
+	w = FD_ISSET(i, wout);
+	e = FD_ISSET(i, eout);
+	if (r || w || e)
+	    message(pri, "%s %d: %c%c%c", msg,
+		    i, (r ? 'r' : ' '), (w ? 'w' : ' '), (e ? 'e' : ' '));
     }
 }
 
@@ -2985,7 +3000,8 @@ void asyncReadWrite(Pair *pair) {
     }
     tv.tv_sec = 0;
     tv.tv_usec = TICK_SELECT;
-    if (Debug > 10) select_debug("selectReadWrite1", &ri, &wi, &ei);
+    if (Debug > 10)
+	message_select(LOG_DEBUG, "selectReadWrite1", &ri, &wi, &ei);
     while (again
 	   || (ro=ri, wo=wi, eo=ei,
 	       select(FD_SETSIZE, &ro, &wo, &eo, &tv) > 0)) {
@@ -3107,7 +3123,8 @@ void asyncReadWrite(Pair *pair) {
 		}
 	    }
 	}
-	if (Debug > 10) select_debug("selectReadWrite2", &ri, &wi, &ei);
+	if (Debug > 10)
+	    message_select(LOG_DEBUG, "selectReadWrite2", &ri, &wi, &ei);
     }
  leave:
     waitMutex(FdRinMutex);
@@ -3494,12 +3511,12 @@ void repeater(void) {
     if (Debug > 10) {
 	message(LOG_DEBUG, "select main(%ld)...",
 		(timeout ? timeout->tv_usec : 0));
-	select_debug("select main IN ", &rout, &wout, &eout);
+	message_select(LOG_DEBUG, "select main IN ", &rout, &wout, &eout);
     }
     ret = select(FD_SETSIZE, &rout, &wout, &eout, timeout);
     if (Debug > 10) {
 	message(LOG_DEBUG, "select main: %d", ret);
-	select_debug("select main OUT", &rout, &wout, &eout);
+	message_select(LOG_DEBUG, "select main OUT", &rout, &wout, &eout);
     }
     scanClose();
     if (ret > 0) {
@@ -3516,6 +3533,10 @@ void repeater(void) {
 	    message(LOG_ERR, "select error err=%d", errno);
 	    if (++nerrs >= NERRS_MAX) {
 		message(LOG_ERR, "select error %d times, exiting...", nerrs);
+		message_select(LOG_INFO, "IN", &rin, &win, &ein);
+		message_pairs();
+		message_origins();
+		message_conns();
 		exit(1);
 	    }
 	}
@@ -4431,23 +4452,6 @@ void doargs(int argc, int i, char *argv[]) {
 	FdSet(stone->sd, &rin);
 	FdSet(stone->sd, &ein);
     }
-}
-
-void message_pairs(void) {	/* dump for debug */
-    Pair *pair;
-    for (pair=pairs.next; pair != NULL; pair=pair->next) message_pair(pair);
-}
-
-void message_origins(void) {	/* dump for debug */
-    Origin *origin;
-    for (origin=origins.next; origin != NULL; origin=origin->next)
-	message_origin(origin);
-}
-
-void message_conns(void) {	/* dump for debug */
-    Conn *conn;
-    for (conn=conns.next; conn != NULL; conn=conn->next)
-	message_conn(conn);
 }
 
 #ifdef FD_SET_BUG
