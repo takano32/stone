@@ -84,10 +84,11 @@
  * -DWINDOWS	  Windows95/98/NT
  * -DNT_SERVICE	  WindowsNT/2000 native service
  * -DUNIX_DAEMON  fork into background and become a UNIX Daemon
+ * -DPRCTL	  with prctl(2) - operations on a process
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.101 2003/11/02 13:43:58 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.102 2003/11/03 03:00:40 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -164,15 +165,15 @@ typedef void *(*aync_start_routine) (void *);
     } else if (Debug > 7) {\
 	message(LOG_DEBUG,"pthread ID=%d",thread);\
     }
-#else
+#else	/* ! PTHREAD */
 #define ASYNC(func,arg)	\
     waitMutex(AsyncMutex);\
     AsyncCount++;\
     freeMutex(AsyncMutex);\
     func(arg)
 #define NO_THREAD
-#endif	/* ! OS2 */
-#endif	/* ! WINDOWS */
+#endif	/* ! PTHREAD */
+#endif	/* ! WINDOWS & ! OS2 */
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -181,11 +182,14 @@ typedef void *(*aync_start_routine) (void *);
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <time.h>
+#ifdef PRCTL
+#include <sys/prctl.h>
+#endif
 typedef int SOCKET;
 #define INVALID_SOCKET		-1
 #define ValidSocket(sd)		((sd) >= 0)
 #define closesocket(sd)		close(sd)
-#endif
+#endif	/* ! WINDOWS */
 #define InvalidSocket(sd)	(!ValidSocket(sd))
 #ifdef FD_SET_BUG
 int FdSetBug = 0;
@@ -474,6 +478,7 @@ char *RootDir = NULL;
 unsigned long SetUID = 0;
 unsigned long SetGID = 0;
 #endif
+char *CoreDumpDir = NULL;
 pid_t MyPid;
 #ifndef NO_FORK
 int NForks = 0;
@@ -3820,6 +3825,7 @@ void help(char *com) {
 #ifdef UNIX_DAEMON
 	    "      -D                ; become UNIX Daemon\n"
 #endif
+	    "      -c <dir>          ; core dump to <dir>\n"
 #ifdef USE_SSL
 	    "      -q <SSL>          ; SSL client option\n"
 	    "      -z <SSL>          ; SSL server option\n"
@@ -4303,6 +4309,9 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
 	SetGID = atoi(argv[++argi]);
 	break;
 #endif
+    case 'c':
+	CoreDumpDir = strdup(argv[++argi]);
+	break;
 #ifndef NO_FORK
     case 'f':
 	NForks = atoi(argv[++argi]);
@@ -4575,7 +4584,16 @@ static void handler(int sig) {
 	signal(SIGPIPE, handler);
 	break;
     case SIGSEGV:
-	message(LOG_ERR, "SIGSEGV.");
+    case SIGBUS:
+    case SIGILL:
+    case SIGFPE:
+	if (CoreDumpDir) {
+	    message(LOG_ERR, "Signal %d, core dumping to %s",
+		    sig, CoreDumpDir);
+	    chdir(CoreDumpDir);
+	} else {
+	    message(LOG_ERR, "Signal %d, abort");
+	}
 	abort();
 	break;
     default:
@@ -4707,6 +4725,9 @@ void initialize(int argc, char *argv[]) {
     signal(SIGUSR1, handler);
     signal(SIGUSR2, handler);
     signal(SIGSEGV, handler);
+    signal(SIGBUS, handler);
+    signal(SIGILL, handler);
+    signal(SIGFPE, handler);
 #endif
 #ifndef NO_FORK
     if (NForks) {
@@ -4798,6 +4819,13 @@ void initialize(int argc, char *argv[]) {
     }
     if (SetUID) if (setuid(SetUID) < 0) {
 	message(LOG_WARNING, "Can't set uid err=%d.", errno);
+    }
+#endif
+#ifdef PR_SET_DUMPABLE
+    if (CoreDumpDir && (SetUID || SetGID)) {
+	if (prctl(PR_SET_DUMPABLE, 1) < 0) {
+	    message(LOG_ERR, "prctl err=%d", errno);
+	}
     }
 #endif
     if (MinInterval > 0) {

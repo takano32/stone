@@ -79,7 +79,7 @@ ssl_stone.exe:
 #	$(MAKE) FLAGS=-DUSE_SSL LIBS="ssl32.lib crypt32.lib" $(TARGET)
 
 linux:
-	$(MAKE) FLAGS="-DINET_ADDR -DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
+	$(MAKE) FLAGS="-DINET_ADDR -DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON -DPRCTL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
 
 linux-pop:
 	$(MAKE) TARGET=linux pop_stone
