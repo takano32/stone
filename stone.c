@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.190 2004/09/25 02:18:01 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.191 2004/09/28 10:02:14 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2363,6 +2363,9 @@ void asyncConn(Conn *conn) {
     if (ret < 0) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
+#ifndef EINPROGRESS
+#define EINPROGRESS	WSAEINPROGRESS
+#endif
 #endif
 	if (errno == EINPROGRESS) {
 	    p1->proto |= proto_conninprog;
