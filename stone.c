@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.71 2003/09/09 05:44:40 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.72 2003/09/11 09:00:34 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -611,35 +611,59 @@ char *addr2str(struct in_addr *addr) {
 
 char *port2str(int port, int flag, int mask) {	/* network byte order */
     static char str[STRMAX];
-    char *proto;
     struct servent *ent;
+    char *p;
+    char sep = '/';
     if (flag & proto_udp) {
-	proto = "udp";
+	p = "udp";
     } else {
-	proto = "tcp";
+	p = "tcp";
     }
     str[0] = '\0';
     if (!AddrFlag) {
-	ent = getservbyport(port,proto);
+	ent = getservbyport(port,p);
 	if (ent) strncpy(str,ent->s_name,STRMAX-5);
     }
     if (str[0] == '\0') {
 	sprintf(str,"%d",ntohs((unsigned short)port));
     }
+    p = str + strlen(str);
     if (flag & proto_udp) {
-	strcat(str,"/udp");
-    } else if (flag & proto_ohttp & mask) {
-	strcat(str,"/http");
-    } else if (flag & proto_ssl & mask) {
-	strcat(str,"/ssl");
-    } else if (flag & proto_base & mask) {
-	strcat(str,"/base");
-    } else switch(flag & proto_command & mask) {
+	*p++ = sep;
+	sep = ',';
+	strcpy(p, "udp");
+	p += 3;
+    }
+    if (flag & proto_ohttp & mask) {
+	*p++ = sep;
+	sep = ',';
+	strcpy(p, "http");
+	p += 4;
+    }
+    if (flag & proto_ssl & mask) {
+	*p++ = sep;
+	sep = ',';
+	strcpy(p, "ssl");
+	p += 3;
+    }
+    if (flag & proto_base & mask) {
+	*p++ = sep;
+	sep = ',';
+	strcpy(p, "base");
+	p += 4;
+    }
+    switch(flag & proto_command & mask) {
     case command_ihead:
-	strcat(str,"/proxy");
+	*p++ = sep;
+	sep = ',';
+	strcpy(p, "proxy");
+	p += 5;
 	break;
     case command_pop:
-	strcat(str,"/apop");
+	*p++ = sep;
+	sep = ',';
+	strcpy(p, "apop");
+	p += 4;
 	break;
     }
     return str;
@@ -3635,33 +3659,48 @@ int getdist(
 	if (*p == ':') {
 	    *p++ = '\0';
 	    port_str = p;
-	} else if (*p == '/') {
+	} else if (!proto_str && *p == '/') {
 	    *p++ = '\0';
 	    proto_str = p;
 	}
 	p++;
     }
-    if (!proto_str) {
-	*protop = proto_tcp;	/* default */
-    } else if (!strcmp(proto_str,"udp")) {
-	*protop = proto_udp;
-    } else if (!strcmp(proto_str,"tcp")) {
-	*protop = proto_tcp;
-    } else if (!strcmp(proto_str,"http")) {
-	*protop = proto_ohttp;
-    } else if (!strcmp(proto_str,"base")) {
-	*protop = proto_base;
-    } else if (!strcmp(proto_str,"proxy")) {
-	*protop = command_ihead;
+    *protop = proto_tcp;	/* default */
+    if (proto_str) {
+	p = proto_str;
+	do {
+	    if (!strncmp(p, "tcp", 3)) {
+		p += 3;
+		*protop &= ~proto_udp;
+		*protop |= proto_tcp;
+	    } else if (!strncmp(p, "udp", 3)) {
+		p += 3;
+		*protop &= ~proto_tcp;
+		*protop |= proto_udp;
+	    } else if (!strncmp(p, "http", 4)) {
+		p += 4;
+		*protop |= proto_ohttp;
+	    } else if (!strncmp(p, "base", 4)) {
+		p += 4;
+		*protop |= proto_base;
+	    } else if (!strncmp(p, "proxy", 5)) {
+		p += 5;
+		*protop &= ~proto_command;
+		*protop |= command_ihead;
 #ifdef USE_SSL
-    } else if (!strcmp(proto_str,"ssl")) {
-	*protop = proto_ssl;
+	    } else if (!strncmp(p, "ssl", 3)) {
+		p += 3;
+		*protop |= proto_ssl;
 #endif
 #ifdef USE_POP
-    } else if (!strcmp(proto_str,"apop")) {
-	*protop = command_pop;
+	    } else if (!strncmp(p, "apop", 4)) {
+		p += 4;
+		*protop &= ~proto_command;
+		*protop |= command_pop;
 #endif
-    } else return -1;	/* error */
+	    } else return -1;	/* error */
+	} while ((*p == ',' || *p == '/') && p++);
+    }
     if (port_str) {
 	*portp = str2port(port_str,*protop);
 	if (*portp < 0) {
@@ -3876,6 +3915,8 @@ int doopts(int argc, char *argv[]) {
 		CppOptions = strdup(argv[++i]);
 		break;
 #endif
+	    case '-':	/* end of global options */
+		return i+1;
 	    case 'C':
 		if (!ConfigFile) {
 		    i++;
@@ -3916,9 +3957,11 @@ void doargs(int argc, int i, char *argv[]) {
 #ifdef USE_SSL
 	    case 'q':
 		i = sslopts(argc,i,argv,&ClientOpts,0);
+		proto |= proto_ssl_d;
 		break;
 	    case 'z':
 		i = sslopts(argc,i,argv,&ServerOpts,1);
+		proto |= proto_ssl_s;
 		break;
 #endif
 	    default:
@@ -3949,9 +3992,9 @@ void doargs(int argc, int i, char *argv[]) {
 	k = i;
 	for (; i < argc; i++, j++) if (!strcmp(argv[i],"--")) break;
 	if ((dproto & proto_udp) || (sproto & proto_udp)) {
-	    proto = proto_udp;
+	    proto &= ~proto_tcp;
+	    proto |= proto_udp;
 	} else {
-	    proto = proto_tcp;
 	    if (sproto & proto_ohttp) proto |= proto_ohttp_s;
 	    if (sproto & proto_ssl) proto |= proto_ssl_s;
 	    if (sproto & proto_base) proto |= proto_base_s;
