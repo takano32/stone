@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.80 2003/10/20 15:40:05 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.81 2003/10/22 09:07:56 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -301,11 +301,22 @@ typedef struct {
     struct in_addr mask;
 } XHost;
 
+typedef struct _Backup {
+    struct _Backup *next;
+    struct sockaddr_in master;
+    struct sockaddr_in backup;
+    int proto;
+    short interval;	/* interval of health check */
+    short bn;		/* 0: health, 1: backup */
+    time_t last;	/* last health check */
+} Backup;
+
 typedef struct _Stone {
     SOCKET sd;			/* socket descriptor to listen */
     int port;
     struct sockaddr_in sin;	/* destination */
     int proto;
+    Backup **backups;
     char *p;
     int timeout;
     struct _Stone *next;
@@ -369,6 +380,8 @@ typedef struct _Comm {
 Stone *stones = NULL;
 Stone *oldstones = NULL;
 int ReuseAddr = 0;
+Backup *backups = NULL;
+int MinInterval = 0;
 Pair pairs;
 Pair *trash = NULL;
 Conn conns;
@@ -844,6 +857,144 @@ void freeMutex(int h) {
 #endif
 #endif
 #endif
+
+/* backup */
+
+int healthCheck(struct sockaddr_in *sinp) {
+    SOCKET sd;
+    int ret;
+    sd = socket(AF_INET,SOCK_STREAM,0);
+    if (InvalidSocket(sd)) {
+#ifdef WINDOWS
+	errno = WSAGetLastError();
+#endif
+	message(LOG_ERR,"health check: can't create socket err=%d.",
+		sd, errno);
+	return 1;	/* I can't tell the master is healthy or not */
+    }
+    ret = connect(sd, (struct sockaddr*)sinp, sizeof(*sinp));
+    if (ret == 0) shutdown(sd, 2);
+    closesocket(sd);
+    if (ret == 0) return 1;	/* healthy ! */
+    return 0;	/* fail */
+}
+
+int scanBackups(void) {
+    Backup *b;
+    time_t now;
+    time(&now);
+    for (b=backups; b != NULL; b=b->next) {
+	if (now - b->last < b->interval) continue;
+	if (healthCheck(&b->master)) {	/* healthy ? */
+	    if (b->bn) {
+		message(LOG_INFO, "health check %s:%s success",
+			addr2str(&b->master.sin_addr),
+			port2str(b->master.sin_port, b->proto, proto_dest));
+		b->bn = 0;
+	    }
+	} else {	/* unhealthy */
+	    if (b->bn == 0) {
+		message(LOG_ERR, "health check %s:%s fail",
+			addr2str(&b->master.sin_addr),
+			port2str(b->master.sin_port, b->proto, proto_dest));
+		b->bn++;
+	    }
+	}
+	b->last = now;
+    }
+}
+
+void asyncScanBackups(Backup *backup) {
+    ASYNC_BEGIN;
+    scanBackups();
+    ASYNC_END;
+}
+
+int hostPort(char *str, struct sockaddr_in *sinp) {
+    char host[STRMAX];
+    int i;
+    for (i=0; i < STRMAX-1; i++) {
+	if (! str[i]) return 0;	/* illegal format */
+	if (str[i] == ':') {
+	    short family;
+	    host[i] = '\0';
+	    if (!host2addr(host, &sinp->sin_addr, &family)) {
+		return 0;	/* unknown host */
+	    }
+	    sinp->sin_family = family;
+	    sinp->sin_port = htons(atoi(&str[++i]));
+	    return 1;	/* success */
+	}
+	host[i] = str[i];
+    }
+    return 0;	/* fail */
+}
+
+Backup *findBackup(struct sockaddr_in *sinp, int proto) {
+    Backup *b;
+    for (b=backups; b != NULL; b=b->next) {
+	if (b->master.sin_addr.s_addr == sinp->sin_addr.s_addr
+	    && b->master.sin_port == sinp->sin_port
+	    && (b->proto & proto)) {	/* found */
+	    if (Debug > 1) {
+		char mhost[STRMAX];
+		char mport[STRMAX];
+		strcpy(mhost, addr2str(&b->master.sin_addr));
+		strcpy(mport, port2str(b->master.sin_port,
+				       b->proto, proto_dest));
+		message(LOG_DEBUG, "master %s:%s backup %s:%s interval %d",
+			mhost, mport,
+			addr2str(&b->backup.sin_addr),
+			port2str(b->backup.sin_port, b->proto, proto_dest),
+			b->interval);
+	    }
+	    return b;
+	}
+    }
+    return NULL;
+}
+
+int gcd(int a, int b) {
+    int m;
+    if (a > b) {
+	m = a % b;
+	if (m == 0) return b;
+	return gcd(m, b);
+    } else {
+	m = b % a;
+	if (m == 0) return a;
+	return gcd(m, a);
+    }
+}
+
+void mkBackup(int interval, char *master, char *backup) {
+    Backup *b = malloc(sizeof(Backup));
+    if (!b) {
+	message(LOG_ERR, "Out of memory, no backup for %s", master);
+	return;
+    }
+    b->proto = proto_tcp;
+    b->interval = interval;
+    if (MinInterval > 0) {
+	MinInterval = gcd(MinInterval, interval);
+    } else {
+	MinInterval = interval;
+    }
+    if (!hostPort(master, &b->master)) {
+	message(LOG_ERR, "Illegal master: %s", master);
+	free(b);
+	return;
+    }
+    if (!hostPort(backup, &b->backup)) {
+	message(LOG_ERR, "Illegal backup: %s", backup);
+	free(b);
+	return;
+    }
+    b->last = 0;
+    b->bn = 0;	/* healthy */
+    b->next = backups;
+    backups = b;
+}
 
 /* relay UDP */
 
@@ -1480,6 +1631,7 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
 void asyncConn(Conn *conn) {
     int ret;
     Pair *p1, *p2;
+    Backup *backup = NULL;
     time_t clock;
     ASYNC_BEGIN;
     p1 = conn->pair;
@@ -1488,6 +1640,9 @@ void asyncConn(Conn *conn) {
     if (p2 == NULL) goto finish;
     time(&clock);
     if (Debug > 8) message(LOG_DEBUG,"asyncConn...");
+    if (p1->stone->backups) {
+	backup = p1->stone->backups[0];
+    }
 #ifdef USE_SSL
     if (p2->proto & proto_ssl_intr)
 	ret = trySSL_accept(p2);	/* accept not completed */
@@ -1512,10 +1667,16 @@ void asyncConn(Conn *conn) {
 			    p1->sd, p2->sd, lbparm, ofs);
 		conn->sin.sin_addr.s_addr
 		    = htonl(ntohl(conn->sin.sin_addr.s_addr) + ofs);
+		if (p1->stone->backups) {
+		    backup = p1->stone->backups[ofs];
+		}
 	    }
 	}
 #endif
-	ret = doconnect(p1,&conn->sin);
+	if (backup && backup->bn) {
+	    conn->sin = backup->backup;
+	}
+	ret = doconnect(p1, &conn->sin);
 #ifdef USE_SSL
     }
 #endif
@@ -1605,6 +1766,7 @@ int scanConns(void) {
 	}
 	pconn = conn;
     }
+    if (backups) ASYNC(asyncScanBackups, NULL);
     return 1;
 }
 
@@ -3187,7 +3349,13 @@ void repeater(void) {
 	timeout = &tv;
 	timeout->tv_sec = 0;
 	timeout->tv_usec = TICK_SELECT;
-    } else timeout = NULL;		/* block indefinitely */
+    } else if (MinInterval > 0) {
+	timeout = &tv;
+	timeout->tv_sec = MinInterval;
+	timeout->tv_usec = 0;
+    } else {
+	timeout = NULL;		/* block indefinitely */
+    }
     if (Debug > 10) {
 	message(LOG_DEBUG,"select main(%ld)...",
 		(timeout ? timeout->tv_usec : 0));
@@ -3246,6 +3414,7 @@ Stone *mkstone(
     struct sockaddr_in sin;
     char xhost[256], *p;
     short family;
+    int ndest = 0;	/* # of destinations */
     int i;
     stonep = calloc(1,sizeof(Stone)+sizeof(XHost)*nhosts);
     if (!stonep) {
@@ -3271,6 +3440,7 @@ Stone *mkstone(
 	}
 	stonep->sin.sin_family = family;
 	stonep->sin.sin_port = htons((u_short)dport);
+	ndest = 1;
     }
     stonep->proto = proto;
     if (!reusestone(stonep)) {	/* recycle stone */
@@ -3320,6 +3490,7 @@ Stone *mkstone(
 #ifdef USE_SSL
     if (proto & proto_ssl_s) {	/* server side SSL */
 	stonep->ssl_server = mkStoneSSL(&ServerOpts,1);
+	if (stonep->ssl_server->lbmod) ndest = stonep->ssl_server->lbmod;
     } else {
 	stonep->ssl_server = NULL;
     }
@@ -3382,6 +3553,21 @@ Stone *mkstone(
 		port2str(stonep->sin.sin_port,stonep->proto,proto_dest),
 		xhost);
     }
+    if (ndest) {
+	stonep->backups = malloc(sizeof(Backup*) * ndest);
+	if (stonep->backups) {
+	    int i;
+	    for (i=0; i < ndest; i++) {
+		struct sockaddr_in s;
+		s = stonep->sin;
+		if (i > 0) s.sin_addr.s_addr
+			       = htonl(ntohl(s.sin_addr.s_addr + i));
+		stonep->backups[i] = findBackup(&s, stonep->proto);
+	    }
+	}
+    } else {
+	stonep->backups = NULL;
+    }
     return stonep;
 }
 
@@ -3419,6 +3605,8 @@ void help(char *com) {
 	    "      -X <n>            ; size [byte] of Xfer buffer\n"
 	    "      -T <n>            ; timeout [sec] of TCP sessions\n"
 	    "      -r                ; reuse socket\n"
+	    "      -b <n> <master>:<port> <backup>:<port>\n"
+	    "                        ; backup host:port for master\n"
 #ifndef NO_SETUID
 	    "      -o <n>            ; set uid to <n>\n"
 	    "      -g <n>            ; set gid to <n>\n"
@@ -3932,6 +4120,10 @@ int doopts(int argc, char *argv[]) {
 	    case 'r':
 		ReuseAddr = 1;
 		break;
+	    case 'b':
+		mkBackup(atoi(argv[i+1]), argv[i+2], argv[i+3]);
+		i += 3;
+		break;
 #ifdef USE_SSL
 	    case 'q':
 		i = sslopts(argc,i,argv,&ClientOpts,0);
@@ -4405,6 +4597,9 @@ void initialize(int argc, char *argv[]) {
 	message(LOG_WARNING,"Can't set uid err=%d.",errno);
     }
 #endif
+    if (MinInterval > 0) {
+	if (Debug > 1) message(LOG_DEBUG, "MinInterval: %d", MinInterval);
+    }
 }
 
 #ifdef NT_SERVICE
