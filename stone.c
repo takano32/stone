@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.64 2003/08/05 10:54:00 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.65 2003/08/05 14:15:06 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2695,6 +2695,8 @@ void asyncReadWrite(Pair *pair) {
 			rPair->proto |= proto_eof;
 			shutdown(wsd, 1);	/* no more sends */
 		    } else {	/* error */
+			if (wPair && (wPair->proto & proto_eof))
+			    doclose(wPair);
 			doclose(rPair);
 		    }
 		} else {
