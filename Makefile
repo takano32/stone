@@ -26,6 +26,8 @@ SSL_LIBS=	-ldl -L$(SSL)/lib -lssl -lcrypto
 POP_FLAGS=	-DUSE_POP
 POP_LIBS=	md5c.o
 
+SVC_LIBS=	logmsg.o service.o svcbody.o
+
 all:
 	@echo "run make with one of the following arguments"
 	@echo "linux     ; for Linux"
@@ -43,7 +45,7 @@ all:
 	@echo "using above conv. and OpenSSL, add '-ssl' (example: linux-ssl)"
 
 clean:
-	rm -f stone $(POP_LIBS) stone.exe stone.obj md5c.obj
+	rm -f stone $(POP_LIBS) stone.exe stone.obj md5c.obj stone.o $(SVC_LIBS) MSG00001.bin logmsg.h logmsg.rc
 
 md5c.c:
 	@echo "*** md5c.c is contained in RFC1321"
@@ -56,6 +58,15 @@ pop_stone: $(POP_LIBS)
 
 ssl_stone:
 	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(SSL_LIBS)" $(TARGET)
+
+logmsg.rc: logmsg.mc
+	mc $?
+
+logmsg.o: logmsg.rc
+	windres $? -o $@
+
+svc_stone: logmsg.rc stone.o $(SVC_LIBS)
+	$(CC) -o stone.exe stone.o $(SVC_LIBS) $(SSL_LIBS) -lwsock32 -ladvapi32 -luser32 -lgdi32 -lshell32 -lkernel32
 
 stone.exe: stone.c
 	$(CC) $(FLAGS) $? $(LIBS)
@@ -159,7 +170,10 @@ mingw-pop:
 	$(MAKE) CC=gcc TARGET=mingw pop_stone
 
 mingw-ssl:
-	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="-LC:/mingw/lib/openssl -lssl32 -leay32 -lregex" mingw
+	$(MAKE) CC=gcc FLAGS="$(SSL_FLAGS)" SSL_LIBS="-LC:/mingw/lib/openssl -lssl32 -leay32 -lregex" TARGET=mingw ssl_stone
+
+mingw-svc:
+	$(MAKE) CC=gcc CFLAGS="-DWINDOWS -DNT_SERVICE $(POP_FLAGS) $(SSL_FLAGS) $(CFLAGS)" SSL_LIBS="-LC:/mingw/lib/openssl -lssl32 -leay32 -lregex" TARGET=mingw svc_stone
 
 emx:
 	$(MAKE) CC=gcc FLAGS="-DOS2 -Zmts -Zsysv-signals $(FLAGS)" LIBS="$(LIBS) -lsocket" stone.exe
