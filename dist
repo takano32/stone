@@ -1,5 +1,11 @@
 #!/bin/sh
-ver=2.1w
+case "$1" in
+    [0-9].[0-9][a-z])	ver=$1	;;
+    *)	echo "Usage dist <version> [<time stamp>]"
+	exit 1
+	;;
+esac
+shift
 stone=stone21
 stones=stone21s
 if [ -n "$1" ]
@@ -24,6 +30,7 @@ nkf_s	Makefile	$stones
 nkf_s	GPL.txt		$stones
 mkdir stone-$ver
 cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt stone-$ver/.
+sed -e "s/^Version: .*/Version: $ver/" stone.spec > stone-$ver/stone.spec
 if [ -n "$stamp" ]
 then	touch -t $stamp $stone $stones stone-$ver  \
 		$stone/README.*  $stones/README.*  \
@@ -31,6 +38,7 @@ then	touch -t $stamp $stone $stones stone-$ver  \
 		$stone/stone.exe $stones/stone.exe \
 		$stone/Makefile  $stones/Makefile  \
 		stone-$ver/README.* stone-$ver/stone.c stone-$ver/Makefile \
+		stone-$ver/stone.spec \
 		README.* stone.c Makefile
 	tar czf stone-$ver.tar.gz stone-$ver
 	lha u stone-$ver.lzh $stone
