@@ -28,7 +28,7 @@
  * the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * Usage: stone [-d] [-n] [-u <max>] [-f <n>] [-a <file>] [-L <file>] [-l]
- *              [-o <n>] [-g <n>] [-t <dir>] [-z <SSL>]
+ *              [-o <n>] [-g <n>] [-t <dir>] [-z <SSL>] [-D]
  *              [-C <file>] [-P <command>]
  *              <st> [-- <st>]...
  * <st> := <display> [<xhost>...]
@@ -83,10 +83,11 @@
  * -DOS2	  OS/2 with EMX
  * -DWINDOWS	  Windows95/98/NT
  * -DNT_SERVICE	  WindowsNT/2000 native service
+ * -DUNIX_DAEMON  fork into background and become a UNIX Daemon
  */
 #define VERSION	"2.1w"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.26 2002/10/05 16:35:00 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.27 2002/11/24 16:26:09 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -176,6 +177,8 @@ typedef void *(*aync_start_routine) (void *);
 #include <netdb.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <time.h>
 typedef int SOCKET;
 #define INVALID_SOCKET		-1
 #define ValidSocket(sd)		((sd) >= 0)
@@ -373,7 +376,7 @@ int AddrFlag = 0;
 int Syslog = 0;
 char SyslogName[STRMAX];
 #endif
-FILE *LogFp;
+FILE *LogFp = NULL;
 char *LogFileName = NULL;
 FILE *AccFp = NULL;
 char *AccFileName = NULL;
@@ -384,6 +387,9 @@ char **ConfigArgv = NULL;
 char **OldConfigArgv = NULL;
 char *DispHost;
 int DispPort;
+#ifdef UNIX_DAEMON
+int DaemonMode = 0;
+#endif
 #ifndef NO_CHROOT
 char *RootDir = NULL;
 #endif
@@ -3107,6 +3113,9 @@ char *com;
 #ifdef USE_SSL
 	    "      -z <SSL>          ; OpenSSL option\n"
 #endif
+#ifdef UNIX_DAEMON
+	    "      -D                ; become UNIX Daemon\n"
+#endif
 	    "stone: <display> [<xhost>...]\n"
 	    "       <host>:<port> <sport> [<xhost>...]\n"
 	    "       proxy <sport> [<xhost>...]\n"
@@ -3540,6 +3549,11 @@ char *argv[];
 		NForks = atoi(argv[++i]);
 		break;
 #endif
+#ifdef UNIX_DAEMON
+	    case 'D':
+		DaemonMode = 1;
+		break;
+#endif
 #ifdef USE_SSL
 	    case 'z':
 		i = sslopts(argc,i,argv);
@@ -3778,6 +3792,30 @@ int sig, code;
 }
 #endif
 
+#ifdef UNIX_DAEMON
+void daemonize()
+{
+    pid_t pid;
+    pid = fork();
+    if (pid < 0) {
+	message(LOG_ERR,"Can't create daemon err=%d",errno);
+	exit(1);
+    } 
+    if (pid > 0) _exit(0);
+    if (setsid() < 0)
+	message(LOG_WARNING,"Can't create new session err=%d",errno);
+    if (chdir("/") < 0)
+	message(LOG_WARNING,"Can't change directory to / err=%d",errno);
+    umask(0022);
+    if (close(0) != 0)
+	message(LOG_WARNING,"Can't close stdin err=%d",errno);
+    if (close(1) != 0)
+	message(LOG_WARNING,"Can't close stdout err=%d",errno);
+    if (close(2) != 0)
+	message(LOG_WARNING,"Can't close stderr err=%d",errno);
+}
+#endif
+
 void initialize(argc,argv)
 int argc;
 char *argv[];
@@ -3825,6 +3863,9 @@ char *argv[];
 	getconfig();
 	j = doopts(ConfigArgc,ConfigArgv);
     }
+#ifdef UNIX_DAEMON
+    if (DaemonMode) daemonize();
+#endif
 #ifndef NO_SYSLOG
     if (Syslog) {
 	sprintf(SyslogName,"stone[%d]",getpid());
@@ -3953,6 +3994,10 @@ char *argv[];
     }
 #endif
 #ifndef NO_SETUID
+    if (SetUID || SetGID) {
+	if (AccFileName) fchown(fileno(AccFp),SetUID,SetGID);
+	if (LogFileName) fchown(fileno(LogFp),SetUID,SetGID);
+    }
     if (SetGID) if (setgid(SetGID) < 0) {
 	message(LOG_WARNING,"Can't set gid err=%d.",errno);
     }
