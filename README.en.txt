@@ -106,6 +106,7 @@ HOWTO USE
 			Using multiple <st>, different SSL options can
 			be designated for each <st>.
 	verbose		verbose mode.
+	cache		enable session cache.
 	verify		require SSL certificate to the peer.
 	verify,once	request a client certificate on the initial TLS/SSL
 			handshake. (-z only)
