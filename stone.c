@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.208 2004/10/26 15:32:27 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.209 2004/10/26 15:34:03 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -968,6 +968,7 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     }
     message(LOG_ERR, "No IP address for %s", name);
  exit:
+    if (temp.s) free(temp.s);
     if (fqdn.s) free(fqdn.s);
     if (addr.s) free(addr.s);
     return ret;
