@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.108 2003/11/04 04:09:30 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.109 2003/11/23 01:44:11 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1834,6 +1834,11 @@ void asyncConn(Conn *conn) {
 	    ASYNC_END;
 	    return;
 	}
+#ifdef USE_SSL
+	if (p2->proto & proto_ssl_intr)
+	    message(LOG_ERR, "TCP %d: SSL_accept timeout", p2->sd);
+	else
+#endif
 	message(LOG_ERR, "TCP %d: connect timeout to %s:%s",
 		p2->sd,
 		addr2str(&conn->sin.sin_addr),
