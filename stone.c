@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.177 2004/09/18 13:09:39 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.178 2004/09/19 12:26:27 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -4230,6 +4230,7 @@ static void freeMatch(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
     if (Debug > 4) message(LOG_DEBUG, "freeMatch %d: %lx",
 			   --NewMatchCount, match);
     free(match);
+    CRYPTO_free_ex_data(idx, parent, ad);
 }
 
 static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
@@ -4237,7 +4238,6 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     int err, depth;
     long serial = -1;
     SSL *ssl;
-    SSL_SESSION *sess;
     Pair *pair;
     StoneSSL *ss;
     char buf[BUFMAX];
@@ -4251,7 +4251,6 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 	message(LOG_ERR, "SSL callback can't get SSL object");
 	return 0;	/* always fail */
     }
-    sess = SSL_get_session(ssl);
     pair = SSL_get_ex_data(ssl, PairIndex);
     if (!pair) {
 	message(LOG_ERR, "SSL callback don't have ex_data, verify fails...");
@@ -4285,12 +4284,14 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     }
     if (!preverify_ok) return 0;
     if (depth < DEPTH_MAX && ss->re[depth]) {
+	SSL_SESSION *sess = NULL;
 	regmatch_t pmatch[NMATCH_MAX];
 	char **match;
 	err = regexec(ss->re[depth], p, (size_t)NMATCH_MAX, pmatch, 0);
 	if (Debug > 3) message(LOG_DEBUG, "TCP %d: regexec%d=%d",
 			       pair->sd, depth, err);
 	if (err) return 0;	/* not match */
+	sess = SSL_get1_session(ssl);
 	if (sess && (match = SSL_SESSION_get_ex_data(sess, MatchIndex))) {
 	    int i;
 	    int j = 1;
@@ -4325,6 +4326,7 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 		    "TCP %d: SSL callback can't get session's ex_data",
 		    pair->sd);
 	}
+	if (sess) SSL_SESSION_free(sess);
     }
     return 1;	/* if re is null, always succeed */
 }
