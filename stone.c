@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.53 2003/05/10 08:08:08 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.54 2003/05/12 03:14:40 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3325,6 +3325,9 @@ void help(char *com) {
 	    "SSL:   default          ; reset to default\n"
 	    "       verbose          ; verbose mode\n"
 	    "       verify           ; require peer's certificate\n"
+	    "       verify,once      ; verify client's certificate only once\n"
+	    "       verify,ifany     ; verify client's certificate if any\n"
+	    "       verify,none      ; don't require peer's certificate\n"
 	    "       re<n>=<regex>    ; verify depth <n> with <regex>\n"
 	    "       depth=<n>        ; set verification depth to <n>\n"
 	    "       key=<file>       ; key file\n"
@@ -3624,11 +3627,23 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	sslopts_default(opts,isserver);
     } else if (!strcmp(argv[i],"verbose")) {
 	opts->verbose++;
-    } else if (!strcmp(argv[i],"verify")) {
-	if (isserver) {
+    } else if (!strncmp(argv[i],"verify",6)
+	       && (argv[i][6] == '\0' || argv[i][6] == ',')) {
+	if (!strcmp(argv[i]+6,",none")) {
+	    opts->mode = SSL_VERIFY_NONE;
+	} else if (isserver) {
 	    opts->mode = (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT);
-	} else {
+	    if (argv[i][6] == ',') {
+		if (!strcmp(argv[i]+7,"ifany")) {
+		    opts->mode = (SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE);
+		} else if (!strcmp(argv[i]+7,"once")) {
+		    opts->mode |= SSL_VERIFY_CLIENT_ONCE;
+		}
+	    }
+	} else if (argv[i][6] == '\0') {
 	    opts->mode = SSL_VERIFY_PEER;
+	} else {
+	    goto error;
 	}
     } else if (!strncmp(argv[i],"re",2) && isdigit(argv[i][2])
 	       && argv[i][3] == '=') {
