@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.122 2004/03/18 04:21:01 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.123 2004/03/20 07:37:01 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2919,6 +2919,7 @@ int nConns(void) {
 }
 
 int limitCommon(Pair *pair, fd_set *winp, int var, int limit, char *str) {
+    if (Debug) message(LOG_DEBUG, ": LIMIT %s %d: %d", str, limit, var);
     if (var < limit) {
 	commOutput(pair, winp, "200 %s=%d is less than %d\r\n",
 		   str, var, limit);
@@ -2955,7 +2956,13 @@ int limitReadWrite(Pair *pair, fd_set *rinp, fd_set *winp,
 		       atoi(parm), "readwrite");
 }
 
+int limitAsync(Pair *pair, fd_set *rinp, fd_set *winp,
+		   char *parm, int start) {
+    return limitCommon(pair, winp, AsyncCount, atoi(parm), "async");
+}
+
 int limitErr(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+    if (Debug) message(LOG_ERR, ": Illegal LIMIT %s", parm);
     commOutput(pair, winp, "500 Illegal LIMIT\r\n");
     return -2;	/* read more */
 }
@@ -2965,18 +2972,22 @@ Comm limitComm[] = {
     { "CONN", limitConn },
     { "ESTABLISHED", limitEstablished },
     { "READWRITE", limitReadWrite },
+    { "ASYNC", limitAsync },
     { NULL, limitErr },
 };
 
 int healthHELO(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
+    char str[BUFMAX];
     time_t now;
     time(&now);
-    if (Debug) message(LOG_DEBUG, ": HELO %s", parm);
-    commOutput(pair, winp,
-	       "200 stone:%s debug=%d stone=%d pair=%d conn=%d "
-	       "established=%d readwrite=%d\r\n",
-	       VERSION, Debug, nStones(), nPairs(), nConns(),
-	       (int)(now - lastEstablished), (int)(now - lastReadWrite));
+    snprintf(str, BUFMAX-1,
+	     "stone=%d pair=%d conn=%d established=%d readwrite=%d async=%d",
+	     nStones(), nPairs(), nConns(),
+	     (int)(now - lastEstablished), (int)(now - lastReadWrite),
+	     AsyncCount);
+    if (Debug) message(LOG_DEBUG, ": HELO %s: %s", parm, str);
+    commOutput(pair, winp, "200 stone:%s debug=%d %s\r\n",
+	       VERSION, Debug, str);
     return -2;	/* read more */
 }
 
@@ -2984,7 +2995,6 @@ int healthLIMIT(Pair *pair, fd_set *rinp, fd_set *winp,
 		char *parm, int start) {
     Comm *comm = limitComm;
     char *q;
-    if (Debug) message(LOG_DEBUG, ": LIMIT %s", parm);
     while (comm->str) {
 	if ((q=comm_match(parm, comm->str)) != NULL) break;
 	comm++;
