@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.76 2003/09/20 13:08:14 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.77 2003/09/21 04:06:25 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1223,7 +1223,7 @@ void rmMatch(Pair *pair) {
 	int i;
 	char **match = pair->match;
 	pair->match = NULL;
-	for (i=0; i < NMATCH_MAX; i++) {
+	for (i=0; i <= NMATCH_MAX; i++) {
 	    if (match[i]) free(match[i]);
 	}
 	free(match);
@@ -1498,8 +1498,8 @@ void asyncConn(Conn *conn) {
 	    int lbmod = p2->stone->ssl_server->lbmod;
 	    int ofs = 0;
 	    unsigned char *s;
-	    if (1 <= lbparm && lbparm <= 9) s = p2->match[lbparm - 1];
-	    else s = p2->match[0];
+	    if (0 <= lbparm && lbparm <= 9) s = p2->match[lbparm];
+	    else s = p2->match[1];
 	    if (lbmod) {
 		while (*s) {
 		    ofs <<= 6;
@@ -1774,10 +1774,10 @@ int strnparse(char *buf, int limit, char *p, Pair *pair) {
 	if (c == '\\') {
 	    c = *p++;
 #ifdef USE_SSL
-	    if ('1' <= c && c <= '9') {
+	    if ('0' <= c && c <= '9') {
 		if (pair->match) {
 		    char **match = pair->match;
-		    c -= '1';
+		    c -= '0';
 		    if (match[c]) {
 			int len = strlen(match[c]);
 			if (len >= limit - i) len = limit - i;
@@ -2934,6 +2934,7 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     X509 *err_cert;
     int err, depth;
+    long serial = -1;
     SSL *ssl;
     Pair *pair;
     StoneSSL *ss;
@@ -2956,7 +2957,6 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     }
     if (depth == 0) {
 	ASN1_INTEGER *n = X509_get_serialNumber(err_cert);
-	long serial = -1;
 	if (n) serial = ASN1_INTEGER_get(n);
 	if (ss->serial == -1 && serial >= 0) {
 	    ss->serial = serial;
@@ -2983,16 +2983,24 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 			       pair->sd,depth,err);
 	if (err) return 0;	/* not match */
 	if (!pair->match) {
-	    pair->match = malloc(sizeof(char*) * NMATCH_MAX);
+	    pair->match = malloc(sizeof(char*) * (NMATCH_MAX+1));
 	    if (pair->match) {
 		int i;
-		for (i=0; i < NMATCH_MAX; i++) pair->match[i] = NULL;
+		for (i=0; i <= NMATCH_MAX; i++) pair->match[i] = NULL;
 	    }
 	}
 	if (pair->match) {
 	    int i;
 	    int j = 1;
-	    for (i=0; i < NMATCH_MAX; i++) {
+	    if (serial >= 0) {
+		char str[STRMAX];
+		int len;
+		snprintf(str, STRMAX-1, "%lx", serial);
+		len = strlen(str);
+		pair->match[0] = malloc(len+1);
+		strncpy(pair->match[0], str, len);
+	    }
+	    for (i=1; i <= NMATCH_MAX; i++) {
 		if (pair->match[i]) continue;
 		if (pmatch[j].rm_so >= 0) {
 		    int len = pmatch[j].rm_eo - pmatch[j].rm_so;
@@ -3761,7 +3769,7 @@ void sslopts_default(SSLOpts *opts, int isserver) {
     opts->cipherList = getenv("SSL_CIPHER");
     for (i=0; i < DEPTH_MAX; i++) opts->regexp[i] = NULL;
     opts->lbmod = 0;
-    opts->lbparm = 0;
+    opts->lbparm = 0xFF;
 }
 
 int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
