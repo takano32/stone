@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.35 2003/05/02 03:05:23 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.36 2003/05/02 09:00:01 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2117,7 +2117,7 @@ Pair *pair;		/* read into buf from pair->pair->start */
     if (pair->ssl) {
 	len = SSL_read(pair->ssl,&p->buf[start],bufmax);
 	if (pair->proto & proto_close) return -1;
-	if (len <= 0) {
+	if (len < 0) {
 	    int err;
 	    err = SSL_get_error(pair->ssl,len);
 	    if (err == SSL_ERROR_NONE
