@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.100 2003/10/31 14:44:57 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.101 2003/11/02 13:43:58 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -241,6 +241,7 @@ int FdSetBug = 0;
 #define TICK_SELECT	100000	/* 0.1 sec */
 #define SPIN_MAX	10	/* 1 sec */
 #define	NERRS_MAX	10	/* # of select errors */
+#define	REF_UNIT	10	/* unit of pair->count */
 
 #ifdef USE_SSL
 #include <openssl/crypto.h>
@@ -402,7 +403,6 @@ Origin origins;
 int OriginMax = 10;
 fd_set rin, win, ein;
 int PairTimeOut = 10 * 60;	/* 10 min */
-int Recursion = 0;
 int AsyncCount = 0;
 #ifdef H_ERRNO
 extern int h_errno;
@@ -474,6 +474,7 @@ char *RootDir = NULL;
 unsigned long SetUID = 0;
 unsigned long SetGID = 0;
 #endif
+pid_t MyPid;
 #ifndef NO_FORK
 int NForks = 0;
 pid_t *Pid;
@@ -561,14 +562,9 @@ void message(int pri, char *fmt, ...) {
 	va_start(ap, fmt);
 	vsnprintf(str, BUFMAX, fmt, ap);
 	va_end(ap);
-	if (Syslog == 1 || pri != LOG_DEBUG) {
-	    if (Recursion) syslog(pri, "(%d) %s", Recursion, str);
-	    else syslog(pri, "%s", str);
-	}
-	if (Syslog > 1) {	/* daemontools */
-	    if (Recursion) fprintf(stdout, "(%d) %s\n", Recursion, str);
-	    else fprintf(stdout, "%s\n", str);
-	}
+	if (Syslog == 1
+	    || pri != LOG_DEBUG) syslog(pri, "%s", str);
+	if (Syslog > 1) fprintf(stdout, "%s\n", str);	/* daemontools */
     } else {
 #endif
 	time_t clock;
@@ -578,14 +574,10 @@ void message(int pri, char *fmt, ...) {
 	i = strlen(str);
 #ifndef NO_FORK
 	if (NForks) {
-	    snprintf(&str[i], BUFMAX-i, "[%d] ", getpid());
+	    snprintf(&str[i], BUFMAX-i, "[%d] ", MyPid);
 	    i = strlen(str);
 	}
 #endif
-	if (Recursion) {
-	    snprintf(&str[i], BUFMAX-i, "(%d) ", Recursion);
-	    i = strlen(str);
-	}
 	va_start(ap, fmt);
 	vsnprintf(&str[i], BUFMAX-i-2, fmt, ap);
 	va_end(ap);
@@ -1591,6 +1583,7 @@ void message_time_log(Pair *pair) {
 void doclose(Pair *pair) {	/* close pair */
     Pair *p = pair->pair;
     SOCKET sd = pair->sd;
+    message_time_log(pair);
     if (!(pair->proto & proto_close)) {		/* request to close */
 	pair->proto |= (proto_eof | proto_shutdown | proto_close);
 	if (ValidSocket(sd))
@@ -1711,7 +1704,7 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
     }
     time(&pair->clock);
     p->clock = pair->clock;
-    pair->count++;	/* request to connect */
+    pair->count += REF_UNIT;	/* request to connect */
     conn->pair = pair;
     conn->sin = *sinp;
     conn->lock = 0;
@@ -1838,7 +1831,7 @@ void asyncConn(Conn *conn) {
 	freeMutex(FdEinMutex);
     }
  finish:
-    if (p1) p1->count--;	/* no more request to connect */
+    if (p1) p1->count -= REF_UNIT;	/* no more request to connect */
     conn->pair = NULL;
     conn->lock = -1;
     ASYNC_END;
@@ -2137,6 +2130,16 @@ int scanClose(void) {	/* scan close request */
     while (p1 != NULL) {
 	p2 = p1;
 	p1 = p1->next;
+	if (p2->p) {
+	    char *p = p2->p;
+	    p2->p = NULL;
+	    free(p);
+	}
+	if (p2->log) {
+	    TimeLog *log = p2->log;
+	    p2->log = NULL;
+	    free(log);
+	}
 	free(p2);
     }
     p1 = pairs.next;
@@ -2158,44 +2161,36 @@ int scanClose(void) {	/* scan close request */
 	    p2->next = trash;		/* push `p2' to trash */
 	    trash = p2;
 	} else if (p2->proto & proto_close) {
-	    waitMutex(FdRinMutex);
-	    waitMutex(FdWinMutex);
-	    waitMutex(FdEinMutex);
-	    if (!FD_ISSET(p2->sd, &rin) &&
-		!FD_ISSET(p2->sd, &win) &&
-		!FD_ISSET(p2->sd, &ein) &&
-		p2->count <= 0) {
-#ifdef USE_SSL
-		if (p2->ssl) {
-		    SSL *ssl = p2->ssl;
-		    p2->ssl = NULL;
-		    SSL_free(ssl);
-		    rmMatch(p2);
-		}
-#endif
-		if (Debug > 3)
-		    message(LOG_DEBUG, "TCP %d: closesocket", p2->sd);
-		closesocket(p2->sd);
-		p2->sd = INVALID_SOCKET;
-		if (p2->p) {
-		    char *p = p2->p;
-		    p2->p = NULL;
-		    free(p);
-		}
-		message_time_log(p2);
-		if (p2->log) {
-		    TimeLog *log = p2->log;
-		    p2->log = NULL;
-		    free(log);
-		}
+	    if (p2->count > 0) {
+		p2->count--;
 	    } else {
-		FD_CLR(p2->sd, &rin);
-		FD_CLR(p2->sd, &win);
-		FD_CLR(p2->sd, &ein);
+		waitMutex(FdRinMutex);
+		waitMutex(FdWinMutex);
+		waitMutex(FdEinMutex);
+		if (!FD_ISSET(p2->sd, &rin) &&
+		    !FD_ISSET(p2->sd, &win) &&
+		    !FD_ISSET(p2->sd, &ein)) {
+#ifdef USE_SSL
+		    if (p2->ssl) {
+			SSL *ssl = p2->ssl;
+			p2->ssl = NULL;
+			SSL_free(ssl);
+			rmMatch(p2);
+		    }
+#endif
+		    if (Debug > 3)
+			message(LOG_DEBUG, "TCP %d: closesocket", p2->sd);
+		    closesocket(p2->sd);
+		    p2->sd = INVALID_SOCKET;
+		} else {
+		    FD_CLR(p2->sd, &rin);
+		    FD_CLR(p2->sd, &win);
+		    FD_CLR(p2->sd, &ein);
+		}
+		freeMutex(FdEinMutex);
+		freeMutex(FdWinMutex);
+		freeMutex(FdRinMutex);
 	    }
-	    freeMutex(FdEinMutex);
-	    freeMutex(FdWinMutex);
-	    freeMutex(FdRinMutex);
 	}
     }
     return 1;
@@ -2998,6 +2993,7 @@ void asyncReadWrite(Pair *pair) {
     if (p[1]) npairs++;
     for (i=0; i < npairs; i++) {
 	int isset = 0;
+	p[i]->count += REF_UNIT;
 	sd = p[i]->sd;
 	if ((p[i]->proto & proto_close) || InvalidSocket(sd)) continue;
 	if (!(p[i]->proto & proto_eof) && (p[i]->proto & proto_select_r)) {
@@ -3041,9 +3037,9 @@ void asyncReadWrite(Pair *pair) {
 		rsd = sd;
 		if (wPair) wsd = wPair->sd; else wsd = INVALID_SOCKET;
 		FD_CLR(rsd, &ri);
-		rPair->count++;
+		rPair->count += REF_UNIT;
 		len = doread(rPair);
-		rPair->count--;
+		rPair->count -= REF_UNIT;
 		if (len < 0 || (rPair->proto & proto_close) || wPair == NULL) {
 		    FD_CLR(rsd, &ri);
 		    if (len == -2	/* if EOF w/ pair, */
@@ -3100,9 +3096,9 @@ void asyncReadWrite(Pair *pair) {
 		    if (insheader(wPair) >= 0)	/* insert header */
 			wPair->proto &= ~proto_command;
 		}
-		wPair->count++;
+		wPair->count += REF_UNIT;
 		len = dowrite(wPair);
-		wPair->count--;
+		wPair->count -= REF_UNIT;
 		if (len < 0 || (wPair->proto & proto_close) || rPair == NULL) {
 		    if (rPair && ValidSocket(rsd)) {
 			FD_CLR(rsd, &ri);
@@ -3163,6 +3159,7 @@ void asyncReadWrite(Pair *pair) {
 		}
 		if (isset) FdSet(sd, &ein);
 	    }
+	    p[i]->count -= REF_UNIT;
 	}
     }
     freeMutex(FdEinMutex);
@@ -3250,7 +3247,7 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 		if (pair->count > 0 || Debug > 2) {
 		    message(LOG_NOTICE, "TCP %d: idle time exceeds", sd);
 		    message_pair(pair);
-		    if (pair->count > 0) pair->count--;
+		    if (pair->count > 0) pair->count -= REF_UNIT;
 		}
 		doclose(pair);
 	    }
@@ -3518,7 +3515,7 @@ void repeater(void) {
     rout = rin;
     wout = win;
     eout = ein;
-    if (Recursion > 0 || conns.next || spin > 0 || AsyncCount > 0) {
+    if (conns.next || spin > 0 || AsyncCount > 0) {
 	if (AsyncCount == 0 && spin > 0) spin--;
 	timeout = &tv;
 	timeout->tv_sec = 0;
@@ -4497,7 +4494,7 @@ static void handler(int sig) {
     static int cnt = 0;
     int i;
     switch(sig) {
-      case SIGHUP:
+    case SIGHUP:
 	if (Debug > 4) message(LOG_DEBUG, "SIGHUP.");
 #ifndef NO_FORK
 	if (NForks) {	/* mother process */
@@ -4547,14 +4544,14 @@ static void handler(int sig) {
 	}
 	signal(SIGHUP, handler);
 	break;
-      case SIGTERM:
+    case SIGTERM:
 #ifdef IGN_SIGTERM
 	Debug = 0;
 	message(LOG_INFO, "SIGTERM. clear Debug level");
 	signal(SIGTERM, handler);
 	break;
 #endif
-      case SIGINT:
+    case SIGINT:
 #ifndef NO_FORK
 	if (NForks) {	/* mother process */
 	    message(LOG_INFO, "SIGTERM/INT. killing children and exiting...");
@@ -4563,21 +4560,25 @@ static void handler(int sig) {
 #endif
 	    message(LOG_INFO, "SIGTERM/INT. exiting...");  /* child process */
 	exit(1);
-      case SIGUSR1:
+    case SIGUSR1:
 	Debug++;
 	message(LOG_INFO, "SIGUSR1. increase Debug level to %d", Debug);
 	signal(SIGUSR1, handler);
 	break;
-      case SIGUSR2:
+    case SIGUSR2:
 	if (Debug > 0) Debug--;
 	message(LOG_INFO, "SIGUSR2. decrease Debug level to %d", Debug);
 	signal(SIGUSR2, handler);
 	break;
-      case SIGPIPE:
+    case SIGPIPE:
 	if (Debug > 0) message(LOG_DEBUG, "SIGPIPE.");
 	signal(SIGPIPE, handler);
 	break;
-      default:
+    case SIGSEGV:
+	message(LOG_ERR, "SIGSEGV.");
+	abort();
+	break;
+    default:
 	message(LOG_INFO, "signal %d. Debug level: %d", sig, Debug);
     }
 }
@@ -4613,6 +4614,7 @@ void initialize(int argc, char *argv[]) {
 #ifdef WINDOWS
     WSADATA WSAData;
 #endif
+    MyPid = getpid();
     LogFp = stderr;
     setbuf(stderr, NULL);
     DispHost = NULL;
@@ -4656,18 +4658,18 @@ void initialize(int argc, char *argv[]) {
     if (PidFile) {
 	FILE *fp = fopen(PidFile, "w");
 	if (fp) {
-	    fprintf(fp, "%d\n", getpid());
+	    fprintf(fp, "%d\n", MyPid);
 	    fclose(fp);
 	}
     }
 #ifndef NO_SYSLOG
     if (Syslog) {
-	sprintf(SyslogName, "stone[%d]", getpid());
+	sprintf(SyslogName, "stone[%d]", MyPid);
 	openlog(SyslogName, 0, LOG_DAEMON);
 	if (Syslog > 1) setbuf(stdout, NULL);
     }
 #endif
-    message(LOG_INFO, "start (%s) [%d]", VERSION, getpid());
+    message(LOG_INFO, "start (%s) [%d]", VERSION, MyPid);
     if (Debug > 0) {
 	message(LOG_DEBUG, "Debug level: %d", Debug);
     }
@@ -4704,6 +4706,7 @@ void initialize(int argc, char *argv[]) {
     signal(SIGPIPE, handler);
     signal(SIGUSR1, handler);
     signal(SIGUSR2, handler);
+    signal(SIGSEGV, handler);
 #endif
 #ifndef NO_FORK
     if (NForks) {
@@ -4739,14 +4742,15 @@ void initialize(int argc, char *argv[]) {
 	free(Pid);	/* child process */
 	Pid = NULL;
 	NForks = 0;
+	MyPid = getpid();
 #ifndef NO_SYSLOG
 	if (Syslog) {
 	    closelog();
-	    sprintf(SyslogName, "stone[%d]", getpid());
+	    sprintf(SyslogName, "stone[%d]", MyPid);
 	    openlog(SyslogName, 0, LOG_DAEMON);
 	}
 #endif
-	message(LOG_INFO, "child start (%s) [%d]", VERSION, getpid());
+	message(LOG_INFO, "child start (%s) [%d]", VERSION, MyPid);
     }
 #endif
 #ifdef PTHREAD
