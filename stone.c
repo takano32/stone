@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.81 2003/10/22 09:07:56 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.82 2003/10/22 12:56:08 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3561,7 +3561,7 @@ Stone *mkstone(
 		struct sockaddr_in s;
 		s = stonep->sin;
 		if (i > 0) s.sin_addr.s_addr
-			       = htonl(ntohl(s.sin_addr.s_addr + i));
+			       = htonl(ntohl(s.sin_addr.s_addr) + i);
 		stonep->backups[i] = findBackup(&s, stonep->proto);
 	    }
 	}
