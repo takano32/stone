@@ -40,7 +40,7 @@ from outside to inside.
 
 HOWTO USE
 
-	stone [-C <file>] [-P <command>] [-Q <options>] [-d] [-p] [-n]
+	stone [-C <file>] [-P <command>] [-Q <options>] [-N] [-d] [-p] [-n]
 	      [-u <max>] [-f <n>] [-l] [-L <file>] [-a <file>] [-i <file>]
 	      [-X <n>] [-T <n>] [-r]
 	      [-b <n> <master>:<port> <backup>:<port>]
@@ -53,7 +53,9 @@ HOWTO USE
 	options and ``<st>''s from the configuration file ``<file>''.
 	If the ``-P <command>'' flag is used, the program executes
 	pre-processor to read the configuration file.  ``-Q <options>''
-	can be used to pass options to the pre-processor.
+	can be used to pass options to the pre-processor.  If the ``-N''
+	flag is used, stone will terminate after parsing options without
+	opening the ports.
 
 	If the ``-d'' flag is used, then increase the debug level.  If
 	the ``-p'' flag is used, data repeated by stone are dumped.  If
