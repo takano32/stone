@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.207 2004/10/26 15:19:40 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.208 2004/10/26 15:32:27 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -948,13 +948,14 @@ int isdigitaddr(char *name) {
 
 #ifdef DJBDNS
 int host2addr(char *name, struct in_addr *addrp, short *familyp) {
-    stralloc temp;
+    stralloc temp = {0};
     stralloc fqdn = {0};
     stralloc addr = {0};
     int ret = 0;
-    temp.s = name;
-    temp.len = strlen(name);
-    temp.a = temp.len + 1;
+    if (!stralloc_copys(&temp, name)) {
+	message(LOG_ERR, "Out of memory in host2addr");
+	goto exit;
+    }
     if (dns_ip4_qualify(&addr, &fqdn, &temp) == -1) {
 	message(LOG_ERR, "Unknown host: %s", name);
 	goto exit;
