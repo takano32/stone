@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.144 2004/08/15 13:23:58 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.145 2004/08/15 13:34:25 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -4364,7 +4364,7 @@ void help(char *com) {
 	    "       no_ssl2          ; turn off SSLv2\n"
 	    "       bugs             ; SSL implementation bug workarounds\n"
 	    "       serverpref       ; use server's cipher preferences (SSLv2)\n"
-	    "       sid_ctx=<str>     ; set session ID context\n"
+	    "       sid_ctx=<str>    ; set session ID context\n"
 	    "       key=<file>       ; key file\n"
 	    "       cert=<file>      ; certificate file\n"
 	    "       CAfile=<file>    ; certificate file of CA\n"
