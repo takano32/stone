@@ -1290,9 +1290,8 @@ Pair *pair;
 #endif	/* USE_SSL */
 
 
-void doclose(pair,wait)		/* close pair */
+void doclose(pair)		/* close pair */
 Pair *pair;
-int wait;
 {
     Pair *p = pair->pair;
     SOCKET sd = pair->sd;
@@ -1352,9 +1351,6 @@ struct sockaddr_in *sinp;	/* connect to */
     ret = 1;
 #ifdef USE_SSL
     if (pair->proto & proto_ssl) {
-#ifdef FIXME
-	fcntl(pair->sd,F_SETFL,O_NONBLOCK);
-#endif
 	ret = doSSL_connect(pair);
 	if (ret == 0) {	/* EINTR */
 	    pair->proto |= proto_ssl_intr;
@@ -1460,8 +1456,8 @@ Conn *conn;
     if (ret < 0		/* fail to connect */
 	|| (p1->proto & proto_close)
 	|| (p2->proto & proto_close)) {	
-	doclose(p2,1);	/* wait mutex */
-	doclose(p1,1);
+	doclose(p2);
+	doclose(p1);
     } else {	/* success to connect */
 	if (p1->len > 0) {
 	    waitMutex(FdWinMutex);
@@ -1633,9 +1629,6 @@ Stone *stonep;
 #ifdef USE_SSL
     pair1->ssl = pair2->ssl = NULL;
     if (stonep->proto & proto_ssl_s) {
-#ifdef FIXME
-	fcntl(nsd,F_SETFL,O_NONBLOCK);
-#endif
 	ret = doSSL_accept(pair1,stonep->keyfile,stonep->certfile);
 	if (ret < 0) {
 	    closesocket(nsd);
@@ -1646,6 +1639,10 @@ Stone *stonep;
     }
 #endif
     if (ret > 0) pair1->proto |= proto_connect;
+#ifdef FIXME
+    fcntl(pair1->sd,F_SETFL,O_NONBLOCK);
+    fcntl(pair2->sd,F_SETFL,O_NONBLOCK);
+#endif
     return pair1;
 }
 
@@ -1678,8 +1675,8 @@ Stone *stone;
 	if (ValidSocket(p2->sd)) closesocket(p2->sd);
 	if (ValidSocket(p1->sd)) closesocket(p1->sd);
 	p1->pair = p2->pair = NULL;
-	doclose(p2,1);	/* wait mutex */
-	doclose(p1,1);
+	doclose(p2);
+	doclose(p1);
 	free(p2);
 	free(p1);
 	ASYNC_END;
@@ -1720,7 +1717,7 @@ int scanClose() {	/* scan close request */
 	    p = p2->pair;
 	    if (p) {
 		p->pair = NULL;
-		doclose(p,1);	/* wait mutex */
+		doclose(p);
 	    }
 	    freeMutex(PairMutex);
 	    p2->next = trash;		/* push `p2' to trash */
@@ -2465,8 +2462,8 @@ fd_set *rinp, *winp;
 		message(LOG_DEBUG,"TCP %d: read more from %d",psd,sd);
 	    }
 	} else if (len < 0) {
-	    doclose(p,1);	/* wait mutex */
-	    doclose(pair,1);
+	    doclose(p);
+	    doclose(pair);
 	    return -1;
 	} else {
 	    len = p->len;
@@ -2566,7 +2563,7 @@ Pair *pair;
 	    if (p[i] && FD_ISSET(p[i]->sd,&eo)) {	/* exception */
 		message(LOG_ERR,"TCP %d: exception",p[i]->sd);
 		message_pair(p[i]);
-		doclose(p[i],1);	/* wait mutex */
+		doclose(p[i]);
 	    } else if (p[i] && FD_ISSET(p[i]->sd,&ro)) {	/* read */
 		rPair = p[i];
 		wPair = p[1-i];
@@ -2577,7 +2574,7 @@ Pair *pair;
 		len = doread(rPair);
 		rPair->count--;
 		if (len < 0 || (rPair->proto & proto_close) || wPair == NULL) {
-		    doclose(rPair,1);	/* EOF or error, wait mutex */
+		    doclose(rPair);	/* EOF or error */
 		} else {
 		    if (len > 0) {
 			int first_flag;
@@ -2606,8 +2603,8 @@ Pair *pair;
 		len = dowrite(wPair);
 		wPair->count--;
 		if (len < 0 || (wPair->proto & proto_close) || rPair == NULL) {
-		    if (rPair) doclose(rPair,1);	/* if error, close */
-		    doclose(wPair,1);
+		    if (rPair) doclose(rPair);	/* if error, close */
+		    doclose(wPair);
 		} else {
 		    if (wPair->len <= 0) {	/* all written */
 			if (wPair->proto & proto_first_w)
@@ -2672,7 +2669,7 @@ fd_set *rop, *wop, *eop;
 		idle = 0;
 		message(LOG_ERR,"TCP %d: exception",sd);
 		message_pair(pair);
-		doclose(pair,1);	/* wait mutex */
+		doclose(pair);
 	    } else {
 		waitMutex(FdRinMutex);
 		waitMutex(FdWinMutex);
@@ -2724,7 +2721,7 @@ fd_set *rop, *wop, *eop;
 		    message_pair(pair);
 		    if (pair->count > 0) pair->count--;
 		}
-		doclose(pair,1);	/* wait mutex */
+		doclose(pair);
 	    }
 	}
     }
