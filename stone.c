@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.167 2004/09/15 06:41:06 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.168 2004/09/15 06:59:31 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -926,7 +926,7 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
 	goto fail;
     }
     *addrp = ((struct sockaddr_in*)ai->ai_addr)->sin_addr;
-    *familyp = ai->ai_family;
+    if (familyp) *familyp = ai->ai_family;
     freeaddrinfo(ai);
     return 1;
 }
