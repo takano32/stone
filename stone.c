@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.99 2003/10/31 07:38:30 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.100 2003/10/31 14:44:57 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1792,35 +1792,49 @@ void asyncConn(Conn *conn) {
 	doclose(p2);
 	doclose(p1);
     } else {	/* success to connect */
+	int set1 = 0;
+	int set2 = 0;
 	waitMutex(FdRinMutex);
 	waitMutex(FdWinMutex);
 	if (p1->len > 0) {
 	    if (Debug > 8)
 		message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
 			p1->sd, p1->len);
-	    if (!(p1->proto & proto_shutdown)) FdSet(p1->sd, &win);
+	    if (!(p1->proto & proto_shutdown)) {
+		FdSet(p1->sd, &win);
+		set1 = 1;
+	    }
 	} else {
 	    if (Debug > 8)
 		message(LOG_DEBUG, "TCP %d: request to read", p2->sd);
-	    if (!(p2->proto & proto_eof)) FdSet(p2->sd, &rin);
+	    if (!(p2->proto & proto_eof)) {
+		FdSet(p2->sd, &rin);
+		set2 = 1;
+	    }
 	}
 	if (!(p2->proto & proto_ohttp_s)) {
 	    if (p2->len > 0) {
 		if (Debug > 8)
 		    message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
 			    p2->sd, p2->len);
-		if (!(p2->proto & proto_shutdown)) FdSet(p2->sd, &win);
+		if (!(p2->proto & proto_shutdown)) {
+		    FdSet(p2->sd, &win);
+		    set2 = 1;
+		}
 	    } else {
 		if (Debug > 8)
 		    message(LOG_DEBUG, "TCP %d: request to read", p1->sd);
-		if (!(p1->proto & proto_eof)) FdSet(p1->sd, &rin);
+		if (!(p1->proto & proto_eof)) {
+		    FdSet(p1->sd, &rin);
+		    set1 = 1;
+		}
 	    }
 	}
 	freeMutex(FdWinMutex);
 	freeMutex(FdRinMutex);
 	waitMutex(FdEinMutex);
-	FdSet(p2->sd, &ein);
-	FdSet(p1->sd, &ein);
+	if (set2) FdSet(p2->sd, &ein);
+	if (set1) FdSet(p1->sd, &ein);
 	freeMutex(FdEinMutex);
     }
  finish:
@@ -2983,11 +2997,13 @@ void asyncReadWrite(Pair *pair) {
 			   (p[1] ? p[1]->sd : INVALID_SOCKET));
     if (p[1]) npairs++;
     for (i=0; i < npairs; i++) {
+	int isset = 0;
 	sd = p[i]->sd;
 	if ((p[i]->proto & proto_close) || InvalidSocket(sd)) continue;
 	if (!(p[i]->proto & proto_eof) && (p[i]->proto & proto_select_r)) {
 	    FdSet(sd, &ri);
 	    p[i]->proto &= ~proto_select_r;
+	    isset = 1;
 	}
 	if (!(p[i]->proto & proto_shutdown) && (p[i]->proto & proto_select_w)
 	    && npairs > 1
@@ -2995,8 +3011,9 @@ void asyncReadWrite(Pair *pair) {
 	    && (p[1-i]->proto & proto_connect)) {
 	    FdSet(sd, &wi);	/* never write unless establish */
 	    p[i]->proto &= ~proto_select_w;
+	    isset = 1;
 	}
-	FdSet(sd, &ei);
+	if (isset) FdSet(sd, &ei);
     }
     tv.tv_sec = 0;
     tv.tv_usec = TICK_SELECT;
@@ -3135,11 +3152,16 @@ void asyncReadWrite(Pair *pair) {
 	    int proto = p[i]->proto;
 	    sd = p[i]->sd;
 	    if (!(proto & proto_close) && ValidSocket(sd)) {
-		if (!(proto & proto_eof)
-		    && FD_ISSET(sd, &ri)) FdSet(sd, &rin);
-		if (!(proto & proto_shutdown)
-		    && FD_ISSET(sd, &wi)) FdSet(sd, &win);
-		FdSet(sd, &ein);
+		int isset = 0;
+		if (!(proto & proto_eof) && FD_ISSET(sd, &ri)) {
+		    FdSet(sd, &rin);
+		    isset = 1;
+		}
+		if (!(proto & proto_shutdown) && FD_ISSET(sd, &wi)) {
+		    FdSet(sd, &win);
+		    isset = 1;
+		}
+		if (isset) FdSet(sd, &ein);
 	    }
 	}
     }
