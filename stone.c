@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.63 2003/08/05 05:04:42 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.64 2003/08/05 10:54:00 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -115,6 +115,7 @@ typedef void (*FuncPtr)(void*);
 #define NO_SETUID
 #define NO_CHROOT
 #define ValidSocket(sd)		((sd) != INVALID_SOCKET)
+#define FdSet(fd,set)		if (!FD_ISSET((fd),(set))) FD_SET((fd),(set))
 #undef EINTR
 #define EINTR	WSAEINTR
 #define NO_BCOPY
@@ -182,6 +183,7 @@ typedef void *(*aync_start_routine) (void *);
 typedef int SOCKET;
 #define INVALID_SOCKET		-1
 #define ValidSocket(sd)		((sd) >= 0)
+#define FdSet(fd,set)		FD_SET((fd),(set))
 #define closesocket(sd)		close(sd)
 #endif
 #define InvalidSocket(sd)	(!ValidSocket(sd))
@@ -934,8 +936,8 @@ void asyncOrg(Origin *origin) {
     if (len > 0) {
 	waitMutex(FdRinMutex);
 	waitMutex(FdEinMutex);
-	FD_SET(origin->sd,&ein);
-	FD_SET(origin->sd,&rin);
+	FdSet(origin->sd,&ein);
+	FdSet(origin->sd,&rin);
 	freeMutex(FdEinMutex);
 	freeMutex(FdRinMutex);
     } else if (len < 0) {
@@ -1022,7 +1024,7 @@ Origin *doUDP(Stone *stonep) {
     Origin *origin;
     len = recvUDP(stonep->sd,&from);
     waitMutex(FdRinMutex);
-    FD_SET(stonep->sd,&rin);
+    FdSet(stonep->sd,&rin);
     freeMutex(FdRinMutex);
     if (len <= 0) return NULL;	/* drop */
     if (!checkXhost(stonep,&from.sin_addr)) {
@@ -1082,8 +1084,8 @@ void asyncUDP(Stone *stone) {
 	time(&origin->clock);
 	waitMutex(FdRinMutex);
 	waitMutex(FdEinMutex);
-	FD_SET(origin->sd,&rin);
-	FD_SET(origin->sd,&ein);
+	FdSet(origin->sd,&rin);
+	FdSet(origin->sd,&ein);
 	freeMutex(FdEinMutex);
 	freeMutex(FdRinMutex);
     }
@@ -1396,10 +1398,10 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
     if ((pair->proto & proto_command) == command_proxy) {
 	if (p && !(p->proto & proto_close)) {
 	    if (rinp) {
-		FD_SET(p->sd,rinp);	/* must read request header */
+		FdSet(p->sd,rinp);	/* must read request header */
 	    } else {
 		waitMutex(FdRinMutex);
-		FD_SET(p->sd,&rin);	/* must read request header */
+		FdSet(p->sd,&rin);	/* must read request header */
 		freeMutex(FdRinMutex);
 	    }
 	}
@@ -1489,29 +1491,29 @@ void asyncConn(Conn *conn) {
 	    if (Debug > 8)
 		message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
 			p1->sd, p1->len);
-	    FD_SET(p1->sd,&win);
+	    FdSet(p1->sd,&win);
 	} else {
 	    if (Debug > 8)
 		message(LOG_DEBUG, "TCP %d: request to read", p2->sd);
-	    FD_SET(p2->sd,&rin);
+	    FdSet(p2->sd,&rin);
 	}
 	if (!(p2->proto & proto_ohttp_s)) {
 	    if (p2->len > 0) {
 		if (Debug > 8)
 		    message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
 			    p2->sd, p2->len);
-		FD_SET(p2->sd,&win);
+		FdSet(p2->sd,&win);
 	    } else {
 		if (Debug > 8)
 		    message(LOG_DEBUG, "TCP %d: request to read", p1->sd);
-		FD_SET(p1->sd,&rin);
+		FdSet(p1->sd,&rin);
 	    }
 	}
 	freeMutex(FdWinMutex);
 	freeMutex(FdRinMutex);
 	waitMutex(FdEinMutex);
-	FD_SET(p2->sd,&ein);
-	FD_SET(p1->sd,&ein);
+	FdSet(p2->sd,&ein);
+	FdSet(p1->sd,&ein);
 	freeMutex(FdEinMutex);
     }
  finish:
@@ -1570,7 +1572,7 @@ Pair *doaccept(Stone *stonep) {
     fcntl(nsd,F_SETFL,O_NONBLOCK);
 #endif
     waitMutex(FdRinMutex);
-    FD_SET(stonep->sd,&rin);
+    FdSet(stonep->sd,&rin);
     freeMutex(FdRinMutex);
     if (InvalidSocket(nsd)) {
 #ifdef WINDOWS
@@ -2221,7 +2223,7 @@ int commOutput(Pair *pair, fd_set *winp, char *fmt, ...) {
     if (p->proto & proto_base)
 	p->len += baseEncode(str, strlen(str), BUFMAX - (p->start + p->len));
     else p->len += strlen(str);
-    FD_SET(psd,winp);		/* need to write */
+    FdSet(psd,winp);		/* need to write */
     return p->len;
 }
 
@@ -2596,7 +2598,7 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
 	if (Debug > 8) {
 	    message(LOG_DEBUG,"TCP %d: read more",sd);
 	}
-	FD_SET(sd,rinp);		/* read more */
+	FdSet(sd,rinp);		/* read more */
 	if (len < 0) pair->proto |= proto_first_r;
     }
     return len;
@@ -2644,17 +2646,17 @@ void asyncReadWrite(Pair *pair) {
 	sd = p[i]->sd;
 	if (InvalidSocket(sd)) continue;
 	if (p[i]->proto & proto_select_r) {
-	    FD_SET(sd,&ri);
+	    FdSet(sd,&ri);
 	    p[i]->proto &= ~proto_select_r;
 	}
 	if ((p[i]->proto & proto_select_w)
 	    && npairs > 1
 	    && (p[i]->proto & proto_connect)
 	    && (p[1-i]->proto & proto_connect)) {
-	    FD_SET(sd,&wi);	/* never write unless establish */
+	    FdSet(sd,&wi);	/* never write unless establish */
 	    p[i]->proto &= ~proto_select_w;
 	}
-	FD_SET(sd,&ei);
+	FdSet(sd,&ei);
     }
     tv.tv_sec = 0;
     tv.tv_usec = TICK_SELECT;
@@ -2704,12 +2706,12 @@ void asyncReadWrite(Pair *pair) {
 			    && (wPair->proto & proto_connect)
 			    && !(wPair->proto & proto_close)
 			    && !(rPair->proto & proto_close)) {
-			    FD_SET(wsd,&wi);
+			    FdSet(wsd,&wi);
 			} else {
 			    goto leave;
 			}
 		    } else {	/* EINTR */
-			FD_SET(rsd,&ri);
+			FdSet(rsd,&ri);
 		    }
 		}
 	    } else if (FD_ISSET(sd,&wo)) {	/* write */
@@ -2742,7 +2744,7 @@ void asyncReadWrite(Pair *pair) {
 			    && !(wPair->proto & proto_close)) {
 #ifdef USE_SSL
 			    if (rPair->ssl && SSL_pending(rPair->ssl)) {
-				FD_SET(rPair->sd,&ro);
+				FdSet(rPair->sd,&ro);
 				if (Debug > 4)
 				    message(LOG_DEBUG,
 					    "TCP %d: SSL_pending, read again",
@@ -2750,12 +2752,12 @@ void asyncReadWrite(Pair *pair) {
 				again = 1;
 			    }
 #endif
-			    FD_SET(rsd,&ri);
+			    FdSet(rsd,&ri);
 			} else {
 			    goto leave;
 			}
 		    } else {	/* EINTR */
-			FD_SET(wsd,&wi);
+			FdSet(wsd,&wi);
 		    }
 		}
 	    }
@@ -2771,9 +2773,9 @@ void asyncReadWrite(Pair *pair) {
 	    int proto = p[i]->proto;
 	    sd = p[i]->sd;
 	    if (ValidSocket(sd) && !(proto & proto_close)) {
-		if (FD_ISSET(sd,&ri)) FD_SET(sd,&rin);
-		if (FD_ISSET(sd,&wi)) FD_SET(sd,&win);
-		FD_SET(sd,&ein);
+		if (FD_ISSET(sd,&ri)) FdSet(sd,&rin);
+		if (FD_ISSET(sd,&wi)) FdSet(sd,&win);
+		FdSet(sd,&ein);
 	    }
 	}
     }
@@ -3957,8 +3959,8 @@ void doargs(int argc, int i, char *argv[]) {
 	stones = stone;
     }
     for (stone=stones; stone != NULL; stone=stone->next) {
-	FD_SET(stone->sd,&rin);
-	FD_SET(stone->sd,&ein);
+	FdSet(stone->sd,&rin);
+	FdSet(stone->sd,&ein);
     }
 }
 
