@@ -157,7 +157,7 @@ irix-ssl:
 	$(MAKE) TARGET=irix ssl_stone
 
 win:
-	$(MAKE) FLAGS="/Zi /DWINDOWS /DNO_SNPRINTF /DNO_VSNPRINTF /DNO_PID_T $(FLAGS)" LIBS="/MT wsock32.lib $(LIBS) /link /NODEFAULTLIB:LIBC" stone.exe
+	$(MAKE) FLAGS="/Zi /DWINDOWS /DNO_RINDEX /DNO_SNPRINTF /DNO_VSNPRINTF /DNO_PID_T $(FLAGS)" LIBS="/MT wsock32.lib $(LIBS) /link /NODEFAULTLIB:LIBC" stone.exe
 
 win-pop:
 	$(MAKE) TARGET=win pop_stone.exe
