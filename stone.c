@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.69 2003/08/20 10:26:12 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.70 2003/09/09 05:36:53 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -471,8 +471,14 @@ HMTX FdRinMutex, FdWinMutex, FdEinMutex;
 #endif
 
 #ifdef NO_SNPRINTF
-#define vsnprintf(str,len,fmt,ap)	vsprintf(str,fmt,ap)
-#define snprintf(str,len,fmt,ap)	sprintf(str,fmt,ap)
+int snprintf(char *str, size_t len, char *fmt, ...) {
+    va_list ap;
+    int ret;
+    va_start(ap, fmt);
+    ret = vsnprintf(str, len, fmt, ap);
+    va_end(ap);
+    return ret;
+}
 #endif
 
 #ifdef NO_BCOPY
