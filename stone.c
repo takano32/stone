@@ -85,7 +85,7 @@
  * -DWINDOWS	  Windows95/98/NT
  * -DNT_SERVICE	  WindowsNT/2000 native service
  */
-#define VERSION	"2.1s"
+#define VERSION	"2.1t"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -330,8 +330,6 @@ const proto_udp =	    0x2000;	/* user datagram protocol */
 const proto_source =	    0x4000;	/* source flag */
 const proto_first_r =	   0x10000;	/* first read packet */
 const proto_first_w =	   0x20000;	/* first written packet */
-const proto_now_r =	   0x40000;	/* now reading */
-const proto_now_w =	   0x80000;	/* now writing */
 const proto_connect =	  0x100000;	/* connection established */
 const proto_close =	  0x200000;	/* request to close */
 const proto_ssl_req =	  0x400000;	/* SSL read/write requested */
@@ -1898,7 +1896,7 @@ Pair *pair;
     }
 #endif
     if (Debug > 4) message(LOG_DEBUG,"TCP %d: %d bytes written",sd,len);
-    if (PacketDump > 7 || ((pair->proto & proto_first_w) && Debug > 3))
+    if (PacketDump > 0 || ((pair->proto & proto_first_w) && Debug > 3))
 	message_buf(pair,len,"");
     time(&pair->clock);
     p = pair->pair;
@@ -2589,15 +2587,8 @@ int write_flag;
     if (len < 0 || (rPair->proto & proto_close) || wPair == NULL) {
 	doclose(rPair,1);	/* EOF or error, wait mutex */
     } else {
-#ifdef USE_SSL
-	if (rPair->proto & proto_ssl_req) {
-	    rPair->proto &= ~proto_ssl_req;
-	    FD_SET(rsd,&win);
-	}
-#endif
 	if (len > 0) {
 	    int first_flag;
-	    rPair->proto &= ~proto_now_r;
 	    first_flag = (rPair->proto & proto_first_r);
 	    if (first_flag) len = first_read(rPair);
 	    wsd = wPair->sd;
@@ -2605,13 +2596,6 @@ int write_flag;
 		&& ValidSocket(wsd)
 		&& !(wPair->proto & proto_close)
 		&& !(rPair->proto & proto_close)) {
-#ifdef USE_SSL
-		if (/* wPair->ssl && */ (wPair->proto & proto_now_r)) {
-		    if (Debug > 2) {
-			message(LOG_DEBUG,"TCP %d: write but reading",wsd);
-		    }
-		} else
-#endif
 		if (!first_flag
 		    && !(wPair->proto & proto_first_w)
 		    && waitFd(wPair,1) > 0) {
@@ -2646,26 +2630,12 @@ int write_flag;
 	if (rPair) doclose(rPair,1);	/* if error, close, wait mutex */
 	doclose(wPair,1);
     } else {
-#ifdef USE_SSL
-	if (wPair->proto & proto_ssl_req) {
-	    wPair->proto &= ~proto_ssl_req;
-	    FD_SET(wsd,&rin);
-	}
-#endif
 	if (wPair->len <= 0) {	/* all written */
-	    wPair->proto &= ~proto_now_w;
 	    if (wPair->proto & proto_first_w) wPair->proto &= ~proto_first_w;
 	    rsd = rPair->sd;
 	    if (rPair && ValidSocket(rsd)
 		&& !(rPair->proto & proto_close)
 		&& !(wPair->proto & proto_close)) {
-#ifdef USE_SSL
-		if (/* rPair->ssl && */ (rPair->proto & proto_now_w)) {
-		    if (Debug > 2) {
-			message(LOG_DEBUG,"TCP %d: read but writing",rsd);
-		    }
-		} else
-#endif
 		if (waitFd(rPair,0) > 0) {
 		    rPair->count++;
 		    if (rPair->pair) wPair->count++;
@@ -2677,6 +2647,17 @@ int write_flag;
 		FD_SET(rsd,&rin);
 		freeMutex(FdRinMutex);
 	    }
+#ifdef USE_SSL
+	    if (wPair->proto & proto_ssl_req) {	/* the other dir. is pending */
+		wPair->proto &= ~proto_ssl_req;
+		waitMutex(FdRinMutex);
+		FD_SET(wsd,&rin);
+		freeMutex(FdRinMutex);
+		if (Debug > 3)
+		    message(LOG_DEBUG,"TCP %d: enable the other direction %d",
+			    rsd,wsd);
+	    }
+#endif
 	} else {		/* EINTR */
 	    waitMutex(FdWinMutex);
 	    FD_SET(wsd,&win);
@@ -2731,53 +2712,41 @@ fd_set *rop, *wop, *eop;
 	    } else {
 		waitMutex(FdRinMutex);
 		isset = (FD_ISSET(sd,rop) && FD_ISSET(sd,&rin));
-		if (isset) FD_CLR(sd,&rin);
-		freeMutex(FdRinMutex);
 		if (isset) {
+		    FD_CLR(sd,&rin);
 #ifdef USE_SSL
-		    if (/* pair->ssl && */ (pair->proto & proto_now_w)) {
-			pair->proto |= proto_ssl_req;
-			if (Debug > 2) {
-			    message(LOG_DEBUG,
-				    "TCP %d: read but now writing",sd);
+		    if (p && (pair->ssl || p->ssl)) {
+			if (FD_ISSET(p->sd,&rin)) {
+			    p->proto |= proto_ssl_req;
+			    FD_CLR(p->sd,&rin);	/* suspend the other dir. */
+			    if (Debug > 3)
+				message(LOG_DEBUG,"TCP %d: suspend the other direction %d",sd,p->sd);
 			}
-		    } else {
-			pair->proto |= proto_now_r;
-#endif
-			idle = 0;
-			pair->count++;
-			if (p) p->count++;
-			ASYNC(asyncRead,pair);
-#ifdef USE_SSL
 		    }
 #endif
 		}
+		freeMutex(FdRinMutex);
+		if (isset) {
+		    idle = 0;
+		    pair->count++;
+		    if (p) p->count++;
+		    ASYNC(asyncRead,pair);
+		}
 		waitMutex(FdWinMutex);
 		isset = (FD_ISSET(sd,wop) && FD_ISSET(sd,&win));
-		if (isset) FD_CLR(sd,&win);
+		if (isset) {
+		    FD_CLR(sd,&win);
+		}
 		freeMutex(FdWinMutex);
 		if (isset) {
-#ifdef USE_SSL
-		    if (/* pair->ssl && */ (pair->proto & proto_now_r)) {
-			pair->proto |= proto_ssl_req;
-			if (Debug > 2) {
-			    message(LOG_DEBUG,
-				    "TCP %d: write but now reading",sd);
-			}
-		    } else {
-			pair->proto |= proto_now_w;
-#endif
-			idle = 0;
-			if ((pair->proto & proto_command) == command_ihead) {
-			    if (insheader(pair) >= 0)	/* insert header */
-				pair->proto &= ~proto_command;
-			}
-			pair->count++;
-			if (p) p->count++;
-			ASYNC(asyncWrite,pair);
-#ifdef USE_SSL
+		    idle = 0;
+		    if ((pair->proto & proto_command) == command_ihead) {
+			if (insheader(pair) >= 0)	/* insert header */
+			    pair->proto &= ~proto_command;
 		    }
-#endif
+		    pair->count++;
+		    if (p) p->count++;
+		    ASYNC(asyncWrite,pair);
 		}
 	    }
 	    if (idle && pair->timeout > 0
@@ -2800,35 +2769,6 @@ fd_set *rop, *wop, *eop;
     if (Debug > 8) message(LOG_DEBUG,"scanPairs done");
     return ret;
 }
-
-#ifdef USE_SSL
-void scanSSLs() {
-#ifdef PTHREAD
-    pthread_t thread;
-    int err;
-#endif
-    Pair *pair;
-    for (pair=pairs.next; pair != NULL; pair=pair->next) {
-	Pair *p = pair->pair;
-	SOCKET sd = pair->sd;
-	SSL *ssl = pair->ssl;
-	int isset;
-	if (!ssl) continue;
-	waitMutex(FdRinMutex);
-	isset = (FD_ISSET(sd,&rin) && SSL_pending(ssl) > 0);
-	if (isset) FD_CLR(sd,&rin);
-	freeMutex(FdRinMutex);
-	if (isset) {
-	    pair->proto |= proto_now_r;
-	    if (Debug > 8)
-		message(LOG_DEBUG,"TCP %d: data ready for read in ssl",sd);
-	    pair->count++;
-	    if (p) p->count++;
-	    ASYNC(asyncRead,pair);
-	}
-    }
-}
-#endif
 
 /* stone */
 
@@ -2961,9 +2901,6 @@ void repeater() {
 	}
     }
     scanConns();
-#ifdef USE_SSL
-    scanSSLs();
-#endif
     if (oldstones) rmoldstone();
     if (OldConfigArgc) rmoldconfig();
 }
