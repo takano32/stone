@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.211 2004/10/26 23:49:57 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.212 2004/10/28 04:50:01 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -185,6 +185,7 @@ typedef void *(*aync_start_routine) (void *);
 #include <stralloc.h>
 #include <alloc.h>
 #include <dns.h>
+char dns_seed[128];
 #endif
 #include <unistd.h>
 #include <fcntl.h>
@@ -6200,6 +6201,9 @@ void initialize(int argc, char *argv[]) {
 	    message(LOG_ERR, "prctl err=%d", errno);
 	}
     }
+#endif
+#ifdef DJBDNS
+    dns_random_init(dns_seed);
 #endif
     if (MinInterval > 0) {
 	if (Debug > 1) message(LOG_DEBUG, "MinInterval: %d", MinInterval);
