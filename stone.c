@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.58 2003/07/11 10:39:12 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.59 2003/07/12 05:34:47 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -247,6 +247,7 @@ typedef struct {
     int depth;
     SSL_CTX *ctx;
     regex_t *re[DEPTH_MAX];
+    unsigned char lbmod;
 } StoneSSL;
 
 typedef struct {
@@ -260,6 +261,7 @@ typedef struct {
     char *caPath;
     char *cipherList;
     char *regexp[DEPTH_MAX];
+    unsigned char lbmod;
 } SSLOpts;
 
 SSLOpts ServerOpts;
@@ -1409,6 +1411,26 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
     pair->count++;	/* request to connect */
     conn->pair = pair;
     conn->sin = *sinp;
+#ifdef USE_SSL
+    if (p->match && p->stone->ssl_server) {
+	unsigned char *s = p->match[0];	/* \1 */
+	int lbmod = p->stone->ssl_server->lbmod;
+	int ofs = 0;
+	if (lbmod) {
+	    while (*s) {
+		ofs <<= 6;
+		ofs += (*s & 0x3f);
+		s++;
+	    }
+	    ofs %= lbmod;
+	    if (Debug > 2)
+		message(LOG_DEBUG, "TCP %d: pair %d lb=%d",
+			pair->sd, p->sd, ofs);
+	    conn->sin.sin_addr.s_addr
+		= htonl(ntohl(conn->sin.sin_addr.s_addr) + ofs);
+	}
+    }
+#endif
     conn->lock = 0;
     waitMutex(ConnMutex);
     conn->next = conns.next;
@@ -2927,6 +2949,7 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
     SSL_CTX_set_verify(ss->ctx,opts->mode,opts->callback);
     SSL_CTX_set_verify_depth(ss->ctx,opts->depth + 1);
     ss->depth = opts->depth;
+    ss->lbmod = opts->lbmod;
     if ((opts->caFile || opts->caPath)
 	&& !SSL_CTX_load_verify_locations(ss->ctx,opts->caFile,opts->caPath)) {
 	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s,%s) error",
@@ -3343,6 +3366,7 @@ void help(char *com) {
 	    "       CAfile=<file>    ; certificate file of CA\n"
 	    "       CApath=<dir>     ; dir of CAs\n"
 	    "       cipher=<ciphers> ; list of ciphers\n"
+	    "       lb=<n>           ; load balancing based on CN\n"
 #endif
 	    , com);
 #endif
@@ -3675,6 +3699,8 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	opts->caPath = strdup(argv[i]+7);
     } else if (!strncmp(argv[i],"cipher=",7)) {
 	opts->cipherList = strdup(argv[i]+7);
+    } else if (!strncmp(argv[i],"lb=",3)) {
+	opts->lbmod = atoi(argv[i]+3);
     } else {
     error:
 	message(LOG_ERR,"Invalid SSL Option: %s",argv[i]);
