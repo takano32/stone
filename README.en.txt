@@ -91,6 +91,10 @@ HOWTO USE
 			be designated for each <st>.
 	verbose		verbose mode.
 	verify		require SSL certificate to the peer.
+	verify,once	request a client certificate on the initial TLS/SSL
+			handshake. (-z only)
+	verify,ifany	The certificate returned (if any) is checked. (-z only)
+	verify,none	never request SSL certificate to the peer.
 	re<n>=<regex>	designate a regular expression <regex>.
 			The certificate of the peer must satisfy the
 			regex.  <n> is the depth.  re0 means the subject
