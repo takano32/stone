@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.88 2003/10/23 11:43:57 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.89 2003/10/23 12:11:13 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1499,9 +1499,7 @@ int doSSL_connect(Pair *pair) {
 }
 #endif	/* USE_SSL */
 
-void doclose(Pair *pair) {	/* close pair */
-    Pair *p = pair->pair;
-    SOCKET sd = pair->sd;
+void message_time_log(Pair *pair) {
     TimeLog *log = pair->log;
     if (log) {
 	struct tm *t = localtime(&log->clock);
@@ -1513,6 +1511,12 @@ void doclose(Pair *pair) {	/* close pair */
 		(int)(now - log->clock), log->str);
 	free(log);
     }
+}
+
+void doclose(Pair *pair) {	/* close pair */
+    Pair *p = pair->pair;
+    SOCKET sd = pair->sd;
+    message_time_log(pair);
     if (!(pair->proto & proto_close)) {
 	pair->proto |= (proto_close | proto_eof);	/* request to close */
 	if (ValidSocket(sd))
@@ -2313,10 +2317,10 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 	char buf[BUFMAX];
 #ifdef USE_SSL
 	if (pair->ssl) {
-	    len = SSL_read(pair->ssl,buf,BUFMAX);
+	    len = SSL_read(pair->ssl, buf, BUFMAX);
 	} else
 #endif
-	    len = recv(sd,buf,BUFMAX,0);
+	    len = recv(sd, buf, BUFMAX, 0);
 	if (pair->proto & proto_close) return -1;
 	if (Debug > 4) message(LOG_DEBUG,"TCP %d: read %d bytes",sd,len);
 	if (len == 0) return -1;	/* EOF w/o pair */
@@ -2375,7 +2379,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 	}
     } else {
 #endif
-	len = recv(sd,&p->buf[start],bufmax,0);
+	len = recv(sd, &p->buf[start], bufmax, 0);
 	if (pair->proto & proto_close) return -1;
 	if (len < 0) {
 #ifdef WINDOWS
@@ -2394,6 +2398,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
     }
 #endif
     if (len == 0) {
+	message_time_log(pair);
 	if (Debug > 2) message(LOG_DEBUG,"TCP %d: EOF",sd);
 	return -2;	/* EOF w/ pair */
     }
@@ -2491,7 +2496,7 @@ int proxyCONNECT(Pair *pair, fd_set *rinp, fd_set *winp,
     pair->start = 0;
     p = pair->pair;
     if (p) p->proto |= proto_ohttp_s;	/* remove request header */
-    return doproxy(pair,rinp,parm,port);
+    return doproxy(pair, rinp, parm, port);
 }
 
 int proxyCommon(Pair *pair, fd_set *rinp, char *parm, int start) {
@@ -2772,11 +2777,11 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
     if (p->proto & proto_command) {	/* proxy */
 	switch(p->proto & proto_command) {
 	case command_proxy:
-	    len = docomm(p,rinp,winp,proxyComm);
+	    len = docomm(p, rinp, winp, proxyComm);
 	    break;
 #ifdef USE_POP
 	case command_pop:
-	    if (p->p) len = docomm(p,rinp,winp,popComm);
+	    if (p->p) len = docomm(p, rinp, winp, popComm);
 	    break;
 #endif
 	default:
