@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.155 2004/08/31 08:06:26 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.156 2004/09/02 07:58:22 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -329,6 +329,8 @@ typedef struct _Chat {
 
 typedef struct _Backup {
     struct _Backup *next;
+    struct sockaddr_in check;
+    /* host:port for check (usually same as master) */
     struct sockaddr_in master;
     struct sockaddr_in backup;
     int proto;
@@ -444,6 +446,7 @@ const proto_udp =	    0x2000;	/* user datagram protocol */
 const proto_source =	    0x4000;	/* source flag */
 					/* only for Stone */
 const proto_ident =         0x8000;	  /* need ident */
+const proto_nobackup =     0x10000;	  /* no backup */
 const proto_ssl_s =    	 0x1000000;	  /* SSL source */
 const proto_ssl_d =	 0x2000000;	  /*     destination */
 					/* only for Pair */
@@ -1076,11 +1079,11 @@ void asyncHealthCheck(Backup *b) {
     ASYNC_BEGIN;
     time(&now);
     b->last = now + 60 * 60;	/* suppress further check */
-    addr2str(&b->master.sin_addr, addr, STRMAX);
-    port2str(b->master.sin_port, b->proto, proto_dest, port, STRMAX);
+    addr2str(&b->check.sin_addr, addr, STRMAX);
+    port2str(b->check.sin_port, b->proto, proto_dest, port, STRMAX);
     if (Debug > 8)
 	message(LOG_DEBUG, "asyncHealthCheck %s:%s ...", addr, port);
-    if (healthCheck(&b->master, b->proto,
+    if (healthCheck(&b->check, b->proto,
 		    b->interval, b->chat)) {	/* healthy ? */
 	if (Debug > 3 || (b->bn && Debug > 1))
 	    message(LOG_DEBUG, "health check %s:%s success", addr, port);
@@ -1168,35 +1171,56 @@ int gcd(int a, int b) {
     }
 }
 
-void mkBackup(int interval, char *master, char *backup) {
+int mkBackup(int argc, int argi, char *argv[]) {
+    char *host = NULL;
+    int port = -1;
+    short family;
     Backup *b = malloc(sizeof(Backup));
-    if (!b) {
-	message(LOG_ERR, "Out of memory, no backup for %s", master);
-	return;
+    argi++;
+    for ( ; argi < argc; argi++) {
+	if (!strncmp(argv[argi], "host=", 5)) {
+	    host = argv[argi]+5;
+	} else if (!strncmp(argv[argi], "port=", 5)) {
+	    port = str2port(argv[argi]+5, proto_tcp);
+	} else {
+	    break;
+	}
     }
-    b->proto = proto_tcp;
-    b->chat = healthChat;
-    b->interval = interval;
-    if (MinInterval > 0) {
-	MinInterval = gcd(MinInterval, interval);
+    if (b) {
+	b->interval = atoi(argv[argi]);
     } else {
-	MinInterval = interval;
+	message(LOG_ERR, "Out of memory, no backup for %s", argv[argi+1]);
+	return argi+2;
     }
-    if (!hostPort(master, &b->master, b->proto)) {
-	message(LOG_ERR, "Illegal master: %s", master);
+    if (MinInterval > 0) {
+	MinInterval = gcd(MinInterval, b->interval);
+    } else {
+	MinInterval = b->interval;
+    }
+    argi++;
+    b->proto = proto_tcp;
+    if (!hostPort(argv[argi], &b->master, b->proto)) {
+	message(LOG_ERR, "Illegal master: %s", argv[argi]);
 	free(b);
-	return;
+	return argi+1;
     }
-    if (!hostPort(backup, &b->backup, b->proto)) {
-	message(LOG_ERR, "Illegal backup: %s", backup);
+    argi++;
+    if (!hostPort(argv[argi], &b->backup, b->proto)) {
+	message(LOG_ERR, "Illegal backup: %s", argv[argi]);
 	free(b);
-	return;
+	return argi;
     }
+    b->check = b->master;
+    if (host && host2addr(host, &b->check.sin_addr, &family))
+	b->check.sin_family = family;
+    if (port >= 0) b->check.sin_port = htons(port);
+    b->chat = healthChat;
     b->last = 0;
     b->bn = 0;	/* healthy */
     b->used = 0;
     b->next = backups;
     backups = b;
+    return argi;
 }
 
 int str2num(char **pp, int rad) {
@@ -2062,7 +2086,6 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
 void asyncConn(Conn *conn) {
     int ret;
     Pair *p1, *p2;
-    int ofs;
     Backup *backup = NULL;
     time_t clock;
     ASYNC_BEGIN;
@@ -2072,9 +2095,10 @@ void asyncConn(Conn *conn) {
     if (p2 == NULL) goto finish;
     time(&clock);
     if (Debug > 8) message(LOG_DEBUG, "asyncConn...");
+    if (p1->stone->backups) backup = p1->stone->backups[0];
     if (p1->stone->nsins > 1) {	/* load balancing */
 	int n = p1->stone->nsins;
-	ofs = (p1->stone->proto & state_mask) % n;
+	int ofs = (p1->stone->proto & state_mask) % n;
 	if (p1->stone->backups) {
 	    int i;
 	    for (i=0; i < n; i++) {
@@ -2117,7 +2141,7 @@ void asyncConn(Conn *conn) {
 		if (0 <= lbparm && lbparm <= 9) s = match[lbparm];
 		else s = match[1];
 		if (lbmod) {
-		    ofs = 0;
+		    int ofs = 0;
 		    while (*s) {
 			ofs <<= 6;
 			ofs += (*s & 0x3f);
@@ -4524,7 +4548,8 @@ Stone *mkstone(
     }
     stonep->backups = NULL;
     if ((proto & proto_command) != command_proxy
-	&& (proto & proto_command) != command_health) {
+	&& (proto & proto_command) != command_health
+	&& (proto & proto_nobackup) == 0) {
 	Backup *bs[LB_MAX];
 	int found = 0;
 	for (i=0; i < stonep->nsins; i++) {
@@ -4615,7 +4640,7 @@ void help(char *com) {
 #ifdef USE_POP
 	    " | /apop"
 #endif
-	    " | /base]\n"
+	    " | /base | /nobackup]\n"
 	    "sport: [<host>:]<port#>[/udp"
 #ifdef USE_SSL
 	    " | /ssl"
@@ -4908,6 +4933,9 @@ int getdist(
 		p += 5;
 		*protop &= ~proto_command;
 		*protop |= command_ihead;
+	    } else if (!strncmp(p, "nobackup", 8)) {
+		p += 8;
+		*protop |= proto_nobackup;
 #ifdef USE_SSL
 	    } else if (!strncmp(p, "ssl", 3)) {
 		p += 3;
@@ -5208,8 +5236,7 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
 	argi = mkChat(argc, argi, argv);
 	break;
     case 'b':
-	mkBackup(atoi(argv[argi+1]), argv[argi+2], argv[argi+3]);
-	argi += 3;
+	argi = mkBackup(argc, argi, argv);
 	break;
     case 'B':
 	argi = lbsopts(argc, argi, argv);
@@ -5362,6 +5389,7 @@ void doargs(int argc, int i, char *argv[]) {
 	    }
 	    if (dproto & proto_ssl) proto |= proto_ssl_d;
 	    if (dproto & proto_base) proto |= proto_base_d;
+	    if (dproto & proto_nobackup) proto |= proto_nobackup;
 	}
 	stone = mkstone(host, port, shost, sport, j, &argv[k], proto);
 	if (proto & proto_ohttp_d) {
