@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.169 2004/09/15 16:46:20 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.170 2004/09/15 17:22:11 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2170,6 +2170,7 @@ void asyncConn(Conn *conn) {
     time(&clock);
     if (Debug > 8) message(LOG_DEBUG, "asyncConn...");
 #ifdef USE_SSL
+    ssl = p2->ssl;
     if (ssl) {
 	SSL_SESSION *sess = SSL_get1_session(ssl);
 	if (sess) {
