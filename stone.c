@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.203 2004/10/23 08:19:18 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.204 2004/10/24 09:56:43 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -187,6 +187,9 @@ typedef void *(*aync_start_routine) (void *);
 #include <time.h>
 #ifdef PRCTL
 #include <sys/prctl.h>
+#endif
+#ifdef MEMLEAK_CHECK
+#include <mcheck.h>
 #endif
 typedef int SOCKET;
 #define INVALID_SOCKET		-1
@@ -6199,7 +6202,7 @@ DWORD WINAPI ThreadProc(LPVOID lpParms) {
     initialize(3, lpArgs);
     free(lpArgs[2]);
     do {
-	repeater();    	
+	repeater();
     } while (WAIT_TIMEOUT == WaitForSingleObject(hStopEvent, 1));
     AddToMessageLog("Exiting worker thread");
     ExitThread(0);
@@ -6224,6 +6227,9 @@ int main(int argc, char *argv[]) {
     initialize(argc, argv);
     if (DryRun) return 0;
     clear_args(argc, argv);
+#ifdef MEMLEAK_CHECK
+    mtrace();
+#endif
     for (;;) repeater();
     return 0;
 }
