@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.85 2003/10/23 09:36:47 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.86 2003/10/23 10:28:40 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -308,6 +308,7 @@ typedef struct _Backup {
     int proto;
     short interval;	/* interval of health check */
     short bn;		/* 0: health, 1: backup */
+    short used;		/* 0: not used, 1: assigned, 2: used */
     time_t last;	/* last health check */
 } Backup;
 
@@ -891,6 +892,7 @@ int scanBackups(void) {
     time_t now;
     time(&now);
     for (b=backups; b != NULL; b=b->next) {
+	if (!b->used) continue;		/* not assigned */
 	if (now - b->last < b->interval) continue;
 	if (healthCheck(&b->master)) {	/* healthy ? */
 	    if (b->bn) {
@@ -999,6 +1001,7 @@ void mkBackup(int interval, char *master, char *backup) {
     }
     b->last = 0;
     b->bn = 0;	/* healthy */
+    b->used = 0;
     b->next = backups;
     backups = b;
 }
@@ -1680,8 +1683,9 @@ void asyncConn(Conn *conn) {
 	    }
 	}
 #endif
-	if (backup && backup->bn) {
-	    conn->sin = backup->backup;
+	if (backup) {
+	    backup->used = 2;
+	    if (backup->bn) conn->sin = backup->backup;
 	}
 	ret = doconnect(p1, &conn->sin);
 #ifdef USE_SSL
@@ -3575,6 +3579,7 @@ Stone *mkstone(
 		if (i > 0) s.sin_addr.s_addr
 			       = htonl(ntohl(s.sin_addr.s_addr) + i);
 		stonep->backups[i] = findBackup(&s, stonep->proto);
+		if (stonep->backups[i]) stonep->backups[i]->used = 1;
 	    }
 	}
     } else {
