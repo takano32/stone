@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.106 2003/11/03 16:36:17 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.107 2003/11/04 02:24:04 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -879,7 +879,7 @@ void freeMutex(int h) {
 
 /* backup */
 
-int healthCheck(struct sockaddr_in *sinp) {
+int healthCheck(struct sockaddr_in *sinp, int proto) {
     SOCKET sd;
     int ret;
     sd = socket(AF_INET, SOCK_STREAM, 0);
@@ -891,6 +891,10 @@ int healthCheck(struct sockaddr_in *sinp) {
 		sd, errno);
 	return 1;	/* I can't tell the master is healthy or not */
     }
+    if (Debug > 2)
+	message(LOG_DEBUG, "health check: %s:%s",
+		addr2str(&sinp->sin_addr),
+		port2str(sinp->sin_port, proto, proto_dest));
     ret = connect(sd, (struct sockaddr*)sinp, sizeof(*sinp));
     if (ret == 0) shutdown(sd, 2);
     closesocket(sd);
@@ -905,18 +909,22 @@ int scanBackups(void) {
     for (b=backups; b != NULL; b=b->next) {
 	if (b->used < 2) continue;		/* not used */
 	if (now - b->last < b->interval) continue;
-	if (healthCheck(&b->master)) {	/* healthy ? */
+	if (healthCheck(&b->master, b->proto)) {	/* healthy ? */
 	    if (b->bn) {
-		message(LOG_INFO, "health check %s:%s success",
-			addr2str(&b->master.sin_addr),
-			port2str(b->master.sin_port, b->proto, proto_dest));
+		if (Debug > 1)
+		    message(LOG_DEBUG, "health check %s:%s success",
+			    addr2str(&b->master.sin_addr),
+			    port2str(b->master.sin_port,
+				     b->proto, proto_dest));
 		b->bn = 0;
 	    }
 	} else {	/* unhealthy */
 	    if (b->bn == 0) {
-		message(LOG_ERR, "health check %s:%s fail",
-			addr2str(&b->master.sin_addr),
-			port2str(b->master.sin_port, b->proto, proto_dest));
+		if (Debug > 0)
+		    message(LOG_DEBUG, "health check %s:%s fail",
+			    addr2str(&b->master.sin_addr),
+			    port2str(b->master.sin_port,
+				     b->proto, proto_dest));
 		b->bn++;
 	    }
 	}
@@ -1779,7 +1787,9 @@ void asyncConn(Conn *conn) {
     time(&clock);
     if (Debug > 8) message(LOG_DEBUG, "asyncConn...");
     if (p1->stone->backups) {
-	backup = p1->stone->backups[0];
+	int ofs = p1->clock % p1->stone->nsins;	/* round robin */
+	conn->sin = p1->stone->sins[ofs];
+	backup = p1->stone->backups[ofs];
     }
 #ifdef USE_SSL
     if (p2->proto & proto_ssl_intr)
