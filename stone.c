@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.90 2003/10/27 08:53:24 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.91 2003/10/27 17:08:09 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1500,11 +1500,12 @@ int doSSL_connect(Pair *pair) {
 #endif	/* USE_SSL */
 
 void message_time_log(Pair *pair) {
-    TimeLog *log = pair->log;
+    TimeLog *log;
+    log = pair->log;
+    pair->log = NULL;
     if (log) {
 	struct tm *t = localtime(&log->clock);
 	time_t now;
-	pair->log = NULL;
 	time(&now);
 	message(log->pri, "%02d:%02d:%02d %d %s",
 		t->tm_hour, t->tm_min, t->tm_sec,
@@ -1516,21 +1517,20 @@ void message_time_log(Pair *pair) {
 void doclose(Pair *pair) {	/* close pair */
     Pair *p = pair->pair;
     SOCKET sd = pair->sd;
-    message_time_log(pair);
     if (!(pair->proto & proto_close)) {
 	pair->proto |= (proto_close | proto_eof);	/* request to close */
 	if (ValidSocket(sd))
-	    if (Debug > 2) message(LOG_DEBUG,"TCP %d: closing...",sd);
+	    if (Debug > 2) message(LOG_DEBUG, "TCP %d: closing...", sd);
     }
     if (p && !(p->proto & proto_close)
 	&& ValidSocket(p->sd) && (p->proto & proto_connect)) {
 	p->proto |= proto_eof;
-	if (Debug > 2) message(LOG_DEBUG,"TCP %d: shutdown %d",sd,p->sd);
+	if (Debug > 2) message(LOG_DEBUG, "TCP %d: shutdown %d", sd, p->sd);
 #ifdef USE_SSL
 	if (p->ssl) SSL_shutdown(p->ssl);
 	else
 #endif
-	shutdown(p->sd,2);
+	shutdown(p->sd, 2);
     }
 }
 
@@ -2399,7 +2399,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 #endif
     if (len == 0) {
 	message_time_log(pair);
-	if (Debug > 2) message(LOG_DEBUG,"TCP %d: EOF",sd);
+	if (Debug > 2) message(LOG_DEBUG, "TCP %d: EOF", sd);
 	return -2;	/* EOF w/ pair */
     }
 #ifdef ENLARGE
