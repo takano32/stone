@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.107 2003/11/04 02:24:04 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.108 2003/11/04 04:09:30 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3815,18 +3815,23 @@ Stone *mkstone(
 		port2str(stonep->sins->sin_port, stonep->proto, proto_dest),
 		xhost);
     }
-    if (stonep->nsins) {
-	stonep->backups = malloc(sizeof(Backup*) * stonep->nsins);
-	if (stonep->backups) {
-	    int i;
-	    for (i=0; i < stonep->nsins; i++) {
-		stonep->backups[i]
-		    = findBackup(&stonep->sins[i], stonep->proto);
-		if (stonep->backups[i]) stonep->backups[i]->used = 1;
+    stonep->backups = NULL;
+    if ((proto & proto_command) != command_proxy) {
+	Backup *bs[LB_MAX];
+	int found = 0;
+	for (i=0; i < stonep->nsins; i++) {
+	    bs[i] = findBackup(&stonep->sins[i], stonep->proto);
+	    if (bs[i]) {
+		found = 1;
+		bs[i]->used = 1;
 	    }
 	}
-    } else {
-	stonep->backups = NULL;
+	if (found) {
+	    stonep->backups = malloc(sizeof(Backup*) * stonep->nsins);
+	    if (stonep->backups) {
+		for (i=0; i < stonep->nsins; i++) stonep->backups[i] = bs[i];
+	    }
+	}
     }
     return stonep;
 }
@@ -4228,7 +4233,6 @@ void sslopts_default(SSLOpts *opts, int isserver) {
 }
 
 int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
-    if (++i >= argc) help(argv[0]);
     if (!strcmp(argv[i], "default")) {
 	sslopts_default(opts, isserver);
     } else if (!strcmp(argv[i], "verbose")) {
@@ -4388,9 +4392,17 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
 	break;
 #ifdef USE_SSL
     case 'q':
+	if (++argi >= argc) {
+	    message(LOG_ERR, "Illegal Option: -q without <SSL>");
+	    exit(1);
+	}
 	argi = sslopts(argc, argi, argv, &ClientOpts, 0);
 	break;
     case 'z':
+	if (++argi >= argc) {
+	    message(LOG_ERR, "Illegal Option: -z without <SSL>");
+	    exit(1);
+	}
 	argi = sslopts(argc, argi, argv, &ServerOpts, 1);
 	break;
 #endif
