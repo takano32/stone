@@ -43,7 +43,7 @@ HOWTO USE
 	stone [-C <file>] [-P <command>] [-Q <options>] [-N] [-d] [-p] [-n]
 	      [-u <max>] [-f <n>] [-l] [-L <file>] [-a <file>] [-i <file>]
 	      [-X <n>] [-T <n>] [-r]
-	      [-b <n> <master>:<port> <backup>:<port>]
+	      [-b [<var>=<val>]... <n> <master>:<port> <backup>:<port>]
 	      [-B <host>:<port> <host1>:<port1>... --]
 	      [-o <n>] [-g <n>] [-t <dir>] [-D] [-c <dir>]
 	      [-q <SSL>] [-z <SSL>]
@@ -82,7 +82,9 @@ HOWTO USE
 	The ``-b <n> <master>:<port> <backup>:<port>'' flag designates
 	the backup destination for <master>:<port>.  The program checks
 	every <n> seconds whether <master>:<port> is connectable.  If
-	not, the backup is used instead.
+	not, the backup is used instead.  Alternative <host> can be
+	checked, using ``host=<host>'' and alternative <port>, using
+	``port=<port>''.
 
 	The ``-B <host>:<port> <host1>:<port1>... --'' is for the
 	destination group.  If the destination of <st> is <host>:<port>,
@@ -174,6 +176,9 @@ HOWTO USE
 		\A	<IP address of the client>:<port number>
 		\0	the serial number of peer's SSL certificate.
 		\1 - \9	the matched string in the ``regex'' of SSL options.
+		\?1<then>\:<else>\/
+			if \1 (\2 - \9 in a similar way) is not null,
+			<then>, otherwise <else>.
 
 	Type (6) repeats http request with ``<header>'' in the top of
 	request headers.  The above escapes can be also used.

@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.156 2004/09/02 07:58:22 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.157 2004/09/04 01:42:35 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2530,26 +2530,57 @@ int strnPeerAddr(char *buf, int limit, SOCKET sd, int isport) {
     return len;
 }
 
-int strnparse(char *buf, int limit, char *p, Pair *pair) {
+int strnparse(char *buf, int limit, char **pp, Pair *pair, char term) {
     int i = 0;
+    char *p;
     char c;
+#ifdef USE_SSL
+    char **match = NULL;
+    SSL *ssl = pair->ssl;
+    int cond;
+#endif
+    p = *pp;
     while (i < limit && (c = *p++)) {
 	if (c == '\\') {
 	    c = *p++;
+	    if (c == term) break;
 #ifdef USE_SSL
+	    cond = -1;
+	    if (c == '?') {
+		cond = 0;
+		c = *p++;
+	    }
 	    if ('0' <= c && c <= '9') {
-		SSL *ssl = pair->ssl;
-		SSL_SESSION *sess;
-		if (ssl && (sess = SSL_get_session(ssl))) {
-		    char **match = SSL_SESSION_get_ex_data(sess, MatchIndex);
-		    if (match) {
-			c -= '0';
-			if (match[c]) {
+		if (ssl && !match) {
+		    SSL_SESSION *sess = SSL_get_session(ssl);
+		    if (sess)
+			match = SSL_SESSION_get_ex_data(sess, MatchIndex);
+		    if (!match) ssl = NULL;
+		}
+		if (match) {
+		    c -= '0';
+		    if (match[c]) {
+			if (cond >= 0) {
+			    if (*match[c]) cond = 1;
+			} else {
 			    int len = strlen(match[c]);
 			    if (len >= limit - i) len = limit - i;
-			    strncpy(buf+i, match[c], len);
-			    i += len;
+			    if (buf) {
+				strncpy(buf+i, match[c], len);
+				i += len;
+			    }
 			}
+		    }
+		}
+		if (cond > 0) {
+		    if (buf) {
+			i += strnparse(buf+i, limit-i, &p, pair, ':');
+			strnparse(NULL, limit-i, &p, pair, '/');
+		    }
+		} else if (cond == 0) {
+		    if (buf) {
+			strnparse(NULL, limit-i, &p, pair, ':');
+			i += strnparse(buf+i, limit-i, &p, pair, '/');
 		    }
 		}
 		continue;
@@ -2560,19 +2591,20 @@ int strnparse(char *buf, int limit, char *p, Pair *pair) {
 	    case 'r':  c = '\r';  break;
 	    case 't':  c = '\t';  break;
 	    case 'a':
-		i += strnPeerAddr(buf+i, limit-i, pair->sd, 0);
+		if (buf) i += strnPeerAddr(buf+i, limit-i, pair->sd, 0);
 		continue;
 	    case 'A':
-		i += strnPeerAddr(buf+i, limit-i, pair->sd, 1);
+		if (buf) i += strnPeerAddr(buf+i, limit-i, pair->sd, 1);
 		continue;
 	    case '\0':
 		c = '\\';
 		p--;
 	    }
 	}
-	buf[i++] = c;
+	if (buf) buf[i++] = c;
     }
-    buf[i] = '\0';
+    if (buf) buf[i] = '\0';
+    *pp = p;
     return i;
 }
 
@@ -2589,7 +2621,9 @@ void asyncAccept(Stone *stone) {
     p1->next = p2;	/* link pair each other */
     p2->prev = p1;
     if (p2->proto & proto_ohttp_d) {
-	int i = strnparse(p2->buf, p2->bufmax - 5, stone->p, p1);
+	int i;
+	char *p = stone->p;
+	i = strnparse(p2->buf, p2->bufmax - 5, &p, p1, 0xFF);
 	p2->buf[i++] = '\r';
 	p2->buf[i++] = '\n';
 	p2->buf[i++] = '\r';
@@ -3500,6 +3534,7 @@ int docomm(Pair *pair, fd_set *rinp, fd_set *winp, Comm *comm) {
 
 int insheader(Pair *pair) {	/* insert header */
     char buf[BUFMAX];
+    char *p;
     int len, i;
     len = pair->start + pair->len;
     for (i=pair->start; i < len; i++) {
@@ -3513,8 +3548,8 @@ int insheader(Pair *pair) {	/* insert header */
     i++;
     len -= i;
     if (len > 0) bcopy(&pair->buf[i], buf, len);	/* save rest header */
-    i += strnparse(&pair->buf[i], pair->bufmax - i,
-		   pair->stone->p, pair->pair);
+    p = pair->stone->p;
+    i += strnparse(&pair->buf[i], pair->bufmax - i, &p, pair->pair, 0xFF);
     pair->buf[i++] = '\r';
     pair->buf[i++] = '\n';
     if (Debug > 5) {
