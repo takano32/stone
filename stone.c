@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.104 2003/11/03 06:21:22 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.105 2003/11/03 07:12:54 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1597,6 +1597,7 @@ void message_time_log(Pair *pair) {
 
 int doshutdown(Pair *pair, int how) {
     int ret = 0;
+    int err;
     if (!pair || (pair->proto & proto_close)
 	|| InvalidSocket(pair->sd) || !(pair->proto & proto_connect))
 	return -1;	/* no connection */
@@ -1608,13 +1609,17 @@ int doshutdown(Pair *pair, int how) {
     if (pair->ssl) {
 	ret = SSL_smart_shutdown(pair->ssl);
 	if (ret < 0) {
-	    int err = SSL_get_error(pair->ssl, ret);
+	    err = SSL_get_error(pair->ssl, ret);
 	    message(LOG_ERR, "TCP %d: SSL_shutdown err=%d",
 		    pair->sd, err);
 	}
-    } else
+    }
 #endif
-	ret = shutdown(pair->sd, how);
+    err = shutdown(pair->sd, how);
+    if (err < 0) {
+	ret = err;
+	message(LOG_ERR, "TCP %d: shutdown %d err=%d", pair->sd, how, errno);
+    }
     if (ret < 0) {
 	pair->proto |= (proto_eof | proto_close);
 	if (Debug > 2)
