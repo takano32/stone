@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.159 2004/09/10 06:47:38 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.160 2004/09/10 16:35:43 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2716,18 +2716,31 @@ int scanClose(void) {	/* scan close request */
     p1 = trash;
     trash = NULL;
     while (p1 != NULL) {
+	char *p;
+	TimeLog *log;
+#ifdef USE_SSL
+	SSL *ssl;
+#endif
 	p2 = p1;
 	p1 = p1->next;
-	if (p2->p) {
-	    char *p = p2->p;
+	p = p2->p;
+	if (p) {
 	    p2->p = NULL;
-	    if (p) free(p);
+	    free(p);
 	}
-	if (p2->log) {
-	    TimeLog *log = p2->log;
+	log = p2->log;
+	if (log) {
 	    p2->log = NULL;
-	    if (log) free(log);
+	    free(log);
 	}
+#ifdef USE_SSL
+	ssl = p2->ssl;
+	if (ssl) {
+	    p2->ssl = NULL;
+	    SSL_free(ssl);
+	}
+#endif
+
 	freePair(p2);
     }
     p1 = pairs.next;
@@ -2759,19 +2772,11 @@ int scanClose(void) {	/* scan close request */
 		    !FD_ISSET(p2->sd, &win) &&
 		    !FD_ISSET(p2->sd, &ein)) {
 		    SOCKET sd;
-#ifdef USE_SSL
-		    SSL *ssl;
-#endif
 		    sd = p2->sd;
 		    p2->sd = INVALID_SOCKET;
 		    if (ValidSocket(sd)) closesocket(sd);
 		    if (Debug > 3)
 			message(LOG_DEBUG, "TCP %d: closesocket", sd);
-#ifdef USE_SSL
-		    ssl = p2->ssl;
-		    p2->ssl = NULL;
-		    if (ssl) SSL_free(ssl);
-#endif
 		} else {
 		    FD_CLR(p2->sd, &rin);
 		    FD_CLR(p2->sd, &win);
