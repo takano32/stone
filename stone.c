@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.74 2003/09/20 08:57:39 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.75 2003/09/20 11:27:32 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -265,6 +265,7 @@ typedef struct {
     int verbose;
     int mode;
     int depth;
+    long serial;
     int (*callback)(int, X509_STORE_CTX *);
     char *keyFile;
     char *certFile;
@@ -2957,9 +2958,9 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 	ASN1_INTEGER *n = X509_get_serialNumber(err_cert);
 	long serial = -1;
 	if (n) serial = ASN1_INTEGER_get(n);
-	if (ss->serial < 0) {
+	if (ss->serial == -1 && serial >= 0) {
 	    ss->serial = serial;
-	} else if (serial != ss->serial) {
+	} else if (ss->serial >= 0 && serial != ss->serial) {
 	    message(LOG_ERR,"SSL callback serial number mismatch %lx != %lx",
 		    serial, ss->serial);
 	    return 0;	/* fail */
@@ -3034,7 +3035,7 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
     SSL_CTX_set_verify(ss->ctx,opts->mode,opts->callback);
     SSL_CTX_set_verify_depth(ss->ctx,opts->depth + 1);
     ss->depth = opts->depth;
-    ss->serial = -1;
+    ss->serial = opts->serial;
     ss->lbmod = opts->lbmod;
     ss->lbparm = opts->lbparm;
     if ((opts->caFile || opts->caPath)
@@ -3746,6 +3747,7 @@ void sslopts_default(SSLOpts *opts, int isserver) {
     opts->verbose = 0;
     opts->mode = SSL_VERIFY_NONE;
     opts->depth = DEPTH_MAX - 1;
+    opts->serial = -2;
     opts->callback = verify_callback;
     if (isserver) {
 	char path[BUFMAX];
@@ -3797,6 +3799,8 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	opts->depth = atoi(argv[i]+6);
 	if (opts->depth >= DEPTH_MAX) opts->depth = DEPTH_MAX - 1;
 	else if (opts->depth < 0) opts->depth = 0;
+    } else if (!strcmp(argv[i], "uniq")) {
+	opts->serial = -1;
     } else if (!strncmp(argv[i],"key=",4)) {
 	opts->keyFile = strdup(argv[i]+4);
     } else if (!strncmp(argv[i],"cert=",5)) {
