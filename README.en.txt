@@ -1,9 +1,9 @@
 
 			    Simple Repeater
 
-			   stone version 2.1w
+			   stone version 2.1x
 
-		Copyright(c)1995-2001 by Hiroaki Sengoku
+		Copyright(c)1995-2002 by Hiroaki Sengoku
 			    sengoku@gcd.org
 
 
@@ -40,7 +40,7 @@ HOWTO USE
 
 	stone [-d] [-p] [-n] [-u <max>] [-f <n>] [-a <file>] [-L <file>] [-l]
 	      [-T <n>] [-o <n>] [-g <n>] [-t <dir>] [-z <SSL>]
-	      [-C <file>] [-P <command>]
+	      [-C <file>] [-P <command>] [-i <file>]
 	      <st> [-- <st>]...
 
 	If the ``-d'' flag is used, then increase the debug level.  If
@@ -67,6 +67,9 @@ HOWTO USE
 	options and ``<st>''s from the configuration file ``<file>''.
 	If the ``-P <command>'' flag is used, the program executes
 	pre-processor to read the configuration file.
+
+	If the ``-i <file>'' flag is used, the program write its process
+	ID to the designated file.
 
 	``<st>'' is one of the following.  Multiple ``<st>'' can be
 	designated, separated by ``--''.
