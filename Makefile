@@ -86,7 +86,7 @@ svc_stone.exe: logmsg.res service.obj svcbody.obj
 	$(MAKE) FLAGS="/DNT_SERVICE $(FLAGS)" LIBS="logmsg.res service.obj svcbody.obj advapi32.lib user32.lib gdi32.lib shell32.lib kernel32.lib" $(TARGET)
 
 linux:
-	$(MAKE) FLAGS="-DINET_ADDR -DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON -DPRCTL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
+	$(MAKE) FLAGS="-DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON -DPRCTL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
 
 linux-pop:
 	$(MAKE) TARGET=linux pop_stone
@@ -123,7 +123,7 @@ macosx-ssl:
 	$(MAKE) TARGET=macosx SSL=/usr ssl_stone
 
 sun:
-	$(MAKE) CC=gcc FLAGS="-DINET_ADDR -DNO_SNPRINTF -DIGN_SIGTERM -DCPP='\"/usr/lib/cpp\"' $(FLAGS)" stone
+	$(MAKE) CC=gcc FLAGS="-DNO_SNPRINTF -DIGN_SIGTERM -DCPP='\"/usr/lib/cpp\"' $(FLAGS)" stone
 
 sun-pop:
 	$(MAKE) TARGET=sun pop_stone

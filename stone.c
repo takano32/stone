@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.171 2004/09/15 17:47:20 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.172 2004/09/16 09:02:24 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -178,6 +178,7 @@ typedef void *(*aync_start_routine) (void *);
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <netdb.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -727,71 +728,10 @@ char *addr2ip(struct in_addr *addr, char *str, int len) {
     return str;
 }
 
-#ifdef NO_ADDRINFO
-#define NTRY_MAX	10
-char *addr2str(struct in_addr *addr, char *str, int len) {
-    struct hostent *ent;
-    int ntry = NTRY_MAX;
-    if (!str) return "";
-    str[len-1] = '\0';
-    addr2ip(addr, str, len);
-    if (!AddrFlag) {
-	do {
-	    ent = gethostbyaddr((char*)&addr->s_addr,
-				sizeof(addr->s_addr), AF_INET);
-	    if (ent) {
-		strncpy(str, ent->h_name, len-1);
-		return str;
-	    }
-	} while (h_errno == TRY_AGAIN && ntry-- > 0);
-	message(LOG_ERR, "Unknown address err=%d: %s", h_errno, str);
-    }
-    return str;
-}
-#else
-char *addr2str(struct in_addr *addr, char *str, int len) {
-    struct sockaddr_in sin;
-    int flags = 0;
-    int err;
-    sin.sin_addr = *addr;
-    sin.sin_port = 0;
-    sin.sin_family = AF_INET;
-    if (AddrFlag) flags = NI_NUMERICHOST;
-    err = getnameinfo((struct sockaddr*)&sin, sizeof(sin),
-		      str, len, NULL, 0, flags);
-    if (err) {
-	addr2ip(addr, str, len);
-	message(LOG_ERR, "Unknown address err=%d errno=%d: %s",
-		err, errno, str);
-    }
-    return str;
-}
-#endif
-
-char *port2str(int port, int flag, int mask,	/* network byte order */
-	       char *str, int len) {
-    struct servent *ent;
-    char *p;
-    int i;
+char *ext2str(int flag, int mask, char *str, int len) {
     char sep = '/';
-    if (!str) return "";
-    str[--len] = '\0';
-    if (flag & proto_udp) {
-	p = "udp";
-    } else {
-	p = "tcp";
-    }
-    str[0] = '\0';
-    if (!AddrFlag) {
-	ent = getservbyport(port, p);
-	if (ent) {
-	    strncpy(str, ent->s_name, len-5);
-	}
-    }
-    if (str[0] == '\0') {
-	snprintf(str, len-5, "%d", ntohs((unsigned short)port));
-    }
-    i = strlen(str);
+    int i = 0;
+    if (!str || len <= 1) return "";
     if (flag & proto_udp) {
 	if (i < len) str[i++] = sep;
 	sep = ',';
@@ -832,6 +772,102 @@ char *port2str(int port, int flag, int mask,	/* network byte order */
     }
     return str;
 }
+
+#ifdef NO_ADDRINFO
+#define NTRY_MAX	10
+char *addr2str(struct in_addr *addr, char *str, int len) {
+    struct hostent *ent;
+    int ntry = NTRY_MAX;
+    if (!str || len <= 1) return "";
+    str[len-1] = '\0';
+    addr2ip(addr, str, len);
+    if (!AddrFlag) {
+	do {
+	    ent = gethostbyaddr((char*)&addr->s_addr,
+				sizeof(addr->s_addr), AF_INET);
+	    if (ent) {
+		strncpy(str, ent->h_name, len-1);
+		return str;
+	    }
+	} while (h_errno == TRY_AGAIN && ntry-- > 0);
+	message(LOG_ERR, "Unknown address err=%d: %s", h_errno, str);
+    }
+    return str;
+}
+
+char *addrport2str(void *sa, socklen_t salen,
+		   int flag, int mask, char *str, int len) {
+    struct servent *ent;
+    int port;
+    int i = 0;
+    if (!str || len <= 1) return "";
+    str[len-1] = '\0';
+    if (((struct sockaddr*)sa)->sa_family == AF_INET) {
+	addr2str(&((struct sockaddr_in*)sa)->sin_addr, str, len);
+	i = strlen(str);
+	if (i < len-2) {
+	    str[i++] = ':';
+	    str[i] = '\0';
+	}
+    } else {
+	message(LOG_ERR, "Unknown address family=%d len=%d",
+		((struct sockaddr*)sa)->sa_family, salen);
+    }
+    port = ((struct sockaddr_in*)sa)->sin_port;
+    if (!AddrFlag) {
+	ent = getservbyport(port, ((flag & proto_udp) ? "udp" : "tcp"));
+	if (ent) strncpy(str+i, ent->s_name, len-i-5);
+    }
+    if (str[i] == '\0')
+	snprintf(str+i, len-i-5, "%d", ntohs((unsigned short)port));
+    i = strlen(str);
+    ext2str(flag, mask, str+i, len-i);
+    return str;
+}
+#else
+char *addr2str(struct in_addr *addr, char *str, int len) {
+    struct sockaddr_in sin;
+    int flags = 0;
+    int err;
+    sin.sin_addr = *addr;
+    sin.sin_port = 0;
+    sin.sin_family = AF_INET;
+    if (AddrFlag) flags = NI_NUMERICHOST;
+    err = getnameinfo((struct sockaddr*)&sin, sizeof(sin),
+		      str, len, NULL, 0, flags);
+    if (err) {
+	addr2ip(addr, str, len);
+	message(LOG_ERR, "Unknown address err=%d errno=%d: %s",
+		err, errno, str);
+    }
+    return str;
+}
+
+char *addrport2str(void *sa, socklen_t salen,
+		   int flag, int mask, char *str, int len) {
+    char serv[STRMAX];
+    int flags = 0;
+    int err;
+    if (!str || len <= 1) return "";
+    str[len-1] = '\0';
+    if (AddrFlag) flags = NI_NUMERICHOST;
+    err = getnameinfo((struct sockaddr*)sa, salen,
+		      str, len, serv, STRMAX, flags);
+    if (err) {
+	if (((struct sockaddr*)sa)->sa_family == AF_INET) {
+	    addr2ip(&((struct sockaddr_in*)sa)->sin_addr, str, len);
+	} else {
+	    strncpy(str, "???:?", len);
+	}
+	message(LOG_ERR, "Unknown address err=%d errno=%d: %s",
+		err, errno, str);
+    } else {
+	int i = strlen(str);
+	snprintf(str+i, len-i, ":%s", serv);
+    }
+    return str;
+}
+#endif
 
 int isdigitstr(char *str) {
     while (*str && !isspace(*str)) {
@@ -1042,8 +1078,7 @@ void freeMutex(int h) {
 int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
     SOCKET sd;
     int ret;
-    char addr[STRMAX];
-    char port[STRMAX];
+    char addrport[STRMAX];
     time_t start, now;
     time(&start);
     sd = socket(AF_INET, SOCK_STREAM, 0);
@@ -1055,8 +1090,7 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 		errno);
 	return 1;	/* I can't tell the master is healthy or not */
     }
-    addr2str(&sinp->sin_addr, addr, STRMAX);
-    port2str(sinp->sin_port, proto, proto_dest, port, STRMAX);
+    addrport2str(sinp, sizeof(*sinp), proto, proto_dest, addrport, STRMAX);
 #ifndef WINDOWS
     fcntl(sd, F_SETFL, O_NONBLOCK);
 #endif
@@ -1064,8 +1098,8 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
     if (ret < 0) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
-	message(LOG_ERR, "health check: connect %s:%s err=%d",
-		addr, port, errno);
+	message(LOG_ERR, "health check: connect %s err=%d",
+		addrport, errno);
 	goto fail;
 #else
 	if (errno == EINPROGRESS) {
@@ -1080,8 +1114,8 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 		FdSet(sd, &wout);
 	    } while (select(FD_SETSIZE, NULL, &wout, NULL, &tv) == 0);
 	} else {
-	    message(LOG_ERR, "health check: connect %s:%s err=%d",
-		    addr, port, errno);
+	    message(LOG_ERR, "health check: connect %s err=%d",
+		    addrport, errno);
 	    goto fail;
 	}
 #endif
@@ -1097,8 +1131,8 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 #ifdef WINDOWS
 	    errno = WSAGetLastError();
 #endif
-	    message(LOG_ERR, "health check: send %s:%s err=%d",
-		    addr, port, errno);
+	    message(LOG_ERR, "health check: send %s err=%d",
+		    addrport, errno);
 	    goto fail;
 	}
 	len = 0;
@@ -1118,16 +1152,16 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 #ifdef WINDOWS
 		errno = WSAGetLastError();
 #endif
-		message(LOG_ERR, "health check: recv from %s:%s err=%d",
-			addr, port, errno);
+		message(LOG_ERR, "health check: recv from %s err=%d",
+			addrport, errno);
 		goto fail;
 	    }
 	    len += ret;
 	    buf[len] = '\0';
 	    err = regexec(&chat->expect, buf, 0, NULL, 0);
 	    if (Debug > 8)
-		message(LOG_DEBUG, "health check: %s:%s regexec=%d",
-			addr, port, err);
+		message(LOG_DEBUG, "health check: %s regexec=%d",
+			addrport, err);
 	    if (len > BUFMAX/2) {
 		bcopy(buf+(len-BUFMAX/2), buf, BUFMAX/2);
 		len = BUFMAX/2;
@@ -1141,7 +1175,7 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
     return 1;	/* healthy ! */
  timeout:
     if (Debug > 8)
-	message(LOG_DEBUG, "health check: %s:%s timeout", addr, port);
+	message(LOG_DEBUG, "health check: %s timeout", addrport);
  fail:
     shutdown(sd, 2);
     closesocket(sd);
@@ -1150,23 +1184,22 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 
 void asyncHealthCheck(Backup *b) {
     time_t now;
-    char addr[STRMAX];
-    char port[STRMAX];
+    char addrport[STRMAX];
     ASYNC_BEGIN;
     time(&now);
     b->last = now + 60 * 60;	/* suppress further check */
-    addr2str(&b->check.sin_addr, addr, STRMAX);
-    port2str(b->check.sin_port, b->proto, proto_dest, port, STRMAX);
+    addrport2str(&b->check, sizeof(b->check),
+		 b->proto, proto_dest, addrport, STRMAX);
     if (Debug > 8)
-	message(LOG_DEBUG, "asyncHealthCheck %s:%s ...", addr, port);
+	message(LOG_DEBUG, "asyncHealthCheck %s ...", addrport);
     if (healthCheck(&b->check, b->proto,
 		    b->interval, b->chat)) {	/* healthy ? */
 	if (Debug > 3 || (b->bn && Debug > 1))
-	    message(LOG_DEBUG, "health check %s:%s success", addr, port);
+	    message(LOG_DEBUG, "health check %s success", addrport);
 	if (b->bn) b->bn = 0;
     } else {	/* unhealthy */
 	if (Debug > 3 || (b->bn == 0 && Debug > 0))
-	    message(LOG_DEBUG, "health check %s:%s fail", addr, port);
+	    message(LOG_DEBUG, "health check %s fail", addrport);
 	if (b->bn == 0) b->bn++;
     }
     b->last = now;
@@ -1215,18 +1248,14 @@ Backup *findBackup(struct sockaddr_in *sinp, int proto) {
 	    && b->master.sin_port == sinp->sin_port
 	    && (b->proto & proto)) {	/* found */
 	    if (Debug > 1) {
-		char mhost[STRMAX];
-		char mport[STRMAX];
-		char bhost[STRMAX];
-		char bport[STRMAX];
-		addr2str(&b->master.sin_addr, mhost, STRMAX);
-		port2str(b->master.sin_port, b->proto, proto_dest,
-			 mport, STRMAX);
-		addr2str(&b->backup.sin_addr, bhost, STRMAX);
-		port2str(b->backup.sin_port, b->proto, proto_dest,
-			 bport, STRMAX);
-		message(LOG_DEBUG, "master %s:%s backup %s:%s interval %d",
-			mhost, mport, bhost, bport, b->interval);
+		char mhostport[STRMAX];
+		char bhostport[STRMAX];
+		addrport2str(&b->master, sizeof(b->master),
+			     b->proto, proto_dest, mhostport, STRMAX);
+		addrport2str(&b->backup, sizeof(b->backup),
+			     b->proto, proto_dest, bhostport, STRMAX);
+		message(LOG_DEBUG, "master %s backup %s interval %d",
+			mhostport, bhostport, b->interval);
 	    }
 	    return b;
 	}
@@ -1395,12 +1424,9 @@ LBSet *findLBSet(struct sockaddr_in *sinp, int proto) {
 		strcpy(buf, "LB set:");
 		len = strlen(buf);
 		for (i=0; i < s->nsins; i++) {
-		    char addr[STRMAX];
-		    char port[STRMAX];
-		    addr2str(&s->sins[i].sin_addr, addr, STRMAX);
-		    port2str(s->sins[i].sin_port, s->proto, proto_dest,
-			     port, STRMAX);
-		    snprintf(buf+len, BUFMAX-1-len, " %s:%s", addr, port);
+		    buf[len++] = ' ';
+		    addrport2str(&s->sins[i], sizeof(s->sins[0]),
+				 s->proto, proto_dest, buf+len, BUFMAX-len);
 		    len += strlen(buf+len);
 		}
 		message(LOG_DEBUG, "%s", buf);
@@ -1451,8 +1477,6 @@ void message_origin(Origin *origin) {
     SOCKET sd;
     Stone *stone;
     int len, i;
-    char addr[STRMAX];
-    char port[STRMAX];
     char str[BUFMAX];
     strntime(str, BUFMAX, &origin->clock);
     i = strlen(str);
@@ -1466,7 +1490,7 @@ void message_origin(Origin *origin) {
 		message(LOG_DEBUG, "UDP %d: Can't get socket's name err=%d",
 			origin->sd, errno);
 	} else {
-	    port2str(name.sin_port, proto_udp, 0, str+i, BUFMAX-i),
+	    addrport2str(&name, sizeof(name), proto_udp, 0, str+i, BUFMAX-i),
 	    i = strlen(str);
 	    if (i < BUFMAX-2) str[i++] = ' ';
 	}
@@ -1476,16 +1500,15 @@ void message_origin(Origin *origin) {
     stone = origin->stone;
     if (stone) sd = stone->sd;
     else sd = INVALID_SOCKET;
-    addr2str(&origin->sin.sin_addr, addr, STRMAX);
-    port2str(origin->sin.sin_port, proto_udp, proto_all, port, STRMAX);
-    message(LOG_INFO, "UDP%3d:%3d %s%s:%s", origin->sd, sd, str, addr, port);
+    addrport2str(&origin->sin, sizeof(origin->sin),
+		 proto_udp, proto_all, str+i, STRMAX-i);
+    message(LOG_INFO, "UDP%3d:%3d %s", origin->sd, sd, str);
 }
 
 static int recvUDP(SOCKET sd, struct sockaddr_in *from, char *pkt_buf) {
     struct sockaddr_in sin;
     int len, pkt_len;
-    char addr[STRMAX];
-    char port[STRMAX];
+    char addrport[STRMAX];
     if (!from) from = &sin;
     len = sizeof(*from);
     pkt_len = recvfrom(sd, pkt_buf, pkt_len_max, 0,
@@ -1497,16 +1520,14 @@ static int recvUDP(SOCKET sd, struct sockaddr_in *from, char *pkt_buf) {
 	message(LOG_ERR, "UDP %d: recvfrom failed err=%d", sd, errno);
 	return pkt_len;
     }
-    addr2str(&from->sin_addr, addr, STRMAX);
-    port2str(from->sin_port, proto_udp, proto_all, port, STRMAX);
+    addrport2str(&from, sizeof(from), proto_udp, proto_all, addrport, STRMAX);
     if (Debug > 4)
-	message(LOG_DEBUG, "UDP %d: %d bytes received from %s:%s",
-		sd, pkt_len, addr, port);
+	message(LOG_DEBUG, "UDP %d: %d bytes received from %s",
+		sd, pkt_len, addrport);
     if (pkt_len >= pkt_len_max) {
-	addr2str(&from->sin_addr, addr, STRMAX);
-	port2str(from->sin_port, proto_udp, 0, port, STRMAX);
+	addrport2str(&from, sizeof(from), proto_udp, 0, addrport, STRMAX);
 	message(LOG_NOTICE, "UDP %d: recvfrom failed: larger packet "
-		"(%d bytes) arrived from %s:%s", sd, pkt_len, addr, port);
+		"(%d bytes) arrived from %s", sd, pkt_len, addrport);
 	pkt_len_max <<= 1;
 	pkt_len = 0;		/* drop */
     }
@@ -1515,23 +1536,21 @@ static int recvUDP(SOCKET sd, struct sockaddr_in *from, char *pkt_buf) {
 
 static int sendUDP(SOCKET sd, struct sockaddr_in *sinp,
 		   int len, char *pkt_buf) {
-    char addr[STRMAX];
-    char port[STRMAX];
-    addr2str(&sinp->sin_addr, addr, STRMAX);
-    port2str(sinp->sin_port, proto_udp, 0, port, STRMAX);
+    char addrport[STRMAX];
+    addrport2str(sinp, sizeof(*sinp), proto_udp, 0, addrport, STRMAX);
     if (sendto(sd, pkt_buf, len, 0,
 	       (struct sockaddr*)sinp, sizeof(*sinp))
 	!= len) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
 #endif
-	message(LOG_ERR, "UDP %d: sendto failed err=%d: to %s:%s",
-		sd, errno, addr, port);
+	message(LOG_ERR, "UDP %d: sendto failed err=%d: to %s",
+		sd, errno, addrport);
 	return -1;
     }
     if (Debug > 4)
-	message(LOG_DEBUG, "UDP %d: %d bytes sent to %s:%s",
-		sd, len, addr, port);
+	message(LOG_DEBUG, "UDP %d: %d bytes sent to %s",
+		sd, len, addrport);
     if (PacketDump > 0) {
 	char head[STRMAX];
 	snprintf(head, STRMAX-1, "UDP %d:", sd);
@@ -1703,8 +1722,7 @@ void asyncUDP(Stone *stonep) {
     SOCKET dsd;
     int len;
     Origin *origin;
-    char addr[STRMAX];
-    char port[STRMAX];
+    char addrport[STRMAX];
     char *pkt_buf;
     ASYNC_BEGIN;
     if (Debug > 8) message(LOG_DEBUG, "asyncUDP...");
@@ -1720,10 +1738,10 @@ void asyncUDP(Stone *stonep) {
     freeMutex(FdRinMutex);
     if (len <= 0) goto end;	/* drop */
     if (!checkXhost(stonep, &from.sin_addr, NULL)) {
-	addr2str(&from.sin_addr, addr, STRMAX);
-	port2str(from.sin_port, stonep->proto, proto_src, port, STRMAX);
-	message(LOG_WARNING, "stone %d: recv UDP denied: from %s:%s",
-		stonep->sd, addr, port);
+	addrport2str(&from, sizeof(from),
+		     stonep->proto, proto_src, addrport, STRMAX);
+	message(LOG_WARNING, "stone %d: recv UDP denied: from %s",
+		stonep->sd, addrport);
 	goto end;
     }
     origin = getOrigins(&from, stonep);
@@ -1767,7 +1785,7 @@ void message_pair(Pair *pair) {
 		message(LOG_DEBUG, "TCP %d: Can't get socket's name err=%d",
 			sd, errno);
 	} else {
-	    port2str(name.sin_port, pair->proto, 0, str+i, BUFMAX-i);
+	    addrport2str(&name, sizeof(name), pair->proto, 0, str+i, BUFMAX-i);
 	    i = strlen(str);
 	    if (i < BUFMAX-2) str[i++] = ' ';
 	}
@@ -1783,7 +1801,8 @@ void message_pair(Pair *pair) {
 	    addr2str(&name.sin_addr, str+i, BUFMAX-i);
 	    i = strlen(str);
 	    if (i < BUFMAX-2) str[i++] = ':';
-	    port2str(name.sin_port, pair->proto, proto_all, str+i, BUFMAX-i);
+	    addrport2str(&name, sizeof(name),
+			 pair->proto, proto_all, str+i, BUFMAX-i);
 	    i = strlen(str);
 	}
     }
@@ -2043,15 +2062,14 @@ void doclose(Pair *pair) {	/* close pair */
 
 /* pair connect to destination */
 int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
-    char addr[STRMAX];
-    char port[STRMAX];
+    char addrport[STRMAX];
     Pair *p = pair->pair;
     if (pair->proto & proto_close) return -1;
-    addr2str(&sinp->sin_addr, addr, STRMAX);
-    port2str(sinp->sin_port, pair->proto, proto_all, port, STRMAX);
+    addrport2str(sinp, sizeof(*sinp),
+		 pair->proto, proto_all, addrport, STRMAX);
     if (Debug > 2)
-	message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s:%s ...",
-		p->sd, pair->sd, addr, port);
+	message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s ...",
+		p->sd, pair->sd, addrport);
     if (connect(pair->sd, (struct sockaddr*)sinp, sizeof(*sinp)) < 0) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
@@ -2072,8 +2090,8 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
 	    }
 	} else {
 	    message(priority(pair),
-		    "TCP %d: can't connect err=%d: to %s:%s",
-		    pair->sd, errno, addr, port);
+		    "TCP %d: can't connect err=%d: to %s",
+		    pair->sd, errno, addrport);
 	    return -1;
 	}
     }
@@ -2107,10 +2125,8 @@ void message_conn(Conn *conn) {
 	proto = p1->proto;
 	if (p2) sd = p2->sd;
     }
-    addr2str(&conn->sin.sin_addr, str+i, BUFMAX-i);
-    i = strlen(str);
-    if (i < BUFMAX-2) str[i++] = ':';
-    port2str(conn->sin.sin_port, proto, proto_all, str+i, BUFMAX-i);
+    addrport2str(&conn->sin, sizeof(conn->sin),
+		 proto, proto_all, str+i, BUFMAX-i);
     i = strlen(str);
     if (i >= BUFMAX) i = BUFMAX-1;
     str[i] = '\0';
@@ -2239,16 +2255,15 @@ void asyncConn(Conn *conn) {
     }
     ret = doconnect(p1, &conn->sin);
     if (ret == 0) {	/* EINTR */
-	char addr[STRMAX];
-	char port[STRMAX];
+	char addrport[STRMAX];
 	if (clock - p1->clock < CONN_TIMEOUT) {
 	    conn->lock = 0;	/* unlock conn */
 	    goto exit;
 	}
-	addr2str(&conn->sin.sin_addr, addr, STRMAX);
-	port2str(conn->sin.sin_port, p1->proto, proto_all, port, STRMAX);
-	message(priority(p2), "TCP %d: connect timeout to %s:%s",
-		p2->sd, addr, port);
+	addrport2str(&conn->sin, sizeof(conn->sin),
+		     p1->proto, proto_all, addrport, STRMAX);
+	message(priority(p2), "TCP %d: connect timeout to %s",
+		p2->sd, addrport);
 	ret = -1;
     }
     if (ret < 0		/* fail to connect */
@@ -2477,11 +2492,11 @@ Pair *doaccept(Stone *stonep) {
 	len = 0;
 	ident[0] = '\0';
     }
-    addr2str(&from.sin_addr, fromstr+len, STRMAX*2-len);
-    port2str(from.sin_port, stonep->proto, proto_src, portstr, STRMAX);
+    addrport2str(&from, sizeof(from),
+		 stonep->proto, proto_src, fromstr+len, STRMAX*2-len);
     if (!checkXhost(stonep, &from.sin_addr, ident)) {
-	message(LOG_WARNING, "stone %d: access denied: from %s:%s",
-		stonep->sd, fromstr, portstr);
+	message(LOG_WARNING, "stone %d: access denied: from %s",
+		stonep->sd, fromstr);
 	shutdown(nsd, 2);
 	closesocket(nsd);
 	return NULL;
@@ -4574,29 +4589,20 @@ Stone *mkstone(
 			ntohl((unsigned long)stonep->xhosts[i].mask.s_addr),
 			(allow ? "can" : "can't"));
 	    } else {
-		char astr[STRMAX];
-		char pstr[STRMAX];
-		addr2str(&stonep->sins->sin_addr, astr, STRMAX);
-		port2str(stonep->sins->sin_port, stonep->proto, proto_dest,
-			 pstr, STRMAX);
+		char addrport[STRMAX];
+		addrport2str(stonep->sins, sizeof(stonep->sins[0]),
+			     stonep->proto, proto_dest, addrport, STRMAX);
 		message(LOG_DEBUG,
-			"stone %d: %s %s (mask %x) to connecting to %s:%s",
+			"stone %d: %s %s (mask %x) to connecting to %s",
 			stonep->sd,
 			(allow ? "permit" : "deny"),
 			xhost,
 			ntohl((unsigned long)stonep->xhosts[i].mask.s_addr),
-			astr, pstr);
+			addrport);
 	    }
 	}
     }
-    if ((u_long)sin.sin_addr.s_addr) {
-	addr2str(&sin.sin_addr, xhost, STRMAX);
-	strcat(xhost, ":");
-    } else {
-	xhost[0] = '\0';
-    }
-    i = strlen(xhost);
-    port2str(sin.sin_port, stonep->proto, proto_src, xhost+i, STRMAX-i);
+    addrport2str(&sin, sizeof(sin), stonep->proto, proto_src, xhost, STRMAX);
     if ((proto & proto_command) == command_proxy) {
 	message(LOG_INFO, "stone %d: proxy <- %s",
 		stonep->sd,
@@ -4606,13 +4612,11 @@ Stone *mkstone(
 		stonep->sd,
 		xhost);
     } else {
-	char astr[STRMAX];
-	char pstr[STRMAX];
-	addr2str(&stonep->sins->sin_addr, astr, STRMAX);
-	port2str(stonep->sins->sin_port, stonep->proto, proto_dest,
-		 pstr, STRMAX),
-	message(LOG_INFO, "stone %d: %s:%s <- %s",
-		stonep->sd, astr, pstr, xhost);
+	char addrport[STRMAX];
+	addrport2str(stonep->sins, sizeof(stonep->sins[0]),
+		     stonep->proto, proto_dest, addrport, STRMAX),
+	message(LOG_INFO, "stone %d: %s <- %s",
+		stonep->sd, addrport, xhost);
     }
     stonep->backups = NULL;
     if ((proto & proto_command) != command_proxy
