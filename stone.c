@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.181 2004/09/21 23:04:15 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.182 2004/09/22 04:05:44 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1991,16 +1991,16 @@ int doSSL_connect(Pair *pair) {
     return 1;
 }
 
-void doSSL_shutdown(Pair *pair, int how) {
+int doSSL_shutdown(Pair *pair, int how) {
     int ret;
     int err;
     SOCKET sd;
     SSL *ssl;
-    if (!pair) return;
+    if (!pair) return -1;
     sd = pair->sd;
-    if (InvalidSocket(sd)) return;
+    if (InvalidSocket(sd)) return -1;
     ssl = pair->ssl;
-    if (!ssl) return;
+    if (!ssl) return -1;
     if (how >= 0) pair->ssl_flag = (how & sf_mask);
     else pair->ssl_flag = sf_mask;
     ret = SSL_shutdown(ssl);
@@ -2010,7 +2010,7 @@ void doSSL_shutdown(Pair *pair, int how) {
 		    sd, pair->ssl_flag);
 	if ((pair->ssl_flag & sf_mask) != sf_mask)
 	    shutdown(sd, (pair->ssl_flag & sf_mask));
-	return;
+	return ret;
     }
     err = SSL_get_error(ssl, ret);
     if (err == SSL_ERROR_WANT_READ) {
@@ -2024,13 +2024,13 @@ void doSSL_shutdown(Pair *pair, int how) {
 	    errno = WSAGetLastError();
 #endif
 	    if (errno == 0) {
-		return;
-	    } else if (errno == EINTR) {
+		return ret;
+	    } else if (errno == EINTR || errno == EAGAIN) {
 		pair->ssl_flag |= (sf_sb_on_r | sf_sb_on_r);
-		if (Debug > 4)
+		if (Debug > 8)
 		    message(LOG_DEBUG, "TCP %d: SSL_shutdown "
 			    "interrupted sf=%x", sd, pair->ssl_flag);
-		return;
+		return ret;
 	    }
 	    message(priority(pair), "TCP %d: SSL_shutdown "
 		    "I/O error sf=%x errno=%d", sd, pair->ssl_flag, errno);
@@ -2038,11 +2038,12 @@ void doSSL_shutdown(Pair *pair, int how) {
 	    message(priority(pair), "TCP %d: SSL_shutdown sf=%x %s",
 		    sd, pair->ssl_flag, ERR_error_string(e, NULL));
 	}
-	return;
+	return ret;
     }
     if (Debug > 4)
 	message(LOG_DEBUG, "TCP %d: SSL_shutdown interrupted sf=%x err=%d",
 		sd, pair->ssl_flag, err);
+    return ret;
 }
 #endif	/* USE_SSL */
 
@@ -3976,6 +3977,7 @@ void asyncReadWrite(Pair *pair) {
 			if (!(wPair->proto & proto_shutdown))
 			    shutdown(wsd, 1);	/* send FIN */
 #endif
+			FD_CLR(wsd, &wi);
 			wPair->proto |= proto_shutdown;
 		    } else {
 			/*
@@ -3997,6 +3999,8 @@ void asyncReadWrite(Pair *pair) {
 			if (!(rPair->proto & proto_shutdown)) shutdown(rsd, 2);
 			if (!(wPair->proto & proto_shutdown)) shutdown(wsd, 2);
 #endif
+			FD_CLR(rsd, &wi);
+			FD_CLR(wsd, &wi);
 			setclose(rPair, (proto_eof | proto_shutdown));
 			setclose(wPair, proto_shutdown);
 		    }
@@ -4050,6 +4054,7 @@ void asyncReadWrite(Pair *pair) {
 			shutdown(rsd, 2);
 #endif
 		    }
+		    FD_CLR(rsd, &wi);
 		    setclose(rPair, proto_shutdown);
 		    if (!(wPair->proto & proto_shutdown)) {
 #ifdef USE_SSL
@@ -4131,31 +4136,34 @@ void asyncClose(Pair *pair) {
 #ifdef USE_SSL
     fd_set ro, wo;
     struct timeval tv;
+    int count = 0;
 #endif
     ASYNC_BEGIN;
     if (InvalidSocket(sd) || (pair->proto & proto_shutdown)) goto exit;
     if (Debug > 8) message(LOG_DEBUG, "asyncClose");
 #ifdef USE_SSL
-    do {
-	if (pair->ssl) doSSL_shutdown(pair, 2);
-	else {
-	    shutdown(sd, 2);
-	    break;
-	}
-	FD_ZERO(&ro);
-	FD_ZERO(&wo);
-	if (pair->ssl_flag & sf_sb_on_r) {
-	    FdSet(sd, &ro);
-	}
-	if (pair->ssl_flag & sf_sb_on_w) {
-	    FdSet(sd, &wo);
-	}
-	tv.tv_sec = 0;
-	tv.tv_usec = TICK_SELECT;
-    } while (select(FD_SETSIZE, &ro, &wo, NULL, &tv) >= 0);
-#else
-    shutdown(sd, 2);
+    if (pair->ssl) {
+	int want;
+	do {
+	    want = 0;
+	    doSSL_shutdown(pair, 2);
+	    FD_ZERO(&ro);
+	    FD_ZERO(&wo);
+	    if (pair->ssl_flag & sf_sb_on_r) {
+		FdSet(sd, &ro);
+		want = 1;
+	    }
+	    if (pair->ssl_flag & sf_sb_on_w) {
+		FdSet(sd, &wo);
+		want = 1;
+	    }
+	    tv.tv_sec = 0;
+	    tv.tv_usec = TICK_SELECT;
+	} while (want && select(FD_SETSIZE, &ro, &wo, NULL, &tv) >= 0
+		 && (count++ < (3000000 / TICK_SELECT)));  /* timeout 3 sec */
+    }
 #endif
+    shutdown(sd, 2);
  exit:
     setclose(pair, proto_shutdown);
     ASYNC_END;
