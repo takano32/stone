@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.33 2003/05/01 08:11:01 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.34 2003/05/01 13:34:13 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1342,10 +1342,13 @@ Pair *pair;
     SOCKET sd = pair->sd;
     TimeLog *log = pair->log;
     if (log) {
+	struct tm *t = localtime(&log->clock);
 	time_t now;
 	pair->log = NULL;
 	time(&now);
-	message(log->pri, "%d%s", (int)(now - log->clock), log->str);
+	message(log->pri, "%02d:%02d:%02d %d %s",
+		t->tm_hour, t->tm_min, t->tm_sec,
+		(int)(now - log->clock), log->str);
 	free(log);
     }
     if (!(pair->proto & proto_close)) {
@@ -2234,7 +2237,7 @@ int proxyCONNECT(Pair *pair, fd_set *rinp, fd_set *winp,
     int port = 443;	/* host byte order */
     char *r = parm;
     Pair *p;
-    pair->log = message_time(LOG_INFO,": CONNECT %s",parm);
+    pair->log = message_time(LOG_INFO,"CONNECT %s",parm);
     while (*r) {
 	if (isspace(*r)) {
 	    *r = '\0';
@@ -2300,12 +2303,12 @@ int proxyCommon(Pair *pair, fd_set *rinp, char *parm, int start) {
 }
 
 int proxyGET(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    pair->log = message_time(LOG_INFO,": GET %s",parm);
+    pair->log = message_time(LOG_INFO,"GET %s",parm);
     return proxyCommon(pair,rinp,parm,start);
 }
 
 int proxyPOST(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    pair->log = message_time(LOG_INFO,": POST %s",parm);
+    pair->log = message_time(LOG_INFO,"POST %s",parm);
     return proxyCommon(pair,rinp,parm,start);
 }
 
@@ -2324,7 +2327,7 @@ Comm proxyComm[] = {
 #ifdef USE_POP
 int popUSER(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     int ulen, tlen;
-    message(LOG_INFO,": USER %s",parm);
+    if (Debug) message(LOG_DEBUG,": USER %s",parm);
     ulen = strlen(parm);
     tlen = strlen(pair->p);
     if (ulen + 1 + tlen + 1 >= BUFMAX) {
@@ -2372,7 +2375,7 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     for (i=0; i < DIGEST_LEN; i++) {
 	sprintf(pair->buf + ulen + i*2, "%02x", digest[i]);
     }
-    pair->log = message_time(LOG_INFO,": POP -> %s",pair->buf);
+    pair->log = message_time(LOG_INFO,"POP -> %s",pair->buf);
     strcat(pair->buf,"\r\n");
     pair->start = 0;
     pair->len = strlen(pair->buf);
@@ -2380,19 +2383,19 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
 }
 
 int popAUTH(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    message(LOG_INFO,": AUTH %s",parm);
+    if (Debug) message(LOG_DEBUG,": AUTH %s",parm);
     commOutput(pair,winp,"-ERR authorization first\r\n");
     return -2;	/* read more */
 }
 
 int popCAPA(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    message(LOG_INFO,": CAPA %s",parm);
+    if (Debug) message(LOG_DEBUG,": CAPA %s",parm);
     commOutput(pair,winp,"-ERR authorization first\r\n");
     return -2;	/* read more */
 }
 
 int popAPOP(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    pair->log = message_time(LOG_INFO,": APOP %s",parm);
+    pair->log = message_time(LOG_INFO,"APOP %s",parm);
     pair->len += pair->start - start;
     pair->start = start;
     return 0;
