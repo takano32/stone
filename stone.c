@@ -12,7 +12,6 @@
  * Version 2.0	Nov  3, 1997	http proxy & over http
  * Version 2.1	Nov 14, 1998	respawn & pop
  * Version 2.2			Posix Thread, XferBufMax, no ALRM
- * $Id: stone.c,v 1.24 2002/10/05 16:24:13 hiroaki_sengoku Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -86,6 +85,7 @@
  * -DNT_SERVICE	  WindowsNT/2000 native service
  */
 #define VERSION	"2.1w"
+static char *id = "@(#) $Id: stone.c,v 1.25 2002/10/05 16:27:10 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
