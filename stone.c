@@ -332,7 +332,6 @@ const proto_first_r =	   0x10000;	/* first read packet */
 const proto_first_w =	   0x20000;	/* first written packet */
 const proto_connect =	  0x100000;	/* connection established */
 const proto_close =	  0x200000;	/* request to close */
-const proto_ssl_req =	  0x400000;	/* SSL read/write requested */
 const proto_ssl_intr =	  0x800000;	/* SSL accept/connect interrupted */
 const proto_ssl_s =    	 0x1000000;	/* SSL source */
 const proto_ssl_d =	 0x2000000;	/*     destination */
@@ -2549,13 +2548,6 @@ int write_flag;
     if (write_flag) {
 	return select(FD_SETSIZE,NULL,&set,NULL,&tv);
     } else {
-#ifdef USE_SSL
-	if (pair->ssl && SSL_pending(pair->ssl) > 0) {
-	    if (Debug > 8)
-		message(LOG_DEBUG,"TCP %d: data ready for read in ssl",sd);
-	    return 1;
-	}
-#endif
 	return select(FD_SETSIZE,&set,NULL,NULL,&tv);
     }
 }
@@ -2596,11 +2588,17 @@ int write_flag;
 		&& ValidSocket(wsd)
 		&& !(wPair->proto & proto_close)
 		&& !(rPair->proto & proto_close)) {
-		if (!first_flag
-		    && !(wPair->proto & proto_first_w)
-		    && waitFd(wPair,1) > 0) {
+		if (
+#ifdef USE_SSL
+		    wPair->ssl || rPair->ssl ||
+#endif
+		    (!first_flag
+		     && !(wPair->proto & proto_first_w)
+		     && waitFd(wPair,1) > 0)) {
 		    wPair->count++;
 		    if (wPair->pair) rPair->count++;
+		    if (Debug > 8)
+			message(LOG_DEBUG,"TCP %d: write ready, continue",wsd);
 		    goto write;
 		}
 		if (Debug > 8)
@@ -2636,9 +2634,15 @@ int write_flag;
 	    if (rPair && ValidSocket(rsd)
 		&& !(rPair->proto & proto_close)
 		&& !(wPair->proto & proto_close)) {
-		if (waitFd(rPair,0) > 0) {
+		if (
+#ifdef USE_SSL
+		    wPair->ssl || rPair->ssl ||
+#endif
+		    waitFd(rPair,0) > 0) {
 		    rPair->count++;
 		    if (rPair->pair) wPair->count++;
+		    if (Debug > 8)
+			message(LOG_DEBUG,"TCP %d: read ready, continue",rsd);
 		    goto read;
 		}
 		if (Debug > 8)
@@ -2647,17 +2651,6 @@ int write_flag;
 		FD_SET(rsd,&rin);
 		freeMutex(FdRinMutex);
 	    }
-#ifdef USE_SSL
-	    if (wPair->proto & proto_ssl_req) {	/* the other dir. is pending */
-		wPair->proto &= ~proto_ssl_req;
-		waitMutex(FdRinMutex);
-		FD_SET(wsd,&rin);
-		freeMutex(FdRinMutex);
-		if (Debug > 3)
-		    message(LOG_DEBUG,"TCP %d: enable the other direction %d",
-			    rsd,wsd);
-	    }
-#endif
 	} else {		/* EINTR */
 	    waitMutex(FdWinMutex);
 	    FD_SET(wsd,&win);
@@ -2714,16 +2707,6 @@ fd_set *rop, *wop, *eop;
 		isset = (FD_ISSET(sd,rop) && FD_ISSET(sd,&rin));
 		if (isset) {
 		    FD_CLR(sd,&rin);
-#ifdef USE_SSL
-		    if (p && (pair->ssl || p->ssl)) {
-			if (FD_ISSET(p->sd,&rin)) {
-			    p->proto |= proto_ssl_req;
-			    FD_CLR(p->sd,&rin);	/* suspend the other dir. */
-			    if (Debug > 3)
-				message(LOG_DEBUG,"TCP %d: suspend the other direction %d",sd,p->sd);
-			}
-		    }
-#endif
 		}
 		freeMutex(FdRinMutex);
 		if (isset) {

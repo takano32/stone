@@ -129,7 +129,7 @@ mingw.exe: stone.c
 	$(CC) $(FLAGS) -o stone.exe $? $(LIBS)
 
 mingw:
-	$(MAKE) FLAGS="-DWINDOWS $(FLAGS)" LIBS="-lwsock32 $(LIBS)" mingw.exe
+	$(MAKE) CC=gcc FLAGS="-DWINDOWS $(FLAGS)" LIBS="-lwsock32 $(LIBS)" mingw.exe
 
 mingw-pop:
 	$(MAKE) TARGET=mingw pop_stone
