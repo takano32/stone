@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.189 2004/09/24 06:51:44 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.190 2004/09/25 02:18:01 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2064,25 +2064,31 @@ int doSSL_shutdown(Pair *pair, int how) {
 	    errno = WSAGetLastError();
 #endif
 	    if (errno == 0) {
-		return 1;
+		ret = 1;	/* success ? */
 	    } else if (errno == EINTR || errno == EAGAIN) {
 		pair->ssl_flag |= (sf_sb_on_r | sf_sb_on_r);
 		if (Debug > 8)
 		    message(LOG_DEBUG, "TCP %d: SSL_shutdown "
 			    "interrupted sf=%x", sd, pair->ssl_flag);
-		return 0;
+		ret = 0;
+	    } else {
+		message(priority(pair), "TCP %d: SSL_shutdown "
+			"I/O error sf=%x errno=%d", sd, pair->ssl_flag, errno);
 	    }
-	    message(priority(pair), "TCP %d: SSL_shutdown "
-		    "I/O error sf=%x errno=%d", sd, pair->ssl_flag, errno);
 	} else {
 	    message(priority(pair), "TCP %d: SSL_shutdown sf=%x %s",
 		    sd, pair->ssl_flag, ERR_error_string(e, NULL));
 	}
-	return ret;
+    } else {
+	if (Debug > 4)
+	    message(LOG_DEBUG, "TCP %d: SSL_shutdown interrupted sf=%x err=%d",
+		    sd, pair->ssl_flag, err);
     }
-    if (Debug > 4)
-	message(LOG_DEBUG, "TCP %d: SSL_shutdown interrupted sf=%x err=%d",
-		sd, pair->ssl_flag, err);
+    /*
+      if this is the first call to us,
+      we must send FIN for buggy clients that ignore our SSL close notify.
+    */
+    if (!(pair->proto & proto_shutdown) && how > 0) shutdown(sd, 1);
     return ret;
 }
 #endif	/* USE_SSL */
@@ -2663,7 +2669,7 @@ Pair *doaccept(Stone *stonep) {
 	pair1->proto |= proto_connect;	/* src & pair1 is connected */
     /*
       SSL connection may not be established yet,
-      but we can prepare the prepare for connecting to the destination
+      but we can prepare the pair for connecting to the destination
     */
     pair2->sd = socket(AF_INET, SOCK_STREAM, 0);
     if (InvalidSocket(pair2->sd)) {
