@@ -19,8 +19,9 @@
 
 CFLAGS=		# -g
 
-SSL_FLAGS=	-DUSE_SSL -I/usr/local/ssl/include
-SSL_LIBS=	-L/usr/local/ssl/lib -lssl -lcrypto
+SSL=		/usr/local/ssl
+SSL_FLAGS=	-DUSE_SSL -I$(SSL)/include
+SSL_LIBS=	-L$(SSL)/lib -lssl -lcrypto
 
 POP_FLAGS=	-DUSE_POP
 POP_LIBS=	md5c.o
@@ -30,6 +31,7 @@ all:
 	@echo "linux     ; for Linux"
 	@echo "zaurus    ; for Linux Zaurus"
 	@echo "bsd       ; for FreeBSD or BSD/OS"
+	@echo "macosx    ; for Mac OS X"
 	@echo "sun       ; for SunOS 4.x with gcc"
 	@echo "solaris   ; for Solaris with gcc"
 	@echo "hp        ; for HP-UX with gcc"
@@ -92,6 +94,15 @@ bsd-pop:
 
 bsd-ssl:
 	$(MAKE) TARGET=bsd ssl_stone
+
+macosx:
+	$(MAKE) FLAGS="-DCPP='\"/usr/bin/cpp -traditional\"' -D_THREAD_SAFE -DPTHREAD $(FLAGS)" stone
+
+macosx-pop:
+	$(MAKE) TARGET=macosx pop_stone
+
+macosx-ssl:
+	$(MAKE) TARGET=macosx SSL=/usr ssl_stone
 
 sun:
 	$(MAKE) CC=gcc FLAGS="-DINET_ADDR -DNO_SNPRINTF -DIGN_SIGTERM -DCPP='\"/usr/lib/cpp\"' $(FLAGS)" stone
