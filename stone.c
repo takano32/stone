@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.133 2004/08/05 10:08:41 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.134 2004/08/05 10:24:19 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -535,6 +535,7 @@ int vsnprintf(char *str, size_t len, char *fmt, va_list ap) {
 	fprintf(stderr, "Buffer overrun\n");
 	exit(1);
     }
+    return ret;
 }
 #endif
 
@@ -829,11 +830,14 @@ int checkXhost(Stone *stonep, struct in_addr *addrp, char *ident) {
 void waitMutex(HANDLE h) {
     DWORD ret;
     if (h) {
-	ret = WaitForSingleObject(h, 500);	/* 0.5 sec */
+	ret = WaitForSingleObject(h, 5000);	/* 5 sec */
 	if (ret == WAIT_FAILED) {
-	    message(LOG_ERR, "Fail to wait mutex err=%d", GetLastError());
+	    message(LOG_ERR, "Fail to wait mutex err=%d, existing ...",
+		    GetLastError());
+	    exit(1);
 	} else if (ret == WAIT_TIMEOUT) {
-	    message(LOG_WARNING, "timeout to wait mutex");
+	    message(LOG_ERR, "timeout to wait mutex, existing ...");
+	    exit(1);
 	}
     }
 }
@@ -935,7 +939,7 @@ int healthCheck(struct sockaddr_in *sinp, int proto) {
     return 0;	/* fail */
 }
 
-int scanBackups(void) {
+void scanBackups(void) {
     Backup *b;
     time_t now;
     time(&now);
