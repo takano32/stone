@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.125 2004/04/04 15:59:01 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.126 2004/05/05 13:14:36 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -428,18 +428,20 @@ const proto_command =	    0x0f00;	/* command (destination only) */
 const proto_tcp	=	    0x1000;	/* transmission control protocol */
 const proto_udp =	    0x2000;	/* user datagram protocol */
 const proto_source =	    0x4000;	/* source flag */
-const proto_connect =	    0x8000;	/* connection established (pair) */
-const proto_ident =         0x8000;	/* need ident (stone) */
-const proto_first_r =	   0x10000;	/* first read packet */
-const proto_first_w =	   0x20000;	/* first written packet */
-const proto_select_r =	   0x40000;	/* select to read */
-const proto_select_w =	   0x80000;	/* select to write */
-const proto_shutdown =	  0x100000;	/* sent shutdown */
-const proto_close =	  0x200000;	/* request to close */
-const proto_eof =	  0x400000;	/* EOF */
-const proto_ssl_intr =	  0x800000;	/* SSL accept/connect interrupted */
-const proto_ssl_s =    	 0x1000000;	/* SSL source */
-const proto_ssl_d =	 0x2000000;	/*     destination */
+					/* only for Stone */
+const proto_ident =         0x8000;	  /* need ident */
+const proto_ssl_s =    	 0x1000000;	  /* SSL source */
+const proto_ssl_d =	 0x2000000;	  /*     destination */
+					/* only for Pair */
+const proto_connect =	    0x8000;	  /* connection established */
+const proto_first_r =	   0x10000;	  /* first read packet */
+const proto_first_w =	   0x20000;	  /* first written packet */
+const proto_select_r =	   0x40000;	  /* select to read */
+const proto_select_w =	   0x80000;	  /* select to write */
+const proto_shutdown =	  0x100000;	  /* sent shutdown */
+const proto_close =	  0x200000;	  /* request to close */
+const proto_eof =	  0x400000;	  /* EOF */
+const proto_ssl_intr =	  0x800000;	  /* SSL accept/connect interrupted */
 const proto_ohttp_s =	 0x4000000;	/* over http source */
 const proto_ohttp_d =	 0x8000000;	/*           destination */
 const proto_base_s =	0x10000000;	/* base64 source */
@@ -453,10 +455,10 @@ const proto_base_d =	0x20000000;	/*        destination */
 #define proto_ohttp	(proto_ohttp_s|proto_ohttp_d)
 #define proto_base	(proto_base_s|proto_base_d)
 #define proto_src	(proto_tcp|proto_udp|proto_first_r|proto_first_w|\
-			 proto_ssl_s|proto_ohttp_s|proto_base_s|\
+			 proto_ohttp_s|proto_base_s|\
 			 proto_source)
 #define proto_dest	(proto_tcp|proto_udp|proto_first_r|proto_first_w|\
-			 proto_ssl_d|proto_ohttp_d|proto_base_d|\
+			 proto_ohttp_d|proto_base_d|\
 			 proto_command)
 #define proto_all	(proto_src|proto_dest)
 
@@ -1754,7 +1756,7 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
     }
     ret = 1;
 #ifdef USE_SSL
-    if (pair->proto & proto_ssl) ret = doSSL_connect(pair);
+    if (pair->stone->proto & proto_ssl_d) ret = doSSL_connect(pair);
 #endif
     return ret;
 }
