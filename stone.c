@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.61 2003/07/22 10:42:39 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.62 2003/07/30 09:09:25 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3534,7 +3534,6 @@ FILE *openconfig(void) {
 	    execv(buf,argv);
 	}
 	close(pfd[1]);
-	wait(NULL);
 	return fdopen(pfd[0],"r");
     } else
 #endif
@@ -3578,6 +3577,11 @@ void getconfig(void) {
 	ConfigArgc++;
     } while ((len=gettoken(fp,buf)) > 0);
     fclose(fp);
+#ifdef CPP
+    if (CppCommand != NULL && *CppCommand != '\0') {
+	wait(NULL);
+    }
+#endif
 }
 
 int getdist(
