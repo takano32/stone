@@ -1,9 +1,9 @@
 
 			    Simple Repeater
 
-			   stone version 2.1w
+			   stone version 2.1x
 
-		Copyright(c)1995-2001 by Hiroaki Sengoku
+		Copyright(c)1995-2002 by Hiroaki Sengoku
 			    sengoku@gcd.org
 
 
@@ -40,7 +40,7 @@ UDP パケットを中継します。
 
 	stone [-d] [-p] [-n] [-u <max>] [-f <n>] [-a <file>] [-L <file>] [-l]
 	      [-T <n>] [-o <n>] [-g <n>] [-t <dir>] [-z <SSL>]
-	      [-C <file>] [-P <command>]
+	      [-C <file>] [-P <command>] [-i <file>]
 	      <st> [-- <st>]...
 
 	オプションとして -d を指定すると、デバッグレベルを増加させます。 
@@ -61,6 +61,8 @@ UDP パケットを中継します。
 	-C はオプションおよび <st> をコマンドラインで指定するかわりに設
 	定ファイルから読み込みます。-P は設定ファイルを読み込む際のプリ
 	プロセッサを指定します。
+
+	-i は stone のプロセス ID を出力するファイルを指定します。
 
 	<st> は次のいずれかです。<st> は「--」で区切ることにより、複数個
 	指定できます。
@@ -181,8 +183,8 @@ UDP パケットを中継します。
 	この stone に関する全ての著作権は、原著作者である仙石浩明が所有
 	します。この stone は、GNU General Public License (GPL) に準ずる
 	フリーソフトウェアです。個人的に使用する場合は、改変・複製に制限
-	はありません。また、openssl とリンクして使用することを許可します。
-	配布する場合は GPL に従って下さい。
+	はありません。配布する場合は GPL に従って下さい。また、openssl 
+	とリンクして使用することを許可します。
 
 
 無保証
