@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.68 2003/08/07 03:55:43 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.69 2003/08/20 10:26:12 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3684,6 +3684,8 @@ void sslopts_default(SSLOpts *opts, int isserver) {
     opts->caFile = opts->caPath = NULL;
     opts->cipherList = getenv("SSL_CIPHER");
     for (i=0; i < DEPTH_MAX; i++) opts->regexp[i] = NULL;
+    opts->lbmod = 0;
+    opts->lbparm = 0;
 }
 
 int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
