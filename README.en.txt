@@ -1,9 +1,9 @@
 
 			    Simple Repeater
 
-			   stone version 2.2c
+			   stone version 2.2e
 
-		Copyright(c)1995-2004 by Hiroaki Sengoku
+		Copyright(c)1995-2005 by Hiroaki Sengoku
 			    sengoku@gcd.org
 
 
@@ -20,7 +20,7 @@ from outside to inside.
 	FreeBSD, BSD/OS, SunOS, Solaris, HP-UX and so on.
 
 2.  Simple.
-	Stone's source code is only 5000 lines long (written in C
+	Stone's source code is only 6000 lines long (written in C
 	language), so you can minimize the risk of security
 	holes.
 
@@ -46,6 +46,7 @@ HOWTO USE
 	      [-s <send> <expect>... --]
 	      [-b [<var>=<val>]... <n> <master>:<port> <backup>:<port>]
 	      [-B <host>:<port> <host1>:<port1>... --]
+	      [-I <host>]
 	      [-o <n>] [-g <n>] [-t <dir>] [-D] [-c <dir>]
 	      [-q <SSL>] [-z <SSL>]
 	      <st> [-- <st>]...
@@ -97,6 +98,9 @@ HOWTO USE
 	the program chooses a destination randomly from the group.  The
 	destination <host>:<port> that is designated by ``-b'' flag and
 	turned out unhealthy, is excluded from the group.
+
+	The ``-I <host>'' designates the interface used as the source
+	address of the connection to the desctination.
 
 	If the ``-o <n>'' or ``-g <n>'' flag is used, the program set
 	its uid or gid to ``<n>'' respectively.  If the ``-t <dir>''

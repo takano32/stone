@@ -1,6 +1,6 @@
 /*
  * stone.c	simple repeater
- * Copyright(c)1995-2004 by Hiroaki Sengoku <sengoku@gcd.org>
+ * Copyright(c)1995-2005 by Hiroaki Sengoku <sengoku@gcd.org>
  * Version 1.0	Jan 28, 1995
  * Version 1.1	Jun  7, 1995
  * Version 1.2	Aug 20, 1995
@@ -80,6 +80,7 @@
  * -DNO_RINDEX	  without rindex(3)
  * -DNO_THREAD	  without thread
  * -DNO_PID_T	  without pid_t
+ * -DNO_FAMILY_T  without sa_family_t
  * -DNO_ADDRINFO  without getaddrinfo
  * -DPTHREAD      use Posix Thread
  * -DPRCTL	  use prctl(2) - operations on a process
@@ -87,9 +88,9 @@
  * -DWINDOWS	  Windows95/98/NT
  * -DNT_SERVICE	  WindowsNT/2000 native service
  */
-#define VERSION	"2.2c"
+#define VERSION	"2.2e"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 2.0 2004/11/17 14:40:59 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 2.1 2005/02/26 02:23:35 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,8 +106,7 @@ typedef void (*FuncPtr)(void*);
 #ifdef WINDOWS
 #define FD_SETSIZE	256
 #include <process.h>
-#include <winsock2.h>
-#include <winsock.h>
+#include <ws2tcpip.h>
 #include <time.h>
 #ifdef NT_SERVICE
 #include "service.h"
@@ -367,6 +367,8 @@ typedef struct _Stone {
     short port;
     short nsins;		/* # of destinations */
     struct sockaddr_in *sins;	/* destinations */
+    struct sockaddr *from_sa;
+    int from_salen;
     int proto;
     Backup **backups;
     char *p;
@@ -520,6 +522,9 @@ FILE *AccFp = NULL;
 char *AccFileName = NULL;
 char *ConfigFile = NULL;
 char *PidFile = NULL;
+struct sockaddr *From_sa = NULL;
+int From_salen = 0;
+
 int DryRun = 0;
 int ConfigArgc = 0;
 int OldConfigArgc = 0;
@@ -538,6 +543,9 @@ unsigned long SetUID = 0;
 unsigned long SetGID = 0;
 #endif
 char *CoreDumpDir = NULL;
+#ifdef NO_FAMILY_T
+typedef unsigned short sa_family_t;
+#endif
 #ifdef NO_PID_T
 typedef int pid_t;
 #endif
@@ -636,40 +644,47 @@ char *strntime(char *str, int len, time_t *clock) {
 }
 
 void message(int pri, char *fmt, ...) {
-    char str[BUFMAX];
+    char str[BUFMAX+1];
+    int pos = 0;
     va_list ap;
 #ifndef NO_SYSLOG
+    if (!Syslog)
+#endif
+    {
+	time_t clock;
+	time(&clock);
+	strntime(str+pos, BUFMAX-pos, &clock);
+	pos = strlen(str);
+    }
+    va_start(ap, fmt);
+    vsnprintf(str+pos, BUFMAX-pos, fmt, ap);
+    va_end(ap);
+#ifndef NO_SYSLOG
     if (Syslog) {
-	va_start(ap, fmt);
-	vsnprintf(str, BUFMAX, fmt, ap);
-	va_end(ap);
 	if (Syslog == 1
 	    || pri != LOG_DEBUG) syslog(pri, "%s", str);
-	if (Syslog > 1) fprintf(stdout, "%s\n", str);	/* daemontools */
-    } else {
+	if (Syslog > 1) {	/* daemontools */
+	    unsigned long thid = 0;
+#ifdef WINDOWS
+	    thid = (unsigned long)GetCurrentThreadId();
+#else
+#ifdef PTHREAD
+	    thid = (unsigned long)pthread_self();
 #endif
-	time_t clock;
-	int i;
-	time(&clock);
-	strntime(str, BUFMAX, &clock);
-	i = strlen(str);
-#ifndef NO_FORK
-	if (NForks) {
-	    snprintf(&str[i], BUFMAX-i, "[%d] ", MyPid);
-	    i = strlen(str);
+#endif
+	    if (thid) {
+		fprintf(stdout, "%lu %s\n", thid, str);
+	    } else {
+		fprintf(stdout, "%s\n", str);
+	    }
 	}
+    } else
 #endif
-	va_start(ap, fmt);
-	vsnprintf(&str[i], BUFMAX-i-2, fmt, ap);
-	va_end(ap);
 #ifdef NT_SERVICE
 	if (FALSE == bSvcDebug) AddToMessageLog(str);
 	else
 #endif
-	if (LogFp) fprintf(LogFp, "%s\n", str);
-#ifndef NO_SYSLOG
-    }
-#endif
+	    if (LogFp) fprintf(LogFp, "%s\n", str);
 }
 
 void message_time(Pair *pair, int pri, char *fmt, ...) {
@@ -705,35 +720,49 @@ int priority(Pair *pair) {
 void packet_dump(char *head, char *buf, int len) {
     char line[BUFMAX];
     int i, j, k, l;
+    int nb = 8;
     k = 0;
     for (i=0; i < len; i += j) {
-	l = 0;
-	line[l++] = ' ';
-	for (j=0; k <= j/10 && i+j < len && l < BUFMAX-10; j++) {
-	    if (' ' <= buf[i+j] && buf[i+j] <= '~')
-		line[l++] = buf[i+j];
-	    else {
-		sprintf(&line[l], "<%02x>", buf[i+j]);
-		l += strlen(&line[l]);
-		if (buf[i+j] == '\n') {
-		    k = 0;
-		    j++;
-		    break;
+	if (PacketDump <= 2) {
+	    nb = 16;
+	    l = 0;
+	    line[l++] = ' ';
+	    for (j=0; k <= j/10 && i+j < len && l < BUFMAX-10; j++) {
+		if (' ' <= buf[i+j] && buf[i+j] <= '~')
+		    line[l++] = buf[i+j];
+		else {
+		    sprintf(&line[l], "<%02x>", buf[i+j]);
+		    l += strlen(&line[l]);
+		    if (buf[i+j] == '\n') {
+			k = 0;
+			j++;
+			break;
+		    }
+		    if (buf[i+j] != '\t' && buf[i+j] != '\r'
+			&& buf[i+j] != '\033')
+			k++;
 		}
-		if (buf[i+j] != '\t' && buf[i+j] != '\r' && buf[i+j] != '\033')
-		    k++;
 	    }
 	}
-	if (k > j/10) {
+	if (k > j/10 || nb < 16) {
 	    j = l = 0;
-	    for (j=0; j < 16 && i+j < len; j++) {
-		if (' ' <= buf[i+j] && buf[i+j] <= '~')
-		    sprintf(&line[l], " %c ", buf[i+j]);
+	    for (j=0; j < nb && i+j < len; j++) {
+		if (PacketDump == 1 && (' ' <= buf[i+j] && buf[i+j] <= '~'))
+		    sprintf(&line[l], " '%c", buf[i+j]);
 		else {
 		    sprintf(&line[l], " %02x", (unsigned char)buf[i+j]);
 		    if (buf[i+j] == '\n') k = 0; else k++;
 		}
 		l += strlen(&line[l]);
+	    }
+	    if (nb < 16) {
+		while (l < (nb * 3) + 2) line[l++] = ' ';
+		for (j=0; j < nb && i+j < len; j++) {
+		    if (' ' <= buf[i+j] && buf[i+j] <= '~')
+			line[l++] = buf[i+j];
+		    else
+			line[l++] = '.';
+		}
 	    }
 	}
 	line[l] = '\0';
@@ -799,8 +828,6 @@ char *ext2str(int flag, int mask, char *str, int len) {
 
 #ifdef NO_ADDRINFO
 #define NTRY_MAX	10
-#define NI_NUMERICHOST	1
-typedef int socklen_t;
 
 char *addr2str(void *sa, socklen_t salen, char *str, int len, int flags) {
     struct hostent *ent;
@@ -948,7 +975,7 @@ int isdigitaddr(char *name) {
 }
 
 #ifdef NO_ADDRINFO
-int host2addr(char *name, struct in_addr *addrp, short *familyp) {
+int host2addr(char *name, struct in_addr *addrp, sa_family_t *familyp) {
     struct hostent *hp;
     int ntry = NTRY_MAX;
     if (isdigitaddr(name)) {
@@ -970,7 +997,7 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     return 0;
 }
 #else
-int host2addr(char *name, struct in_addr *addrp, short *familyp) {
+int host2addr(char *name, struct in_addr *addrp, sa_family_t *familyp) {
     struct addrinfo *ai = NULL;
     struct addrinfo hint;
     int err;
@@ -1281,12 +1308,10 @@ int hostPort(char *str, struct sockaddr_in *sinp, int proto) {
     for (i=0; i < STRMAX-1; i++) {
 	if (! str[i]) return 0;	/* illegal format */
 	if (str[i] == ':') {
-	    short family;
 	    host[i] = '\0';
-	    if (!host2addr(host, &sinp->sin_addr, &family)) {
+	    if (!host2addr(host, &sinp->sin_addr, &sinp->sin_family)) {
 		return 0;	/* unknown host */
 	    }
-	    sinp->sin_family = family;
 	    sinp->sin_port = htons(str2port(&str[++i], proto));
 	    return 1;	/* success */
 	}
@@ -1333,7 +1358,6 @@ int gcd(int a, int b) {
 int mkBackup(int argc, int argi, char *argv[]) {
     char *host = NULL;
     int port = -1;
-    short family;
     Backup *b = malloc(sizeof(Backup));
     argi++;
     for ( ; argi < argc; argi++) {
@@ -1370,8 +1394,7 @@ int mkBackup(int argc, int argi, char *argv[]) {
 	return argi;
     }
     b->check = b->master;
-    if (host && host2addr(host, &b->check.sin_addr, &family))
-	b->check.sin_family = family;
+    if (host) host2addr(host, &b->check.sin_addr, &b->check.sin_family);
     if (port >= 0) b->check.sin_port = htons(port);
     b->chat = healthChat;
     b->last = 0;
@@ -1977,6 +2000,11 @@ int doSSL_accept(Pair *pair) {
 		    sd, pair->ssl_flag, ERR_error_string(e, NULL));
 	}
 	return ret;
+    } else if (err == SSL_ERROR_SSL) {
+	unsigned long e = ERR_get_error();
+	message(priority(pair), "TCP %d: SSL_accept lib %s",
+		sd, ERR_error_string(e, NULL));
+	return ret;
     }
     if (Debug > 4)
 	message(LOG_DEBUG, "TCP %d: SSL_accept interrupted sf=%x err=%d",
@@ -2160,6 +2188,7 @@ void freePair(Pair *pair) {
 #ifdef USE_SSL
     ssl = pair->ssl;
     if (ssl) {
+	SSL_CTX *ctx = NULL;
 	int state;
 	pair->ssl = NULL;
 	state = SSL_get_shutdown(ssl);
@@ -2171,8 +2200,11 @@ void freePair(Pair *pair) {
 	    message(LOG_ERR, "TCP %d: SSL close notify was not sent", sd);
 	    SSL_set_shutdown(ssl, (state | SSL_SENT_SHUTDOWN));
 	}
-	CRYPTO_free_ex_data(PairIndex, ssl, &ssl->ex_data);
 	SSL_free(ssl);
+	if (pair->stone->proto & proto_ssl_s) {
+	    ctx = pair->stone->ssl_server->ctx;
+	}
+	if (ctx) SSL_CTX_flush_sessions(ctx, pair->clock);
     }
 #endif
     if (ValidSocket(sd)) closesocket(sd);
@@ -2792,6 +2824,18 @@ Pair *doaccept(Stone *stonep) {
 	freePair(pair2);
 	return NULL;
     }
+    if (stonep->from_salen > 0) {
+	if (bind(pair2->sd, (struct sockaddr*)stonep->from_sa,
+		 stonep->from_salen) < 0) {
+	    char str[STRMAX];
+#ifdef WINDOWS
+	    errno = WSAGetLastError();
+#endif
+	    message(LOG_ERR, "stone %d: can't bind %s err=%d", stonep->sd,
+		    addrport2str(stonep->from_sa, stonep->from_salen,
+				 0, 0, str, STRMAX), errno);
+	}
+    }
     pair2->pair = pair1;
     pair1->pair = pair2;
     return pair1;
@@ -3393,6 +3437,7 @@ int islocalhost(struct in_addr *addrp) {
     return ntohl(addrp->s_addr) == 0x7F000001L;
 }
 
+#ifdef ADDRCACHE
 unsigned int str2hash(char *str) {
     unsigned int hash = 0;
     while (*str) {
@@ -3438,12 +3483,19 @@ int addrcache(char *name, struct sockaddr_in *sinp) {
     freeMutex(HashMutex);
     return 1;
 }
+#endif
 
 int doproxy(Pair *pair, char *host, int port) {
     struct sockaddr_in sin;
     bzero((char *)&sin, sizeof(sin)); /* clear sin struct */
     sin.sin_port = htons((u_short)port);
+#ifdef ADDRCACHE
     if (!addrcache(host, &sin)) return -1;
+#else
+    if (!host2addr(host, &sin.sin_addr, &sin.sin_family)) {
+	return -1;
+    }
+#endif
     pair->proto &= ~proto_command;
     if (islocalhost(&sin.sin_addr)) {
 	TimeLog *log = pair->log;
@@ -4439,7 +4491,6 @@ static void freeMatch(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
     if (Debug > 4) message(LOG_DEBUG, "freeMatch %d: %lx",
 			   --NewMatchCount, match);
     free(match);
-    CRYPTO_free_ex_data(idx, parent, ad);
 }
 
 static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
@@ -4587,7 +4638,9 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 			opts->sid_ctx);
 	    }
 	}
-	SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_SERVER);
+	SSL_CTX_set_session_cache_mode(ss->ctx,
+				       (SSL_SESS_CACHE_SERVER
+					   | SSL_SESS_CACHE_NO_AUTO_CLEAR));
     }
     if (opts->keyFile
 	&& !SSL_CTX_use_PrivateKey_file
@@ -4809,7 +4862,6 @@ Stone *mkstone(
     Stone *stonep;
     struct sockaddr_in sin;
     char xhost[STRMAX], *p;
-    short family;
     int allow;
     int i;
     stonep = calloc(1, sizeof(Stone)+sizeof(XHost)*nhosts);
@@ -4825,10 +4877,9 @@ Stone *mkstone(
     sin.sin_family = AF_INET;
     sin.sin_port = htons((u_short)port);/* convert to network byte order */
     if (host) {
-	if (!host2addr(host, &sin.sin_addr, &family)) {
+	if (!host2addr(host, &sin.sin_addr, &sin.sin_family)) {
 	    exit(1);
 	}
-	sin.sin_family = family;
     }
     if ((proto & proto_command) == command_proxy
 	|| (proto & proto_command) == command_health) {
@@ -4837,10 +4888,9 @@ Stone *mkstone(
     } else {
 	struct sockaddr_in dsin;
 	LBSet *lbset;
-	if (!host2addr(dhost, &dsin.sin_addr, &family)) {
+	if (!host2addr(dhost, &dsin.sin_addr, &dsin.sin_family)) {
 	    exit(1);
 	}
-	dsin.sin_family = family;
 	dsin.sin_port = htons((u_short)dport);
 	lbset = findLBSet(&dsin, proto);
 	if (lbset) {
@@ -4857,6 +4907,8 @@ Stone *mkstone(
 	}
     }
     stonep->proto = proto;
+    stonep->from_sa = From_sa;
+    stonep->from_salen = From_salen;
     if (!reusestone(stonep)) {	/* recycle stone */
 	if (proto & proto_udp) {
 	    stonep->sd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);/* UDP */
@@ -5067,6 +5119,7 @@ void help(char *com) {
 	    "                        ; use <backup>:<port>, if check failed\n"
 	    "      -B <host>:<port>... --\n"
 	    "                        ; load balancing hosts\n"
+	    "      -I <host>         ; local end of its connections to\n"
 #ifndef NO_SETUID
 	    "      -o <n>            ; set uid to <n>\n"
 	    "      -g <n>            ; set gid to <n>\n"
@@ -5233,9 +5286,9 @@ static int gettoken(FILE *fp, char *buf) {
 }
 
 FILE *openconfig(void) {
+#ifdef CPP
     int pfd[2];
     char host[MAXHOSTNAMELEN];
-#ifdef CPP
     if (CppCommand != NULL && *CppCommand != '\0') {
 	if (gethostname(host, MAXHOSTNAMELEN-1) < 0) {
 	    message(LOG_ERR, "gethostname err=%d", errno);
@@ -5532,6 +5585,7 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
     return i;
 }
 
+#ifndef NO_THREAD
 /* SSL callback */
 unsigned long sslthread_id_callback(void) {
     unsigned long ret;
@@ -5588,10 +5642,15 @@ int sslthread_initialize(void) {
 #endif
 #endif
     }
+#if defined(WINDOWS) || defined(PTHREAD)
     CRYPTO_set_id_callback(sslthread_id_callback);
     CRYPTO_set_locking_callback(sslthread_lock_callback);
     return 1;
+#else
+    return 0;
+#endif
 }
+#endif
 #endif
 
 int dohyphen(char opt, int argc, char *argv[], int argi) {
@@ -5600,7 +5659,7 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
 	Debug++;
 	break;
     case 'p':
-	PacketDump = 1;
+	PacketDump++;
 	break;
 #ifndef NO_SYSLOG
     case 'l':
@@ -5698,6 +5757,27 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
 	break;
     case 'B':
 	argi = lbsopts(argc, argi, argv);
+	break;
+    case 'I':
+	++argi;
+	if (!argv[argi]) {
+	    From_sa = NULL;
+	    From_salen = 0;
+	} else {
+	    From_salen = sizeof(struct sockaddr_in);
+	    From_sa = malloc(From_salen);
+	    if (From_sa) {
+		if (!host2addr(argv[argi],
+			       &((struct sockaddr_in*)From_sa)->sin_addr,
+			       &((struct sockaddr_in*)From_sa)->sin_family)) {
+		    return -1;
+		}
+	    } else {
+		From_salen = 0;
+		message(LOG_CRIT, "Out of memory");
+		exit(1);
+	    }
+	}
 	break;
 #ifdef USE_SSL
     case 'q':
@@ -6191,10 +6271,12 @@ void initialize(int argc, char *argv[]) {
 	message(LOG_ERR, "Can't create Mutex err=%d", j);
     }
 #endif
+#ifndef NO_THREAD
 #ifdef USE_SSL
     if (sslthread_initialize() < 0) {
 	message(LOG_ERR, "Fail to initialize SSL callback");
     }
+#endif
 #endif
 #ifndef NO_CHROOT
     if (RootDir) {

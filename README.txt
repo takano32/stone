@@ -1,9 +1,9 @@
 
 			    Simple Repeater
 
-			   stone version 2.2c
+			   stone version 2.2e
 
-		Copyright(c)1995-2004 by Hiroaki Sengoku
+		Copyright(c)1995-2005 by Hiroaki Sengoku
 			    sengoku@gcd.org
 
 
@@ -21,7 +21,7 @@ UDP パケットを中継します。
 	UNIX マシンでも使うことができます。
 
 2. 単純
-	わずか 5000 行 (C 言語) ですので、セキュリティホールが生じる可能
+	わずか 6000 行 (C 言語) ですので、セキュリティホールが生じる可能
 	性を最小限にできます。
 
 3. SSL 対応
@@ -46,6 +46,7 @@ UDP パケットを中継します。
 	      [-s <send> <expect>... --]
 	      [-b [<var>=<val>]... <n> <master>:<port> <backup>:<port>]
 	      [-B <host>:<port> <host1>:<port1>... --]
+	      [-I <host>]
 	      [-o <n>] [-g <n>] [-t <dir>] [-D] [-c <dir>]
 	      [-q <SSL>] [-z <SSL>]
 	      <st> [-- <st>]...
@@ -92,6 +93,8 @@ UDP パケットを中継します。
 	このグループの中からランダムに一つの中継先を選んで中継します。-b 
 	オプションで設定済みの中継先で、ヘルスチェックに失敗したものは、
 	選択枝から除外します。
+
+	-I は中継先へ接続する際に用いるインタフェースを指定します。
 
 	-o と -g はそれぞれユーザ ID とグループ ID を指定します。ID は数
 	字のみ指定可能です。-t を指定すると、dir へ chroot します。-D を
