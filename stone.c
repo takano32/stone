@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2a"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.110 2003/11/23 15:38:04 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.111 2003/11/23 16:03:32 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -109,8 +109,6 @@ typedef void (*FuncPtr)(void*);
 #include "service.h"
 #include "svcbody.h"
 #endif
-#define NO_SNPRINTF
-#define NO_VSNPRINTF
 #define NO_SYSLOG
 #define NO_FORK
 #define NO_SETHOSTENT
@@ -122,6 +120,7 @@ typedef void (*FuncPtr)(void*);
 #define EINTR	WSAEINTR
 #define NO_BCOPY
 #define bzero(b,n)	memset(b,0,n)
+#define	usleep(usec)	sleep(1)
 #define ASYNC(func,arg)	\
     waitMutex(AsyncMutex);\
     if (Debug > 7) message(LOG_DEBUG,"ASYNC: %d",AsyncCount);\
