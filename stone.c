@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.124 2004/04/01 09:13:53 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.125 2004/04/04 15:59:01 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -4203,7 +4203,7 @@ void help(char *com) {
 #ifdef USE_SSL
 	    " | /ssl"
 #endif
-	    " | /http | /base]\n"
+	    " | /http | /base | /ident]\n"
 	    "xhost: <host>[/<mask>]\n"
 #ifdef USE_SSL
 	    "SSL:   default          ; reset to default\n"
