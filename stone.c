@@ -72,25 +72,24 @@
  * -DUSE_POP	  use POP -> APOP conversion
  * -DUSE_SSL	  use OpenSSL
  * -DCPP	  preprocessor for reading config. file
- * -DH_ERRNO	  h_errno is not defined in header files
  * -DIGN_SIGTERM  ignore SIGTERM signal
- * -DINET_ADDR	  use custom inet_addr(3)
+ * -DUNIX_DAEMON  fork into background and become a UNIX Daemon
  * -DNO_BCOPY	  without bcopy(3)
  * -DNO_SNPRINTF  without snprintf(3)
  * -DNO_SYSLOG	  without syslog(2)
- * -DRINDEX	  without rindex(3)
+ * -DNO_RINDEX	  without rindex(3)
  * -DNO_THREAD	  without thread
  * -DNO_PID_T	  without pid_t
+ * -DNO_ADDRINFO  without getaddrinfo
  * -DPTHREAD      use Posix Thread
+ * -DPRCTL	  use prctl(2) - operations on a process
  * -DOS2	  OS/2 with EMX
  * -DWINDOWS	  Windows95/98/NT
  * -DNT_SERVICE	  WindowsNT/2000 native service
- * -DUNIX_DAEMON  fork into background and become a UNIX Daemon
- * -DPRCTL	  with prctl(2) - operations on a process
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.166 2004/09/13 08:08:10 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.167 2004/09/15 06:41:06 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,6 +99,7 @@ static char *CVS_ID =
 #include <ctype.h>
 #include <stdarg.h>
 #include <signal.h>
+#include <regex.h>
 typedef void (*FuncPtr)(void*);
 
 #ifdef WINDOWS
@@ -113,7 +113,6 @@ typedef void (*FuncPtr)(void*);
 #endif
 #define NO_SYSLOG
 #define NO_FORK
-#define NO_SETHOSTENT
 #define NO_SETUID
 #define NO_CHROOT
 #define ValidSocket(sd)		((sd) != INVALID_SOCKET)
@@ -243,7 +242,6 @@ int FdSetBug = 0;
 #define XPORT		6000
 #define BUFMAX		2048
 #define STRMAX		30	/* > 16 */
-#define NTRY_MAX	10
 #define CONN_TIMEOUT	60	/* 1 min */
 #define	LB_MAX		100
 
@@ -262,7 +260,6 @@ int FdSetBug = 0;
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
-#include <regex.h>
 
 #define NMATCH_MAX	9	/* \1 ... \9 */
 #define DEPTH_MAX	10
@@ -444,9 +441,6 @@ int OriginMax = 10;
 fd_set rin, win, ein;
 int PairTimeOut = 10 * 60;	/* 10 min */
 int AsyncCount = 0;
-#ifdef H_ERRNO
-extern int h_errno;
-#endif
 
 const state_mask =	    0x00ff;
 const proto_command =	    0x0f00;	/* command (destination only) */
@@ -733,6 +727,8 @@ char *addr2ip(struct in_addr *addr, char *str, int len) {
     return str;
 }
 
+#ifdef NO_ADDRINFO
+#define NTRY_MAX	10
 char *addr2str(struct in_addr *addr, char *str, int len) {
     struct hostent *ent;
     int ntry = NTRY_MAX;
@@ -741,9 +737,6 @@ char *addr2str(struct in_addr *addr, char *str, int len) {
     addr2ip(addr, str, len);
     if (!AddrFlag) {
 	do {
-#ifndef NO_SETHOSTENT
-	    sethostent(0);
-#endif
 	    ent = gethostbyaddr((char*)&addr->s_addr,
 				sizeof(addr->s_addr), AF_INET);
 	    if (ent) {
@@ -755,6 +748,25 @@ char *addr2str(struct in_addr *addr, char *str, int len) {
     }
     return str;
 }
+#else
+char *addr2str(struct in_addr *addr, char *str, int len) {
+    struct sockaddr_in sin;
+    int flags = 0;
+    int err;
+    sin.sin_addr = *addr;
+    sin.sin_port = 0;
+    sin.sin_family = AF_INET;
+    if (AddrFlag) flags = NI_NUMERICHOST;
+    err = getnameinfo((struct sockaddr*)&sin, sizeof(sin),
+		      str, len, NULL, 0, flags);
+    if (err) {
+	addr2ip(addr, str, len);
+	message(LOG_ERR, "Unknown address err=%d errno=%d: %s",
+		err, errno, str);
+    }
+    return str;
+}
+#endif
 
 char *port2str(int port, int flag, int mask,	/* network byte order */
 	       char *str, int len) {
@@ -865,24 +877,7 @@ int isdigitaddr(char *name) {
     return ndigits;
 }
 
-#ifdef INET_ADDR
-unsigned long inet_addr(char *name) {	/* inet_addr(3) is too tolerant */
-    unsigned long ret;
-    int d[4];
-    int i;
-    char c;
-    if (sscanf(name, "%d.%d.%d.%d%c", &d[0], &d[1], &d[2], &d[3], &c) != 4)
-	return -1;
-    ret = 0;
-    for (i=0; i < 4; i++) {
-	if (d[i] < 0 || 255 < d[i]) return -1;
-	ret <<= 8;
-	ret |= d[i];
-    }
-    return htonl(ret);
-}
-#endif
-
+#ifdef NO_ADDRINFO
 int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     struct hostent *hp;
     int ntry = NTRY_MAX;
@@ -893,9 +888,6 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
 	}
     } else {
 	do {
-#ifndef NO_SETHOSTENT
-	    sethostent(0);
-#endif
 	    hp = gethostbyname(name);
 	    if (hp) {
 		bcopy(hp->h_addr, (char *)addrp, hp->h_length);
@@ -907,6 +899,38 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     message(LOG_ERR, "Unknown host err=%d: %s", h_errno, name);
     return 0;
 }
+#else
+int host2addr(char *name, struct in_addr *addrp, short *familyp) {
+    struct addrinfo *ai = NULL;
+    struct addrinfo hint;
+    int err;
+    hint.ai_flags = 0;
+    hint.ai_family = AF_INET;
+    hint.ai_socktype = 0;
+    hint.ai_protocol = 0;
+    hint.ai_addrlen = 0;
+    hint.ai_addr = NULL;
+    hint.ai_canonname = NULL;
+    hint.ai_next = NULL;
+    err = getaddrinfo(name, NULL, &hint, &ai);
+    if (err != 0) {
+	message(LOG_ERR, "getaddrinfo for %s failed err=%d errno=%d",
+		name, err, errno);
+    fail:
+	if (ai) freeaddrinfo(ai);
+	return 0;
+    }
+    if (ai->ai_addrlen != sizeof(struct sockaddr_in)) {
+	message(LOG_ERR, "getaddrinfo for %s returns unknown addr size=%d",
+		name, ai->ai_addrlen);
+	goto fail;
+    }
+    *addrp = ((struct sockaddr_in*)ai->ai_addr)->sin_addr;
+    *familyp = ai->ai_family;
+    freeaddrinfo(ai);
+    return 1;
+}
+#endif
 
 /* *addrp is permitted to connect to *stonep ? */
 int checkXhost(Stone *stonep, struct in_addr *addrp, char *ident) {
@@ -1039,7 +1063,10 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
     if (ret < 0) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
-#endif
+	message(LOG_ERR, "health check: connect %s:%s err=%d",
+		addr, port, errno);
+	goto fail;
+#else
 	if (errno == EINPROGRESS) {
 	    fd_set wout;
 	    struct timeval tv;
@@ -1056,6 +1083,7 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 		    addr, port, errno);
 	    goto fail;
 	}
+#endif
     }
     time(&now);
     if (now - start >= timeout) goto timeout;
@@ -2197,7 +2225,7 @@ void asyncConn(Conn *conn) {
     if (ret > 0) {
 	SSL *ssl = p2->ssl;
 	SSL_SESSION *sess;
-	if (ssl && (sess = SSL_get_session(ssl))) {
+	if (ssl && (sess = SSL_get1_session(ssl))) {
 	    char **match;
 	    if (Debug > 2) {
 		unsigned char str[SSL_MAX_SSL_SESSION_ID_LENGTH * 2 + 1];
@@ -2230,6 +2258,7 @@ void asyncConn(Conn *conn) {
 		    }
 		}
 	    }
+	    SSL_SESSION_free(sess);
 	}
 #endif
 	/* successfully accepted */
@@ -2249,8 +2278,7 @@ void asyncConn(Conn *conn) {
 	char port[STRMAX];
 	if (clock - p1->clock < CONN_TIMEOUT) {
 	    conn->lock = 0;	/* unlock conn */
-	    ASYNC_END;
-	    return;
+	    goto exit;
 	}
 	addr2str(&conn->sin.sin_addr, addr, STRMAX);
 	port2str(conn->sin.sin_port, p1->proto, proto_all, port, STRMAX);
@@ -2321,6 +2349,7 @@ void asyncConn(Conn *conn) {
     if (p1) p1->count -= REF_UNIT;	/* no more request to connect */
     conn->pair = NULL;
     conn->lock = -1;
+ exit:
     ASYNC_END;
 }
 
@@ -2614,6 +2643,7 @@ int strnparse(char *buf, int limit, char **pp, Pair *pair, char term) {
 #ifdef USE_SSL
     char **match = NULL;
     SSL *ssl = pair->ssl;
+    SSL_SESSION *sess = NULL;
     int cond;
 #endif
     p = *pp;
@@ -2629,10 +2659,11 @@ int strnparse(char *buf, int limit, char **pp, Pair *pair, char term) {
 	    }
 	    if ('0' <= c && c <= '9') {
 		if (ssl && !match) {
-		    SSL_SESSION *sess = SSL_get_session(ssl);
+		    sess = SSL_get1_session(ssl);
 		    if (sess)
 			match = SSL_SESSION_get_ex_data(sess, MatchIndex);
 		    if (!match) ssl = NULL;
+		    /* now (match || ssl == NULL) holds */
 		}
 		if (match) {
 		    c -= '0';
@@ -2680,6 +2711,9 @@ int strnparse(char *buf, int limit, char **pp, Pair *pair, char term) {
 	}
 	if (buf) buf[i++] = c;
     }
+#ifdef USE_SSL
+    if (sess) SSL_SESSION_free(sess);
+#endif
     if (buf) buf[i] = '\0';
     *pp = p;
     return i;
@@ -2690,10 +2724,7 @@ void asyncAccept(Stone *stone) {
     ASYNC_BEGIN;
     if (Debug > 8) message(LOG_DEBUG, "asyncAccept...");
     p1 = doaccept(stone);
-    if (p1 == NULL) {
-	ASYNC_END;
-	return;
-    }
+    if (p1 == NULL) goto exit;
     p2 = p1->pair;
     p1->next = p2;	/* link pair each other */
     p2->prev = p1;
@@ -2710,8 +2741,7 @@ void asyncAccept(Stone *stone) {
     if (reqconn(p2, NULL, &stone->sins[0]) < 0) {	/* 0 is default */
 	freePair(p2);
 	freePair(p1);
-	ASYNC_END;
-	return;
+	goto exit;
     }
     waitMutex(PairMutex);
     p2->next = pairs.next;	/* insert pair */
@@ -2723,6 +2753,7 @@ void asyncAccept(Stone *stone) {
 	message(LOG_DEBUG, "TCP %d: pair %d inserted", p1->sd, p2->sd);
 	message_pair(p1);
     }
+ exit:
     ASYNC_END;
 }
 
@@ -4744,7 +4775,9 @@ void help(char *com) {
 	    "       no_ssl3          ; turn off SSLv3\n"
 	    "       no_ssl2          ; turn off SSLv2\n"
 	    "       bugs             ; SSL implementation bug workarounds\n"
+#ifdef SSL_OP_CIPHER_SERVER_PREFERENCE
 	    "       serverpref       ; use server's cipher preferences (SSLv2)\n"
+#endif
 	    "       sid_ctx=<str>    ; set session ID context\n"
 	    "       key=<file>       ; key file\n"
 	    "       cert=<file>      ; certificate file\n"
@@ -5129,8 +5162,10 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	opts->off |= SSL_OP_NO_SSLv3;
     } else if (!strcmp(argv[i], "no_ssl2")) {
 	opts->off |= SSL_OP_NO_SSLv2;
+#ifdef SSL_OP_CIPHER_SERVER_PREFERENCE
     } else if (!strcmp(argv[i], "serverpref")) {
 	opts->off |= SSL_OP_CIPHER_SERVER_PREFERENCE;
+#endif
     } else if (!strcmp(argv[i], "uniq")) {
 	opts->serial = -1;
     } else if (!strncmp(argv[i], "sid_ctx=", 8)) {
