@@ -1,9 +1,9 @@
 
 			    Simple Repeater
 
-			   stone version 2.1x
+			   stone version 2.2
 
-		Copyright(c)1995-2002 by Hiroaki Sengoku
+		Copyright(c)1995-2003 by Hiroaki Sengoku
 			    sengoku@gcd.org
 
 
@@ -26,7 +26,9 @@ from outside to inside.
 
 3.  Stone supports SSL.
 	Using OpenSSL (http://www.openssl.org/), stone can
-	encrypt/decrypt packets.
+	encrypt/decrypt packets.  Client verifications, and server
+	verifications are also supported.  Stone can send a substring of
+	the subject of the certificate to the destination.
 
 4.  Stone is a http proxy.
 	Stone can also be a tiny http proxy.
@@ -38,38 +40,70 @@ from outside to inside.
 
 HOWTO USE
 
-	stone [-d] [-p] [-n] [-u <max>] [-f <n>] [-a <file>] [-L <file>] [-l]
-	      [-T <n>] [-o <n>] [-g <n>] [-t <dir>] [-z <SSL>]
-	      [-C <file>] [-P <command>] [-i <file>]
+	stone [-C <file>] [-P <command>] [-Q <options>] [-d] [-p] [-n]
+	      [-u <max>] [-f <n>] [-l] [-L <file>] [-a <file>] [-i <file>]
+	      [-X <n>] [-T <n>] [-o <n>] [-g <n>] [-t <dir>]
+	      [-q <SSL>] [-z <SSL>] [-D]
 	      <st> [-- <st>]...
-
-	If the ``-d'' flag is used, then increase the debug level.  If
-	the ``-p'' flag is used, data repeated by stone are dumped.  The
-	``-z'' is the flag for SSL encryption.  If the ``-n'' is used,
-	IP addresses and service port numbers are shown instead of host
-	names and service names.  If the ``-u <max>'' flag (``<max>'' is
-	integer) is used, the program memorize ``<max>'' sources
-	simultaneously where UDP packets are sent.  If the ``-f <n>''
-	flag (``<n>'' is integer) is used, the program spawn ``<n>''
-	child processes.  If the ``-a <file>'' flag (``<file>'' is a
-	file name) is used, the program writes accounting to the file.
-	If the ``-L <file>'' flag is used, the program writes error
-	messages to the file.  If the ``-l'' flag is used, the program
-	sends error messages to the syslog instead of stderr.
-
-	If the ``-T <n>'' flag is used, the timeout of TCP sessions is
-	set to ``<n>'' sec.  If the ``-o <n>'' or ``-g <n>'' flag is
-	used, the program set its uid or gid to ``<n>'' respectively.
-	If the ``-t <dir>'' flag (``<dir>'' is a directory) is used, the
-	program change its root to the directory.
 
 	If the ``-C <file>'' flag is used, the program read these
 	options and ``<st>''s from the configuration file ``<file>''.
 	If the ``-P <command>'' flag is used, the program executes
-	pre-processor to read the configuration file.
+	pre-processor to read the configuration file.  ``-Q <options>''
+	can be used to pass options to the pre-processor.
 
-	If the ``-i <file>'' flag is used, the program write its process
-	ID to the designated file.
+	If the ``-d'' flag is used, then increase the debug level.  If
+	the ``-p'' flag is used, data repeated by stone are dumped.  If
+	the ``-n'' is used, IP addresses and service port numbers are
+	shown instead of host names and service names.
+
+	If the ``-u <max>'' flag (``<max>'' is integer) is used, the
+	program memorize ``<max>'' sources simultaneously where UDP
+	packets are sent.  If the ``-f <n>'' flag (``<n>'' is integer)
+	is used, the program spawn ``<n>'' child processes.
+
+	If the ``-l'' flag is used, the program sends error messages to
+	the syslog instead of stderr.  If the ``-L <file>'' (``<file>''
+	is a file name) flag is used, the program writes error messages
+	to the file.  If the ``-a <file>'' flag is used, the program
+	writes accounting to the file.  If the ``-i <file>'' flag is
+	used, the program writes its process ID to the file.
+
+	The ``-X <n>'' flag alters the buffer size of the repeater.  If
+	the ``-T <n>'' is used, the timeout of TCP sessions can be
+	specified to ``<n>'' sec.
+
+	If the ``-o <n>'' or ``-g <n>'' flag is used, the program set
+	its uid or gid to ``<n>'' respectively.  If the ``-t <dir>''
+	flag (``<dir>'' is a directory) is used, the program change its
+	root to the directory.
+
+	The ``-q <SSL>'' and the ``-z <SSL>'' flags are for SSL
+	encryption.  The ``-q <SSL>'' is for the client mode, that is,
+	when stone connects to the other SSL server as a SSL client.
+	The ``-z <SSL>'' if for the server mode, that is, when other SSL
+	clients connect to the stone.
+
+	``<SSL>'' is one of the following.
+
+	default		reset SSL options to the default.
+			Using multiple <st>, different SSL options can
+			be designated for each <st>.
+	verbose		verbose mode.
+	verify		require SSL certificate to the peer.
+	re<n>=<regex>	designate a regular expression <regex>.
+			The certificate of the peer must satisfy the
+			regex.  <n> is the depth.  re0 means the subject
+			of the certificate, and re1 means the issure.
+			The maximum of <n> is 9.
+	depth=<n>	The maximum of the certificate chain.
+			If the peer's certificate exceeds <n>, the
+			verification fails.  The maximum of <n> is 9.
+	key=<file>	The filename of the secret key of the certificate.
+	cert=<file>	The filename of the certificate.
+	CAfile=<file>	The filename of the certificate of the CA.
+	CApath=<dir>	The directory of the certificate files.
+	cipher=<list>	The list of ciphers.
 
 	``<st>'' is one of the following.  Multiple ``<st>'' can be
 	designated, separated by ``--''.
@@ -96,10 +130,18 @@ HOWTO USE
 	your WWW browser.
 
 	Type (5) repeats packets over http request.  ``<request>'' is
-	the request specified in HTTP 1.0.
+	the request specified in HTTP 1.0.  In the ``<request>'', ``\''
+	is the escape character, and the following substitution occurs.
+
+		\n	newline  (0x0A)
+		\r	return   (0x0D)
+		\t	tab      (0x09)
+		\\	\ itself (0x5C)
+		\a	the IP address of the client connecting to the stone.
+		\1 - \9	the matched string in the ``regex'' of SSL options.
 
 	Type (6) repeats http request with ``<header>'' in the top of
-	request headers.
+	request headers.  The above escapes can be also used.
 
 	If the ``<xhost>'' are used, only machines ``<xhost>'' can
 	connect to the program.

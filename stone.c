@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.51 2003/05/09 15:54:10 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.52 2003/05/10 03:55:27 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2449,7 +2449,8 @@ int insheader(Pair *pair) {	/* insert header */
     pair->buf[i++] = '\r';
     pair->buf[i++] = '\n';
     if (Debug > 5) {
-	message(LOG_DEBUG,"TCP %d: insheader %d, %d, %d, %d",
+	message(LOG_DEBUG,
+		"TCP %d: insheader start=%d, ins=%d, rest=%d, max=%d",
 		pair->sd, pair->start, i-pair->start, len, pair->bufmax);
     }
     if (len > 0) bcopy(buf, &pair->buf[i], len);	/* restore */
