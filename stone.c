@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.87 2003/10/23 10:45:12 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.88 2003/10/23 11:43:57 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1036,10 +1036,10 @@ void message_origin(Origin *origin) {
     stone = origin->stone;
     if (stone) sd = stone->sd;
     else sd = INVALID_SOCKET;
-    message(LOG_INFO,"UDP%3d:%3d %s%s:%s",
-	    origin->sd,sd,str,
+    message(LOG_INFO, "UDP%3d:%3d %s%s:%s",
+	    origin->sd, sd, str,
 	    addr2str(&origin->sin.sin_addr),
-	    port2str(origin->sin.sin_port,proto_udp,proto_all));
+	    port2str(origin->sin.sin_port, proto_udp, proto_all));
 }
 
 /* enlarge packet buffer */
@@ -1051,8 +1051,8 @@ static void enlarge_buf(SOCKET sd) {
 	pkt_buf = buf;
 	pkt_len_max = (pkt_len_max << 1);
 	free(old);
-	message(LOG_INFO,"UDP %d: Packet buffer is enlarged: %d bytes",
-		sd,pkt_len_max);
+	message(LOG_INFO, "UDP %d: Packet buffer is enlarged: %d bytes",
+		sd, pkt_len_max);
     }
 }
 
@@ -1351,11 +1351,11 @@ void message_pair(Pair *pair) {
     if (p) psd = p->sd;
     else psd = INVALID_SOCKET;
     if (p && p->p) {
-	message(LOG_INFO,"TCP%3d:%3d %08x %d %s %s",
-		sd,psd,pair->proto,pair->count,str,p->p);
+	message(LOG_INFO, "TCP%3d:%3d %08x %d %s %s",
+		sd, psd, pair->proto, pair->count, str, p->p);
     } else {
-	message(LOG_INFO,"TCP%3d:%3d %08x %d %s",
-		sd,psd,pair->proto,pair->count,str);
+	message(LOG_INFO, "TCP%3d:%3d %08x %d %s",
+		sd, psd, pair->proto, pair->count, str);
     }
 }
 
@@ -1364,16 +1364,16 @@ static void printSSLinfo(SSL *ssl) {
     X509 *peer;
     char *p = (char *)SSL_get_cipher(ssl);
     if (p == NULL) p = "<NULL>";
-    message(LOG_INFO,"[SSL cipher=%s]",p);
+    message(LOG_INFO, "[SSL cipher=%s]", p);
     peer = SSL_get_peer_certificate(ssl);
     if (peer) {
 	ASN1_INTEGER *n = X509_get_serialNumber(peer);
-	if (n) message(LOG_INFO,"[SSL serial=%lx]",ASN1_INTEGER_get(n));
+	if (n) message(LOG_INFO, "[SSL serial=%lx]", ASN1_INTEGER_get(n));
 	p = X509_NAME_oneline(X509_get_subject_name(peer),NULL,0);
-	if (p) message(LOG_INFO,"[SSL subject=%s]",p);
+	if (p) message(LOG_INFO, "[SSL subject=%s]", p);
 	free(p);
 	p = X509_NAME_oneline(X509_get_issuer_name(peer),NULL,0);
-	if (p) message(LOG_INFO,"[SSL issuer=%s]",p);
+	if (p) message(LOG_INFO, "[SSL issuer=%s]", p);
 	free(p);
 	X509_free(peer);
     }
@@ -1412,17 +1412,17 @@ int trySSL_accept(Pair *pair) {
 		|| err == SSL_ERROR_WANT_READ
 		|| err == SSL_ERROR_WANT_WRITE) {
 	    if (Debug > 4)
-		message(LOG_DEBUG,"TCP %d: SSL_accept interrupted WANT=%d",
-			pair->sd,err);
+		message(LOG_DEBUG, "TCP %d: SSL_accept interrupted WANT=%d",
+			pair->sd, err);
 	    pair->proto |= proto_ssl_intr;
 	    return 0;	/* EINTR */
 	} else if (err) {
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
-	    message(LOG_ERR,"TCP %d: SSL_accept error err=%d",pair->sd,err);
+	    message(LOG_ERR, "TCP %d: SSL_accept error err=%d", pair->sd, err);
 	    if (pair->stone->ssl_server->verbose)
-		message(LOG_INFO,"TCP %d: %s",
-			pair->sd,ERR_error_string(err,NULL));
+		message(LOG_INFO, "TCP %d: %s",
+			pair->sd, ERR_error_string(err, NULL));
 	    message_pair(pair);
 	    SSL_free(ssl);
 	    rmMatch(pair);
@@ -1480,8 +1480,8 @@ int doSSL_connect(Pair *pair) {
 	    pair->ssl = NULL;
 	    message(LOG_ERR,"TCP %d: SSL_connect error err=%d",pair->sd,err);
 	    if (pair->stone->ssl_client->verbose)
-		message(LOG_INFO,"TCP %d: %s",
-			pair->sd,ERR_error_string(err,NULL));
+		message(LOG_INFO, "TCP %d: %s",
+			pair->sd, ERR_error_string(err, NULL));
 	    message_pair(pair);
 	    SSL_free(ssl);
 	    rmMatch(pair);
@@ -1554,7 +1554,7 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
 #endif
 		) {
 		if (Debug > 4) {	/* SunOS's bug ? */
-		    message(LOG_INFO,"TCP %d: connect bug err=%d",
+		    message(LOG_DEBUG, "TCP %d: connect bug err=%d",
 			    pair->sd,errno);
 		    message_pair(pair);
 		}
@@ -1600,7 +1600,7 @@ void message_conn(Conn *conn) {
     i = strlen(str);
     if (i >= BUFMAX) i = BUFMAX-1;
     str[i] = '\0';
-    message(LOG_INFO,"Conn %d: %08x %s",sd,proto,str);
+    message(LOG_INFO, "Conn %d: %08x %s", sd, proto, str);
 }
 
 int reqconn(Pair *pair,		/* request pair to connect to destination */
@@ -1846,7 +1846,7 @@ Pair *doaccept(Stone *stonep) {
 		ntohs(from.sin_port));
     }
     if (Debug > 1) {
-	message(LOG_INFO,"stone %d: accepted TCP %d from %s:%s",
+	message(LOG_DEBUG,"stone %d: accepted TCP %d from %s:%s",
 		stonep->sd,
 		nsd,
 		addr2str(&from.sin_addr),
@@ -2475,7 +2475,7 @@ int proxyCONNECT(Pair *pair, fd_set *rinp, fd_set *winp,
     int port = 443;	/* host byte order */
     char *r = parm;
     Pair *p;
-    pair->log = message_time(LOG_INFO,"CONNECT %s",parm);
+    pair->log = message_time(LOG_INFO, "CONNECT %s", parm);
     while (*r) {
 	if (isspace(*r)) {
 	    *r = '\0';
@@ -2541,12 +2541,12 @@ int proxyCommon(Pair *pair, fd_set *rinp, char *parm, int start) {
 }
 
 int proxyGET(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    pair->log = message_time(LOG_INFO,"GET %s",parm);
+    pair->log = message_time(LOG_INFO, "GET %s", parm);
     return proxyCommon(pair,rinp,parm,start);
 }
 
 int proxyPOST(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    pair->log = message_time(LOG_INFO,"POST %s",parm);
+    pair->log = message_time(LOG_INFO, "POST %s", parm);
     return proxyCommon(pair,rinp,parm,start);
 }
 
@@ -2613,7 +2613,7 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     for (i=0; i < DIGEST_LEN; i++) {
 	sprintf(pair->buf + ulen + i*2, "%02x", digest[i]);
     }
-    pair->log = message_time(LOG_INFO,"POP -> %s",pair->buf);
+    pair->log = message_time(LOG_INFO, "POP -> %s", pair->buf);
     strcat(pair->buf,"\r\n");
     pair->start = 0;
     pair->len = strlen(pair->buf);
@@ -2621,19 +2621,19 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
 }
 
 int popAUTH(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    if (Debug) message(LOG_DEBUG,": AUTH %s",parm);
+    if (Debug) message(LOG_DEBUG, ": AUTH %s", parm);
     commOutput(pair,winp,"-ERR authorization first\r\n");
     return -2;	/* read more */
 }
 
 int popCAPA(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    if (Debug) message(LOG_DEBUG,": CAPA %s",parm);
+    if (Debug) message(LOG_DEBUG, ": CAPA %s", parm);
     commOutput(pair,winp,"-ERR authorization first\r\n");
     return -2;	/* read more */
 }
 
 int popAPOP(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    pair->log = message_time(LOG_INFO,"APOP %s",parm);
+    pair->log = message_time(LOG_INFO, "APOP %s", parm);
     pair->len += pair->start - start;
     pair->start = start;
     return 0;
@@ -3271,7 +3271,7 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
     return ss;
  error:
     if (opts->verbose)
-	message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
+	message(LOG_INFO, "%s", ERR_error_string(ERR_get_error(), NULL));
     exit(1);
 }
 
@@ -3559,14 +3559,14 @@ Stone *mkstone(
     strcpy(xhost + strlen(xhost),
 	   port2str(sin.sin_port,stonep->proto,proto_src));
     if ((proto & proto_command) == command_proxy) {
-	message(LOG_INFO,"stone %d: proxy <- %s",
+	message(LOG_INFO, "stone %d: proxy <- %s",
 		stonep->sd,
 		xhost);
     } else {
-	message(LOG_INFO,"stone %d: %s:%s <- %s",
+	message(LOG_INFO, "stone %d: %s:%s <- %s",
 		stonep->sd,
 		addr2str(&stonep->sin.sin_addr),
-		port2str(stonep->sin.sin_port,stonep->proto,proto_dest),
+		port2str(stonep->sin.sin_port, stonep->proto, proto_dest),
 		xhost);
     }
     if (ndest) {
@@ -3591,11 +3591,11 @@ Stone *mkstone(
 /* main */
 
 void help(char *com) {
-    message(LOG_INFO,"stone %s  http://www.gcd.org/sengoku/stone/",VERSION);
-    message(LOG_INFO,"%s",
+    message(LOG_INFO, "stone %s  http://www.gcd.org/sengoku/stone/", VERSION);
+    message(LOG_INFO, "%s",
 	    "Copyright(C)2003 by Hiroaki Sengoku <sengoku@gcd.org>");
 #ifdef USE_SSL
-    message(LOG_INFO,"%s",
+    message(LOG_INFO, "%s",
 	    "using " OPENSSL_VERSION_TEXT "  http://www.openssl.org/");
 #endif
 #ifndef NT_SERVICE
@@ -4374,35 +4374,35 @@ static void handler(int sig) {
       case SIGTERM:
 #ifdef IGN_SIGTERM
 	Debug = 0;
-	message(LOG_INFO,"SIGTERM. clear Debug level");
+	message(LOG_INFO, "SIGTERM. clear Debug level");
 	signal(SIGTERM,handler);
 	break;
 #endif
       case SIGINT:
 #ifndef NO_FORK
 	if (NForks) {	/* mother process */
-	    message(LOG_INFO,"SIGTERM/INT. killing children and exiting...");
+	    message(LOG_INFO, "SIGTERM/INT. killing children and exiting...");
 	    for (i=0; i < NForks; i++) kill(Pid[i],sig);
 	} else
 #endif
-	    message(LOG_INFO,"SIGTERM/INT. exiting...");  /* child process */
+	    message(LOG_INFO, "SIGTERM/INT. exiting...");  /* child process */
 	exit(1);
       case SIGUSR1:
 	Debug++;
-	message(LOG_INFO,"SIGUSR1. increase Debug level to %d",Debug);
+	message(LOG_INFO, "SIGUSR1. increase Debug level to %d", Debug);
 	signal(SIGUSR1,handler);
 	break;
       case SIGUSR2:
 	if (Debug > 0) Debug--;
-	message(LOG_INFO,"SIGUSR2. decrease Debug level to %d",Debug);
-	signal(SIGUSR2,handler);
+	message(LOG_INFO, "SIGUSR2. decrease Debug level to %d", Debug);
+	signal(SIGUSR2, handler);
 	break;
       case SIGPIPE:
-	message(LOG_INFO,"SIGPIPE.");
-	signal(SIGPIPE,handler);
+	if (Debug > 0) message(LOG_DEBUG, "SIGPIPE.");
+	signal(SIGPIPE, handler);
 	break;
       default:
-	message(LOG_INFO,"signal %d. Debug level: %d",sig,Debug);
+	message(LOG_INFO, "signal %d. Debug level: %d", sig, Debug);
     }
 }
 #endif
