@@ -132,7 +132,7 @@ sun-ssl:
 	$(MAKE) TARGET=sun ssl_stone
 
 solaris:
-	$(MAKE) CC=gcc FLAGS="-DNO_SNPRINTF $(FLAGS)" LIBS="-lnsl -lsocket $(LIBS)" stone
+	$(MAKE) CC=gcc FLAGS="$(FLAGS)" LIBS="-lnsl -lsocket $(LIBS)" stone
 
 solaris-pop:
 	$(MAKE) TARGET=solaris pop_stone

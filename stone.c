@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.212 2004/10/28 04:50:01 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 2.0 2004/11/17 14:40:59 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -181,12 +181,6 @@ typedef void *(*aync_start_routine) (void *);
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#ifdef DJBDNS
-#include <stralloc.h>
-#include <alloc.h>
-#include <dns.h>
-char dns_seed[128];
-#endif
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -255,6 +249,8 @@ int FdSetBug = 0;
 #define BUFMAX		2048
 #define STRMAX		30	/* > 16 */
 #define CONN_TIMEOUT	60	/* 1 min */
+#define CACHE_TIMEOUT	180	/* 3 min */
+#define HASHMAX		181
 #define	LB_MAX		100
 
 #ifndef MAXHOSTNAMELEN
@@ -554,7 +550,7 @@ int Debug = 0;		/* debugging level */
 int PacketDump = 0;
 #ifdef PTHREAD
 pthread_mutex_t FastMutex = PTHREAD_MUTEX_INITIALIZER;
-char FastMutexs[7];
+char FastMutexs[8];
 #define PairMutex	0
 #define ConnMutex	1
 #define OrigMutex	2
@@ -562,14 +558,17 @@ char FastMutexs[7];
 #define FdRinMutex	4
 #define FdWinMutex	5
 #define FdEinMutex	6
+#define HashMutex	7
 #endif
 #ifdef WINDOWS
 HANDLE PairMutex, ConnMutex, OrigMutex, AsyncMutex;
 HANDLE FdRinMutex, FdWinMutex, FdEinMutex;
+HANDLE HashMutex;
 #endif
 #ifdef OS2
 HMTX PairMutex, ConnMutex, OrigMutex, AsyncMutex;
 HMTX FdRinMutex, FdWinMutex, FdEinMutex;
+HMTX HashMutex;
 #endif
 
 #ifdef NO_VSNPRINTF
@@ -948,35 +947,6 @@ int isdigitaddr(char *name) {
     return ndigits;
 }
 
-#ifdef DJBDNS
-int host2addr(char *name, struct in_addr *addrp, short *familyp) {
-    char fqdn_buf[BUFMAX];
-    char addr_buf[STRMAX];
-    stralloc temp;
-    stralloc fqdn = {fqdn_buf, 0, BUFMAX};
-    stralloc addr = {addr_buf, 0, STRMAX};
-    int ret = 0;
-    temp.s = name;
-    temp.len = strlen(name);
-    temp.a = temp.len + 1;
-    if (dns_ip4_qualify(&addr, &fqdn, &temp) == -1) {
-	message(LOG_ERR, "Unknown host: %s", name);
-	goto exit;
-    }
-    if (addr.len == 4) {
-	addrp->s_addr = *(unsigned long*)addr.s;
-	if (familyp) *familyp = AF_INET;
-	ret = 1;
-	goto exit;
-    }
-    message(LOG_ERR, "No IP address for %s", name);
- exit:
-    if (temp.s != name) alloc_free(temp);
-    if (fqdn.s != fqdn_buf) alloc_free(fqdn);
-    if (addr.s != addr_buf) alloc_free(addr);
-    return ret;
-}
-#else
 #ifdef NO_ADDRINFO
 int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     struct hostent *hp;
@@ -1030,7 +1000,6 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     freeaddrinfo(ai);
     return 1;
 }
-#endif
 #endif
 
 /* *addrp is permitted to connect to *stonep ? */
@@ -1245,6 +1214,13 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 		len = BUFMAX/2;
 	    }
 	} while (ret > 0 && err == REG_NOMATCH);
+#ifndef REG_NOERROR
+#ifdef REG_OK
+#define	REG_NOERROR	REG_OK
+#else
+#define	REG_NOERROR	0
+#endif
+#endif
 	if (err != REG_NOERROR) goto fail;
 	chat = chat->next;
     }
@@ -3417,15 +3393,57 @@ int islocalhost(struct in_addr *addrp) {
     return ntohl(addrp->s_addr) == 0x7F000001L;
 }
 
+unsigned int str2hash(char *str) {
+    unsigned int hash = 0;
+    while (*str) {
+	hash  = hash * 7 + *str;
+	str++;
+    }
+    return hash;
+}
+
+struct hashtable {
+    char *str;
+    time_t clock;
+    struct in_addr addr;
+} hashtable[HASHMAX];
+
+int addrcache(char *name, struct sockaddr_in *sinp) {
+    struct hashtable *t;
+    time_t now;
+    time(&now);
+    t = &hashtable[str2hash(name) % HASHMAX];
+    waitMutex(HashMutex);
+    if (t->str && strcmp(t->str, name) == 0
+	&& now - t->clock < CACHE_TIMEOUT) {
+	sinp->sin_addr = t->addr;
+	freeMutex(HashMutex);
+	sinp->sin_family = AF_INET;
+	if (Debug > 5) message(LOG_DEBUG, "addrcache hit: %s %d",
+			       name, now - t->clock);
+	return 1;
+    }
+    freeMutex(HashMutex);
+    if (!host2addr(name, &sinp->sin_addr, &sinp->sin_family)) {
+	return 0;
+    }
+    waitMutex(HashMutex);
+    if (t->str && strcmp(t->str, name) != 0) {
+	free(t->str);
+	t->str = NULL;
+    }
+    if (!t->str) t->str = strdup(name);
+    t->addr = sinp->sin_addr;
+    t->clock = now;
+    freeMutex(HashMutex);
+    return 1;
+}
+
 int doproxy(Pair *pair, char *host, int port) {
     struct sockaddr_in sin;
-    short family;
     bzero((char *)&sin, sizeof(sin)); /* clear sin struct */
     sin.sin_port = htons((u_short)port);
-    if (!host2addr(host, &sin.sin_addr, &family)) {
-	return -1;
-    }
-    sin.sin_family = family;
+    if (!addrcache(host, &sin)) return -1;
     pair->proto &= ~proto_command;
     if (islocalhost(&sin.sin_addr)) {
 	TimeLog *log = pair->log;
@@ -6155,7 +6173,8 @@ void initialize(int argc, char *argv[]) {
 	!(AsyncMutex=CreateMutex(NULL, FALSE, NULL)) ||
 	!(FdRinMutex=CreateMutex(NULL, FALSE, NULL)) ||
 	!(FdWinMutex=CreateMutex(NULL, FALSE, NULL)) ||
-	!(FdEinMutex=CreateMutex(NULL, FALSE, NULL))) {
+	!(FdEinMutex=CreateMutex(NULL, FALSE, NULL)) ||
+	!(HashMutex=CreateMutex(NULL, FALSE, NULL))) {
 	message(LOG_ERR, "Can't create Mutex err=%d", GetLastError());
     }
 #endif
@@ -6167,7 +6186,8 @@ void initialize(int argc, char *argv[]) {
 	(j=DosCreateMutexSem(NULL, &AsyncMutex, 0, FALSE)) ||
 	(j=DosCreateMutexSem(NULL, &FdRinMutex, 0, FALSE)) ||
 	(j=DosCreateMutexSem(NULL, &FdWinMutex, 0, FALSE)) ||
-	(j=DosCreateMutexSem(NULL, &FdEinMutex, 0, FALSE))) {
+	(j=DosCreateMutexSem(NULL, &FdEinMutex, 0, FALSE)) ||
+	(j=DosCreateMutexSem(NULL, &HashMutex, 0, FALSE))) {
 	message(LOG_ERR, "Can't create Mutex err=%d", j);
     }
 #endif
@@ -6201,9 +6221,6 @@ void initialize(int argc, char *argv[]) {
 	    message(LOG_ERR, "prctl err=%d", errno);
 	}
     }
-#endif
-#ifdef DJBDNS
-    dns_random_init(dns_seed);
 #endif
     if (MinInterval > 0) {
 	if (Debug > 1) message(LOG_DEBUG, "MinInterval: %d", MinInterval);
