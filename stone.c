@@ -2680,7 +2680,8 @@ Pair *pair;
     for (i=0; i < npairs; i++) {
 	if (p[i]) {
 	    SOCKET sd = p[i]->sd;
-	    if (ValidSocket(sd)) {
+	    int proto = p[i]->proto;
+	    if (ValidSocket(sd) && !(proto & proto_close)) {
 		if (FD_ISSET(sd,&ri)) FD_SET(sd,&rin);
 		if (FD_ISSET(sd,&wi)) FD_SET(sd,&win);
 		FD_SET(sd,&ein);
