@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.47 2003/05/05 18:31:14 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.48 2003/05/07 14:27:26 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1687,10 +1687,6 @@ void asyncAccept(Stone *stone) {
     p2 = p1->pair;
     p1->next = p2;	/* link pair each other */
     p2->prev = p1;
-    if ((p2->proto & proto_command) == command_ihead) {
-	sprintf(p2->buf,"%s\r%c",stone->p,'\n');
-	p2->start = strlen(p2->buf);
-    }
     if (p2->proto & proto_ohttp_d) {
 	int i = strnparse(p2->buf, p2->bufmax - 5, stone->p, p1);
 	p2->buf[i++] = '\r';
