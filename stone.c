@@ -1007,6 +1007,7 @@ fd_set *rop, *eop;
 	}
 	if (++n >= OriginMax) docloseUDP(origin,1);	/* wait mutex */
       next:
+	;
     }
     return 1;
 }
@@ -1576,7 +1577,7 @@ Stone *stonep;
 	    return NULL;
 	}
 #ifndef NO_FORK
-	else if (errno == EBADF && NForks > 0 && Debug < 5) {
+	else if (errno == EBADF && Debug < 5) {
 	    return NULL;
 	}
 #endif
