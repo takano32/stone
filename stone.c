@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.77 2003/09/21 04:06:25 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.78 2003/10/18 05:22:12 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2997,6 +2997,7 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 		int len;
 		snprintf(str, STRMAX-1, "%lx", serial);
 		len = strlen(str);
+		if (pair->match[0]) free(pair->match[0]);
 		pair->match[0] = malloc(len+1);
 		strncpy(pair->match[0], str, len);
 	    }
