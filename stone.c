@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.202 2004/10/23 06:21:06 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.203 2004/10/23 08:19:18 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2410,7 +2410,7 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
     }
     ret = doconnect(pair, (struct sockaddr*)sinp, sizeof(*sinp));
     if (ret < 0) return -1;	/* error */
-    if (ret > 0) return 0;	/* connected or connection in progress */
+    if (ret > 0) return ret;	/* connected or connection in progress */
     conn = malloc(sizeof(Conn));
     if (!conn) {
 	message(LOG_CRIT, "TCP %d: out of memory", (p ? p->sd : -1));
@@ -3393,7 +3393,8 @@ int doproxy(Pair *pair, char *host, int port) {
 	pair->log = NULL;
 	if (log) free(log);
     }
-    return reqconn(pair, &sin);
+    if (reqconn(pair, &sin) < 0) return -1;
+    return 0;
 }
 
 int proxyCONNECT(Pair *pair, char *parm, int start) {
@@ -4222,6 +4223,7 @@ void asyncReadWrite(Pair *pair) {	/* pair must be source side */
 
 void asyncAccept(Stone *stone) {
     Pair *p1, *p2;
+    int ret;
     ASYNC_BEGIN;
     if (Debug > 8) message(LOG_DEBUG, "asyncAccept");
     p1 = doaccept(stone);
@@ -4239,13 +4241,17 @@ void asyncAccept(Stone *stone) {
 	p2->buf[i++] = '\n';
 	p2->len = i;
     }
+    ret = -1;
     if (p1->proto & proto_connect) {
-	if (reqconn(p2, &stone->sins[0]) < 0) {	/* 0 is default */
+	ret = reqconn(p2, &stone->sins[0]);	/* 0 is default */
+	if (ret < 0) {
 	    freePair(p2);
 	    freePair(p1);
 	    goto exit;
 	}
     }
+    p1->proto |= proto_thread;
+    p2->proto |= proto_thread;
     waitMutex(PairMutex);
     p2->next = pairs.next;	/* insert pair */
     if (pairs.next != NULL) pairs.next->prev = p2;
@@ -4256,7 +4262,11 @@ void asyncAccept(Stone *stone) {
 	message(LOG_DEBUG, "TCP %d: pair %d inserted", p1->sd, p2->sd);
 	message_pair(LOG_DEBUG, p1);
     }
-    doReadWrite(p1);
+    if (ret > 0) doReadWrite(p1);
+    else {
+	p1->proto &= ~proto_thread;
+	p2->proto &= ~proto_thread;
+    }
  exit:
     ASYNC_END;
 }
