@@ -6,8 +6,8 @@ case "$1" in
 	;;
 esac
 shift
-stone=stone21
-stones=stone21s
+stone=stone22
+stones=stone22s
 if [ -n "$1" ]
 then	stamp=$1
 fi
