@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.195 2004/10/21 03:49:21 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.196 2004/10/21 09:43:57 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -4025,12 +4025,14 @@ void asyncReadWrite(Pair *pair) {	/* pair must be source side */
 	    sd = p[i]->sd;
 	    if (InvalidSocket(sd)) continue;
 	    p[i]->loop++;
-	    if (FD_ISSET(sd, &eo)) {	/* exception */
-		message(priority(p[i]), "TCP %d: exception", sd);
-		message_pair(LOG_ERR, p[i]);
-		shutdown(sd, 2);
-		setclose(p[i], proto_shutdown);
-		goto leave;
+	    if (FD_ISSET(sd, &eo)) {	/* Out-of-Band Data */
+		char buf[1];
+		len = recv(sd, buf, 1, MSG_OOB);
+		if (p[1-i]) wsd = p[1-i]->sd; else wsd = INVALID_SOCKET;
+		if (Debug > 3)
+		    message(LOG_DEBUG, "TCP %d: MSG_OOB 0x%02x to %d",
+			    sd, buf[0], wsd);
+		if (ValidSocket(wsd)) send(wsd, buf, 1, MSG_OOB);
 	    } else if ((p[i]->proto & proto_conninprog) && FD_ISSET(sd, &wo)) {
 		p[i]->proto &= ~proto_conninprog;
 		connected(p[i]);
