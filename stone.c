@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.32 2003/04/26 13:41:35 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.33 2003/05/01 08:11:01 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -279,6 +279,12 @@ typedef struct _Stone {
     XHost xhosts[0];		/* hosts permitted to connect */
 } Stone;
 
+typedef struct _TimeLog {
+    time_t clock;		/* time of beginning */
+    int pri;			/* log priority */
+    char str[0];		/* Log message */
+} TimeLog;
+
 typedef struct _Pair {
     struct _Pair *pair;
     struct _Pair *prev;
@@ -292,6 +298,7 @@ typedef struct _Pair {
     int proto;
     int count;		/* reference counter */
     char *p;
+    TimeLog *log;
     int start;		/* index of buf */
     int len;
     int bufmax;		/* buffer size */
@@ -504,6 +511,22 @@ void message(int pri, char *fmt, ...) {
 #ifndef NO_SYSLOG
     }
 #endif
+}
+
+TimeLog *message_time(int pri, char *fmt, ...) {
+    char str[BUFMAX];
+    TimeLog *log;
+    va_list ap;
+    va_start(ap,fmt);
+    vsnprintf(str,BUFMAX-1,fmt,ap);
+    va_end(ap);
+    log = (TimeLog*)malloc(sizeof(TimeLog)+strlen(str)+1);
+    if (log) {
+	time(&log->clock);
+	log->pri = pri;
+	strcpy(log->str,str);
+    }
+    return log;
 }
 
 char *addr2ip(addr,str)
@@ -1317,6 +1340,14 @@ Pair *pair;
 {
     Pair *p = pair->pair;
     SOCKET sd = pair->sd;
+    TimeLog *log = pair->log;
+    if (log) {
+	time_t now;
+	pair->log = NULL;
+	time(&now);
+	message(log->pri, "%d%s", (int)(now - log->clock), log->str);
+	free(log);
+    }
     if (!(pair->proto & proto_close)) {
 	pair->proto |= proto_close;	/* request to close */
 	if (ValidSocket(sd))
@@ -1659,6 +1690,7 @@ Stone *stonep;
     pair1->count = 0;
     pair1->start = 0;
     pair1->p = NULL;
+    pair1->log = NULL;
     time(&pair1->clock);
     pair1->timeout = stonep->timeout;
     pair1->pair = pair2;
@@ -1675,6 +1707,7 @@ Stone *stonep;
     pair2->count = 0;
     pair2->start = 0;
     pair2->p = NULL;
+    pair2->log = NULL;
     time(&pair2->clock);
     pair2->timeout = stonep->timeout;
     pair2->pair = pair1;
@@ -1794,6 +1827,11 @@ int scanClose() {	/* scan close request */
 		    char *p = p2->p;
 		    p2->p = NULL;
 		    free(p);
+		}
+		if (p2->log) {
+		    TimeLog *log = p2->log;
+		    p2->log = NULL;
+		    free(log);
 		}
 	    } else {
 		FD_CLR(p2->sd,&rin);
@@ -2196,7 +2234,7 @@ int proxyCONNECT(Pair *pair, fd_set *rinp, fd_set *winp,
     int port = 443;	/* host byte order */
     char *r = parm;
     Pair *p;
-    message(LOG_INFO,": CONNECT %s",parm);
+    pair->log = message_time(LOG_INFO,": CONNECT %s",parm);
     while (*r) {
 	if (isspace(*r)) {
 	    *r = '\0';
@@ -2262,12 +2300,12 @@ int proxyCommon(Pair *pair, fd_set *rinp, char *parm, int start) {
 }
 
 int proxyGET(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    message(LOG_INFO,": GET %s",parm);
+    pair->log = message_time(LOG_INFO,": GET %s",parm);
     return proxyCommon(pair,rinp,parm,start);
 }
 
 int proxyPOST(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    message(LOG_INFO,": POST %s",parm);
+    pair->log = message_time(LOG_INFO,": POST %s",parm);
     return proxyCommon(pair,rinp,parm,start);
 }
 
@@ -2334,7 +2372,7 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     for (i=0; i < DIGEST_LEN; i++) {
 	sprintf(pair->buf + ulen + i*2, "%02x", digest[i]);
     }
-    message(LOG_INFO,": POP -> %s",pair->buf);
+    pair->log = message_time(LOG_INFO,": POP -> %s",pair->buf);
     strcat(pair->buf,"\r\n");
     pair->start = 0;
     pair->len = strlen(pair->buf);
@@ -2354,7 +2392,7 @@ int popCAPA(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
 }
 
 int popAPOP(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
-    message(LOG_INFO,": APOP %s",parm);
+    pair->log = message_time(LOG_INFO,": APOP %s",parm);
     pair->len += pair->start - start;
     pair->start = start;
     return 0;
