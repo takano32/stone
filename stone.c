@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.50 2003/05/09 09:59:58 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.51 2003/05/09 15:54:10 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2067,6 +2067,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 	*(p->buf+p->bufmax-1) = 0;
 	bufmax -= 5;
     }
+    if ((p->proto & proto_command) == command_ihead) bufmax = bufmax / 2;
 #ifdef USE_SSL
     if (pair->ssl) {
 	len = SSL_read(pair->ssl,&p->buf[start],bufmax);
@@ -2435,7 +2436,11 @@ int insheader(Pair *pair) {	/* insert header */
     for (i=pair->start; i < len; i++) {
 	if (pair->buf[i] == '\n') break;
     }
-    if (i >= len) return -1;
+    if (i >= len) {
+	if (Debug > 3)
+	    message(LOG_DEBUG,"TCP %d: insheader needs more",pair->sd);
+	return -1;
+    }
     i++;
     len -= i;
     if (len > 0) bcopy(&pair->buf[i], buf, len);	/* save rest header */
@@ -2443,6 +2448,10 @@ int insheader(Pair *pair) {	/* insert header */
 		   pair->stone->p, pair->pair);
     pair->buf[i++] = '\r';
     pair->buf[i++] = '\n';
+    if (Debug > 5) {
+	message(LOG_DEBUG,"TCP %d: insheader %d, %d, %d, %d",
+		pair->sd, pair->start, i-pair->start, len, pair->bufmax);
+    }
     if (len > 0) bcopy(buf, &pair->buf[i], len);	/* restore */
     pair->len = i - pair->start + len;
     return pair->len;
@@ -2575,6 +2584,7 @@ void asyncReadWrite(Pair *pair) {
     Pair *rPair, *wPair;
     SOCKET sd, rsd, wsd;
     int established;
+    int again = 0;
     int len;
     int i;
     ASYNC_BEGIN;
@@ -2606,7 +2616,9 @@ void asyncReadWrite(Pair *pair) {
     tv.tv_sec = 0;
     tv.tv_usec = TICK_SELECT;
     if (Debug > 10) select_debug("selectReadWrite1",&ri,&wi,&ei);
-    while (ro=ri, wo=wi, eo=ei, select(FD_SETSIZE,&ro,&wo,&eo,&tv) > 0) {
+    while (again
+	   || (ro=ri, wo=wi, eo=ei, select(FD_SETSIZE,&ro,&wo,&eo,&tv) > 0)) {
+	again = 0;
 	for (i=0; i < npairs; i++) {
 	    if (!p[i] || (p[i]->proto & proto_close)) continue;
 	    sd = p[i]->sd;
@@ -2675,6 +2687,16 @@ void asyncReadWrite(Pair *pair) {
 			    && (rPair->proto & proto_connect)
 			    && !(rPair->proto & proto_close)
 			    && !(wPair->proto & proto_close)) {
+#ifdef USE_SSL
+			    if (rPair->ssl && SSL_pending(rPair->ssl)) {
+				FD_SET(rPair->sd,&ro);
+				if (Debug > 4)
+				    message(LOG_DEBUG,
+					    "TCP %d: SSL_pending, read again",
+					    rPair->sd);
+				again = 1;
+			    }
+#endif
 			    FD_SET(rsd,&ri);
 			} else {
 			    goto leave;
