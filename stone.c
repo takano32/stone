@@ -311,7 +311,7 @@ typedef struct _Origin {
 
 typedef struct _Comm {
     char *str;
-    int (*func)(Pair*,char*,int);
+    int (*func)(Pair*,fd_set*,fd_set*,char*,int);
 } Comm;
 
 Stone *stones = NULL;
@@ -2106,7 +2106,7 @@ Pair *pair;		/* read into buf from pair->pair->start */
 
 #define METHOD_LEN_MAX	10
 
-int commOutput(Pair *pair, char *fmt, ...) {
+int commOutput(Pair *pair, fd_set *rinp, fd_set *winp, char *fmt, ...) {
     Pair *p = pair->pair;
     SOCKET psd;
     char *str;
@@ -2121,7 +2121,7 @@ int commOutput(Pair *pair, char *fmt, ...) {
     if (p->proto & proto_base) p->len += baseEncode(str,strlen(str));
     else p->len += strlen(str);
     waitMutex(FdWinMutex);
-    FD_SET(psd,&win);		/* need to write */
+    FD_SET(psd,winp);		/* need to write */
     freeMutex(FdWinMutex);
     return p->len;
 }
@@ -2143,7 +2143,8 @@ int port;
     return reqconn(pair,&sin);
 }
 
-int proxyCONNECT(Pair *pair, char *parm, int start) {
+int proxyCONNECT(Pair *pair, fd_set *rinp, fd_set *winp,
+		 char *parm, int start) {
     int port = 443;	/* host byte order */
     char *r = parm;
     Pair *p;
@@ -2216,17 +2217,17 @@ int start;
     return doproxy(pair,host,port);
 }
 
-int proxyGET(Pair *pair, char *parm, int start) {
+int proxyGET(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_INFO,": GET %s",parm);
     return proxyCommon(pair,parm,start);
 }
 
-int proxyPOST(Pair *pair, char *parm, int start) {
+int proxyPOST(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_INFO,": POST %s",parm);
     return proxyCommon(pair,parm,start);
 }
 
-int proxyErr(Pair *pair, char *parm, int start) {
+int proxyErr(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_ERR,"Unknown method: %s",parm);
     return -1;
 }
@@ -2239,18 +2240,18 @@ Comm proxyComm[] = {
 };
 
 #ifdef USE_POP
-int popUSER(Pair *pair, char *parm, int start) {
+int popUSER(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     int ulen, tlen;
     message(LOG_INFO,": USER %s",parm);
     ulen = strlen(parm);
     tlen = strlen(pair->p);
     if (ulen + 1 + tlen + 1 >= BUFMAX) {
-	commOutput(pair,"+Err Too long user name\r\n");
+	commOutput(pair,rinp,winp,"+Err Too long user name\r\n");
 	return -1;
     }
     bcopy(pair->p, pair->p + ulen + 1, tlen + 1);
     strcpy(pair->p, parm);
-    commOutput(pair,"+OK Password required for %s\r\n",parm);
+    commOutput(pair,rinp,winp,"+OK Password required for %s\r\n",parm);
     pair->proto &= ~state_mask;
     pair->proto |= 1;
     return -2;	/* read more */
@@ -2258,7 +2259,7 @@ int popUSER(Pair *pair, char *parm, int start) {
 
 #define DIGEST_LEN 16
 
-int popPASS(Pair *pair, char *parm, int start) {
+int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     MD5_CTX context;
     unsigned char digest[DIGEST_LEN];
     char *str;
@@ -2268,7 +2269,7 @@ int popPASS(Pair *pair, char *parm, int start) {
     pair->p = NULL;
     if (Debug > 5) message(LOG_DEBUG,": PASS %s",parm);
     if (state < 1) {
-	commOutput(pair,"-ERR USER first\r\n");
+	commOutput(pair,rinp,winp,"-ERR USER first\r\n");
 	return -2;	/* read more */
     }
     ulen = strlen(p);
@@ -2276,7 +2277,7 @@ int popPASS(Pair *pair, char *parm, int start) {
     tlen = strlen(str);
     plen = strlen(parm);
     if (ulen + 1 + tlen + plen + 1 >= BUFMAX) {
-	commOutput(pair,"+Err Too long password\r\n");
+	commOutput(pair,rinp,winp,"+Err Too long password\r\n");
 	return -1;
     }
     strcat(str, parm);
@@ -2296,26 +2297,26 @@ int popPASS(Pair *pair, char *parm, int start) {
     return 0;
 }
 
-int popAUTH(Pair *pair, char *parm, int start) {
+int popAUTH(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_INFO,": AUTH %s",parm);
-    commOutput(pair,"-ERR authorization first\r\n");
+    commOutput(pair,rinp,winp,"-ERR authorization first\r\n");
     return -2;	/* read more */
 }
 
-int popCAPA(Pair *pair, char *parm, int start) {
+int popCAPA(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_INFO,": CAPA %s",parm);
-    commOutput(pair,"-ERR authorization first\r\n");
+    commOutput(pair,rinp,winp,"-ERR authorization first\r\n");
     return -2;	/* read more */
 }
 
-int popAPOP(Pair *pair, char *parm, int start) {
+int popAPOP(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_INFO,": APOP %s",parm);
     pair->len += pair->start - start;
     pair->start = start;
     return 0;
 }
 
-int popErr(Pair *pair, char *parm, int start) {
+int popErr(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_ERR,"Unknown POP command: %s",parm);
     return -1;
 }
@@ -2345,8 +2346,9 @@ char *str;
     return buf;
 }
 
-int docomm(pair,comm)
+int docomm(pair,rinp,winp,comm)
 Pair *pair;
+fd_set *rinp, *winp;
 Comm *comm;
 {
     char buf[BUFMAX];
@@ -2382,7 +2384,7 @@ Comm *comm;
 	buf[i] = *q++;
     }
     buf[i] = '\0';
-    return (*comm->func)(pair,buf,start);
+    return (*comm->func)(pair,rinp,winp,buf,start);
 }
 
 int insheader(pair)	/* insert header */
@@ -2433,8 +2435,9 @@ Pair *pair;
     return pair->len;
 }
 
-int first_read(pair)
+int first_read(pair,rinp,winp)
 Pair *pair;
+fd_set *rinp, *winp;
 {
     SOCKET sd = pair->sd;
     SOCKET psd;
@@ -2447,11 +2450,11 @@ Pair *pair;
     if (p->proto & proto_command) {	/* proxy */
 	switch(p->proto & proto_command) {
 	case command_proxy:
-	    len = docomm(p,proxyComm);
+	    len = docomm(p,rinp,winp,proxyComm);
 	    break;
 #ifdef USE_POP
 	case command_pop:
-	    if (p->p) len = docomm(p,popComm);
+	    if (p->p) len = docomm(p,rinp,winp,popComm);
 	    break;
 #endif
 	default:
@@ -2473,7 +2476,7 @@ Pair *pair;
 	len = rmheader(p);
 	if (len >= 0) {
 	    if (pair->proto & proto_ohttp_s)
-		commOutput(p,"HTTP/1.0 200 OK\r\n\r\n");
+		commOutput(p,rinp,winp,"HTTP/1.0 200 OK\r\n\r\n");
 	}
     }
 #ifdef USE_POP
@@ -2499,7 +2502,7 @@ Pair *pair;
 #endif
     if (len <= 0 && !(pair->proto & proto_close)) {
 	waitMutex(FdRinMutex);
-	FD_SET(sd,&rin);		/* read more */
+	FD_SET(sd,rinp);		/* read more */
 	freeMutex(FdRinMutex);
 	if (len < 0) pair->proto |= proto_first_r;
     }
@@ -2579,7 +2582,7 @@ Pair *pair;
 		    if (len > 0) {
 			int first_flag;
 			first_flag = (rPair->proto & proto_first_r);
-			if (first_flag) len = first_read(rPair);
+			if (first_flag) len = first_read(rPair,&ri,&wi);
 			if (len > 0 && ValidSocket(wsd)
 			    && !(wPair->proto & proto_close)
 			    && !(rPair->proto & proto_close)) {
@@ -2627,9 +2630,12 @@ Pair *pair;
     waitMutex(FdEinMutex);
     for (i=0; i < npairs; i++) {
 	if (p[i]) {
-	    if (FD_ISSET(p[i]->sd,&ri)) FD_SET(p[i]->sd,&rin);
-	    if (FD_ISSET(p[i]->sd,&wi)) FD_SET(p[i]->sd,&win);
-	    FD_SET(p[i]->sd,&ein);
+	    SOCKET sd = p[i]->sd;
+	    if (ValidSocket(sd)) {
+		if (FD_ISSET(sd,&ri)) FD_SET(sd,&rin);
+		if (FD_ISSET(sd,&wi)) FD_SET(sd,&win);
+		FD_SET(sd,&ein);
+	    }
 	}
     }
     freeMutex(FdEinMutex);
@@ -3750,12 +3756,10 @@ char *argv[];
 #ifdef USE_SSL
     ssl_ctx_server = SSL_CTX_new(SSLv23_server_method());
     ssl_ctx_client = SSL_CTX_new(SSLv23_client_method());
-#ifdef FIXME
     SSL_CTX_set_mode(ssl_ctx_server,
 		     SSL_MODE_ENABLE_PARTIAL_WRITE|SSL_MODE_AUTO_RETRY);
     SSL_CTX_set_mode(ssl_ctx_client,
 		     SSL_MODE_ENABLE_PARTIAL_WRITE|SSL_MODE_AUTO_RETRY);
-#endif
     if (!cipher_list) cipher_list = getenv("SSL_CIPHER");
 #endif
     pairs.next = NULL;
