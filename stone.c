@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.187 2004/09/23 13:16:28 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.188 2004/09/23 17:06:12 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -868,7 +868,8 @@ char *addrport2str(void *sa, socklen_t salen,
     int err;
     if (!str || len <= 1) return "";
     str[len-1] = '\0';
-    if (AddrFlag) flags = NI_NUMERICHOST;
+    if (AddrFlag) flags = (NI_NUMERICHOST | NI_NUMERICSERV);
+    else if (flag & proto_udp) flags = NI_DGRAM;
     err = getnameinfo((struct sockaddr*)sa, salen,
 		      str, len, serv, STRMAX, flags);
     if (err) {
@@ -2079,10 +2080,12 @@ int doSSL_shutdown(Pair *pair, int how) {
 #endif	/* USE_SSL */
 
 void doshutdown(Pair *pair, int how) {
-    SSL *ssl;
-    if (!pair) return;
-    ssl = pair->ssl;
 #ifdef USE_SSL
+    SSL *ssl;
+#endif
+    if (!pair) return;
+#ifdef USE_SSL
+    ssl = pair->ssl;
     if (ssl) doSSL_shutdown(pair, how);
     else {
 #endif
