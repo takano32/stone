@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.140 2004/08/12 04:38:34 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.141 2004/08/13 07:51:00 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1537,8 +1537,8 @@ int trySSL_accept(Pair *pair) {
     if (ret < 0) {
 	err = SSL_get_error(pair->ssl, ret);
 	if (err == SSL_ERROR_NONE
-		|| err == SSL_ERROR_WANT_READ
-		|| err == SSL_ERROR_WANT_WRITE) {
+	    || err == SSL_ERROR_WANT_READ
+	    || err == SSL_ERROR_WANT_WRITE) {
 	    if (Debug > 4)
 		message(LOG_DEBUG, "TCP %d: SSL_accept interrupted WANT=%d",
 			pair->sd, err);
@@ -1554,6 +1554,9 @@ int trySSL_accept(Pair *pair) {
 		message(LOG_ERR,
 			"TCP %d: SSL_accept I/O error err=%d errno=%d",
 			pair->sd, ERR_get_error(), errno);
+	    } else if (err == SSL_ERROR_SSL) {
+		message(LOG_ERR, "TCP %d: SSL_accept protocol error err=%d",
+			pair->sd, ERR_get_error());
 	    } else {
 		message(LOG_ERR, "TCP %d: SSL_accept error err=%d",
 			pair->sd, err);
@@ -3702,6 +3705,10 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     depth = X509_STORE_CTX_get_error_depth(ctx);
     ssl = X509_STORE_CTX_get_ex_data
 		(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+    if (!ssl) {
+	message(LOG_ERR, "SSL callback can't get SSL object");
+	return 0;	/* always fail */
+    }
     sess = SSL_get_session(ssl);
     pair = SSL_get_ex_data(ssl, PairIndex);
     if (!pair) {
@@ -3770,6 +3777,10 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 		    j++;
 		}
 	    }
+	} else {
+	    message(LOG_ERR,
+		    "TCP %d: SSL callback can't get session's ex_data",
+		    pair->sd);
 	}
     }
     return 1;	/* if re is null, always succeed */
