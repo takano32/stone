@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.161 2004/09/11 15:34:45 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.162 2004/09/12 15:33:11 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2043,9 +2043,6 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
 	    message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s:%s ...",
 		    p->sd, pair->sd, addr, port);
 	ret = connect(pair->sd, (struct sockaddr*)sinp, sizeof(*sinp));
-#ifndef WINDOWS
-	fcntl(pair->sd, F_SETFL, O_NONBLOCK);
-#endif
 	if (pair->proto & proto_close) return -1;
 	if (ret < 0) {
 #ifdef WINDOWS
@@ -2073,6 +2070,10 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
 		return -1;
 	    }
 	}
+	/* successfuly connected */
+#ifndef WINDOWS
+	fcntl(pair->sd, F_SETFL, O_NONBLOCK);
+#endif
 	pair->proto |= proto_connect;	/* pair & dst is connected */
 	if (Debug > 2)
 	    message(LOG_DEBUG, "TCP %d: established to %d",
@@ -2223,6 +2224,10 @@ void asyncConn(Conn *conn) {
 		}
 	    }
 	}
+#endif
+	/* successfuly accepted */
+#ifndef WINDOWS
+	fcntl(p2->sd, F_SETFL, O_NONBLOCK);
 #endif
 	if (backup) {
 	    backup->used = 2;
@@ -2443,9 +2448,6 @@ Pair *doaccept(Stone *stonep) {
     pair1 = pair2 = NULL;
     len = sizeof(from);
     nsd = accept(stonep->sd, (struct sockaddr*)&from, &len);
-#ifndef WINDOWS
-    fcntl(nsd, F_SETFL, O_NONBLOCK);
-#endif
     waitMutex(FdRinMutex);
     FdSet(stonep->sd, &rin);
     freeMutex(FdRinMutex);
