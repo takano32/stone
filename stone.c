@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.204 2004/10/24 09:56:43 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.205 2004/10/25 02:22:30 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -668,6 +668,7 @@ void message(int pri, char *fmt, ...) {
 }
 
 void message_time(Pair *pair, int pri, char *fmt, ...) {
+    va_list ap;
     char str[BUFMAX];
     TimeLog *log;
     log = pair->log;
@@ -675,7 +676,6 @@ void message_time(Pair *pair, int pri, char *fmt, ...) {
 	pair->log = NULL;
 	free(log);
     }
-    va_list ap;
     va_start(ap, fmt);
     vsnprintf(str, BUFMAX-1, fmt, ap);
     va_end(ap);
