@@ -11,7 +11,7 @@
  * Version 1.8	Oct 18, 1997	pseudo parallel using SIGALRM
  * Version 2.0	Nov  3, 1997	http proxy & over http
  * Version 2.1	Nov 14, 1998	respawn & pop
- * Version 2.2			Posix Thread, XferBufMax
+ * Version 2.2			Posix Thread, XferBufMax, no ALRM
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -75,7 +75,6 @@
  * -DH_ERRNO	  h_errno is not defined in header files
  * -DIGN_SIGTERM  ignore SIGTERM signal
  * -DINET_ADDR	  use custom inet_addr(3)
- * -DNO_ALRM	  without SIGALRM signal
  * -DNO_BCOPY	  without bcopy(3)
  * -DNO_SNPRINTF  without snprintf(3)
  * -DNO_SYSLOG	  without syslog(2)
@@ -110,7 +109,6 @@ typedef void (*FuncPtr)(void*);
 #define NO_SYSLOG
 #define NO_FORK
 #define NO_SETHOSTENT
-#define NO_ALRM
 #define NO_SETUID
 #define NO_CHROOT
 #define ValidSocket(sd)		((sd) != INVALID_SOCKET)
@@ -134,7 +132,6 @@ typedef void (*FuncPtr)(void*);
 #define INCL_DOSERRORS
 #include <process.h>
 #include <os2.h>
-#define NO_ALRM
 #define NO_SYSLOG
 #define ASYNC(func,arg)	\
     waitMutex(AsyncMutex);\
@@ -148,7 +145,6 @@ typedef void (*FuncPtr)(void*);
 #else	/* ! WINDOWS & ! OS2 */
 #ifdef PTHREAD
 #include <pthread.h>
-#define NO_ALRM
 pthread_attr_t thread_attr;
 typedef void *(*aync_start_routine) (void *);
 #define ASYNC(func,arg)	\
@@ -229,11 +225,6 @@ typedef int SOCKET;
 
 #define TICK_SELECT	100000	/* 0.1 sec */
 #define SPIN_MAX	10	/* 1 sec */
-#ifndef NO_ALRM
-#define TICK_TIMER	10000	/* 0.01 sec */
-#define RECURS_CNT	30	/* 0.3 sec */
-#define RECURS_MAX	10
-#endif
 
 #ifdef USE_SSL
 #include <openssl/crypto.h>
@@ -332,9 +323,6 @@ Origin origins;
 int OriginMax = 10;
 fd_set rin, win, ein;
 int PairTimeOut = 10 * 60;	/* 10 min */
-#ifndef NO_ALRM
-unsigned int Generation = 0;
-#endif
 int Recursion = 0;
 int AsyncCount = 0;
 #ifdef H_ERRNO
@@ -686,34 +674,6 @@ struct in_addr *addrp;
     return 0;
 }
 
-#ifdef NO_ALRM
-#define utimer(usec)	/* */
-#else
-void utimer(usec)
-int usec;
-{
-    struct itimerval val;
-    static struct itimerval oval;
-    switch(usec) {
-      case -1:	/* resume */
-	setitimer(ITIMER_REAL,&oval,NULL);
-	break;
-      case 0:	/* stop */
-	val.it_interval.tv_sec = val.it_interval.tv_usec
-	    = val.it_value.tv_sec = val.it_value.tv_usec = 0;
-	setitimer(ITIMER_REAL,&val,&oval);
-	break;
-      default:	/* initialize & start */
-	oval.it_interval.tv_sec = oval.it_interval.tv_usec
-	    = oval.it_value.tv_sec = oval.it_value.tv_usec = 0;
-	val.it_interval.tv_sec = val.it_interval.tv_usec
-	    = val.it_value.tv_sec = 0;
-	val.it_value.tv_usec = usec;
-	setitimer(ITIMER_REAL,&val,NULL);	/* start timer */
-    }
-}
-#endif
-
 #ifdef WINDOWS
 void waitMutex(h)
 HANDLE h;
@@ -956,7 +916,6 @@ Origin *origin;
     int len;
     Stone *stone = origin->stone;
     ASYNC_BEGIN;
-    utimer(TICK_TIMER);
     if (Debug > 8) message(LOG_DEBUG,"asyncOrg...");
     len = recvUDP(origin->sd,NULL);
     if (Debug > 4) {
@@ -967,7 +926,6 @@ Origin *origin;
 		origin->sd,len,origin->stone->sd);
     }
     if (len > 0 && stone) sendUDP(stone->sd,&origin->sin,len);
-    utimer(0);
     time(&origin->clock);
     if (len > 0) {
 	waitMutex(FdRinMutex);
@@ -991,9 +949,6 @@ fd_set *rop, *eop;
 #endif
     Origin *origin, *prev;
     int n = 0;
-#ifndef NO_ALRM
-    unsigned int g = Generation;
-#endif
     prev = &origins;
     for (origin=origins.next; origin != NULL;
 	 prev=origin, origin=origin->next) {
@@ -1052,9 +1007,6 @@ fd_set *rop, *eop;
 	}
 	if (++n >= OriginMax) docloseUDP(origin,1);	/* wait mutex */
       next:
-#ifndef NO_ALRM
-	if (g != Generation) return 0;
-#endif
     }
     return 1;
 }
@@ -1121,10 +1073,8 @@ Stone *stone;
 {
     Origin *origin;
     ASYNC_BEGIN;
-    utimer(TICK_TIMER);
     if (Debug > 8) message(LOG_DEBUG,"asyncUDP...");
     origin = doUDP(stone);
-    utimer(0);
     if (origin) {
 	time(&origin->clock);
 	waitMutex(FdRinMutex);
@@ -1487,7 +1437,6 @@ Conn *conn;
     p2 = p1->pair;
     if (p2 == NULL) goto finish;
     time(&clock);
-    utimer(TICK_TIMER);
     if (Debug > 8) message(LOG_DEBUG,"asyncConn...");
 #ifdef USE_SSL
     if (p2->proto & proto_ssl_intr)
@@ -1496,7 +1445,6 @@ Conn *conn;
     if (ret > 0)
 #endif
 	ret = doconnect(p1,&conn->sin);
-    utimer(0);
     if (ret == 0) {	/* EINTR */
 	if (clock - p1->clock < CONN_TIMEOUT) {
 	    conn->lock = 0;	/* unlock conn */
@@ -1549,9 +1497,6 @@ int scanConns() {
 #endif
     Conn *conn, *pconn;
     Pair *p1, *p2;
-#ifndef NO_ALRM
-    unsigned int g = Generation;
-#endif
     pconn = &conns;
     for (conn=conns.next; conn != NULL; conn=conn->next) {
 	p1 = conn->pair;
@@ -1573,9 +1518,6 @@ int scanConns() {
 	    freeMutex(ConnMutex);
 	}
 	pconn = conn;
-#ifndef NO_ALRM
-	if (g != Generation) return 0;
-#endif
     }
     return 1;
 }
@@ -1712,10 +1654,8 @@ Stone *stone;
 {
     Pair *p1, *p2;
     ASYNC_BEGIN;
-    utimer(TICK_TIMER);
     if (Debug > 8) message(LOG_DEBUG,"asyncAccept...");
     p1 = doaccept(stone);
-    utimer(0);
     if (p1 == NULL) {
 	ASYNC_END;
 	return;
@@ -2631,9 +2571,7 @@ Pair *pair;
 		if (wPair) wsd = wPair->sd; else wsd = INVALID_SOCKET;
 		FD_CLR(rsd,&ri);
 		rPair->count++;
-		utimer(TICK_TIMER);
 		len = doread(rPair);
-		utimer(0);
 		rPair->count--;
 		if (len < 0 || (rPair->proto & proto_close) || wPair == NULL) {
 		    doclose(rPair,1);	/* EOF or error, wait mutex */
@@ -2662,9 +2600,7 @@ Pair *pair;
 			wPair->proto &= ~proto_command;
 		}
 		wPair->count++;
-		utimer(TICK_TIMER);
 		len = dowrite(wPair);
-		utimer(0);
 		wPair->count--;
 		if (len < 0 || (wPair->proto & proto_close) || rPair == NULL) {
 		    if (rPair) doclose(rPair,1);	/* if error, close */
@@ -2713,9 +2649,6 @@ fd_set *rop, *wop, *eop;
     int err;
 #endif
     Pair *pair;
-#ifndef NO_ALRM
-    unsigned int g = Generation;
-#endif
     int ret = 1;
     if (Debug > 8) message(LOG_DEBUG,"scanPairs ...");
     for (pair=pairs.next; pair != NULL; pair=pair->next) {
@@ -2788,12 +2721,6 @@ fd_set *rop, *wop, *eop;
 		doclose(pair,1);	/* wait mutex */
 	    }
 	}
-#ifndef NO_ALRM
-	if (g != Generation) {
-	    ret = 0;
-	    break;
-	}
-#endif
     }
     if (Debug > 8) message(LOG_DEBUG,"scanPairs done");
     return ret;
@@ -2809,9 +2736,6 @@ fd_set *rop, *eop;
     int err;
 #endif
     Stone *stone;
-#ifndef NO_ALRM
-    unsigned int g = Generation;
-#endif
     for (stone=stones; stone != NULL; stone=stone->next) {
 	int isset;
 	waitMutex(FdEinMutex);
@@ -2833,9 +2757,6 @@ fd_set *rop, *eop;
 		}
 	    }
 	}
-#ifndef NO_ALRM
-	if (g != Generation) return 0;
-#endif
     }
     return 1;
 }
@@ -2895,9 +2816,6 @@ void repeater() {
 	message(LOG_DEBUG,"select: %d",ret);
 	select_debug(&rout, &wout, &eout);
     }
-#ifndef NO_ALRM
-    Generation++;
-#endif
     scanClose();
     if (ret > 0) {
 	spin = SPIN_MAX;
@@ -3701,43 +3619,6 @@ int sig, code;
     static int cnt = 0;
     int i;
     switch(sig) {
-#ifndef NO_ALRM
-      case SIGALRM:
-	if (Debug > 8) message(LOG_DEBUG,"SIGALRM. (cnt,g,G)=(%d,%d,%d)",
-			       cnt,g,Generation);
-	utimer(0);
-	signal(SIGALRM,handler);
-	if (Generation == g && Recursion < RECURS_MAX) {
-	    if (cnt < RECURS_CNT) {
-		cnt++;
-		if (cnt == RECURS_CNT) {
-		    message(LOG_NOTICE,"recursion");
-		    message_pairs();
-		    message_origins();
-		    message_conns();
-		}
-	    }
-	    if (cnt >= RECURS_CNT) {
-		{
-		    sigset_t set;
-		    sigemptyset(&set);
-		    sigaddset(&set,SIGALRM);
-		    sigprocmask(SIG_UNBLOCK,&set,NULL);
-		}
-		i = cnt;
-		cnt = 0;
-		Recursion++;
-		repeater();	/* call recursively */
-		Recursion--;
-		cnt = i;
-	    }
-	} else {
-	    cnt = 0;
-	}
-	g = Generation;
-	utimer(TICK_TIMER);
-	break;
-#endif
       case SIGHUP:
 	if (Debug > 4) message(LOG_DEBUG,"SIGHUP.");
 #ifndef NO_FORK
@@ -3894,9 +3775,6 @@ char *argv[];
 	exit(1);
     }
 #ifndef WINDOWS
-#ifndef NO_SIGALRM	/* ignore SIGALRM ifdef NO_ALRM */
-    signal(SIGALRM,handler);
-#endif
     signal(SIGHUP,handler);
     signal(SIGTERM,handler);
     signal(SIGINT,handler);
