@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.176 2004/09/18 04:17:47 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.177 2004/09/18 13:09:39 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1988,21 +1988,21 @@ int doSSL_connect(Pair *pair) {
 }
 
 /* Blocking SSL_shutdown */
-int doSSL_shutdown(SSL *ssl, SOCKET sd) {
+int doSSL_shutdown(Pair *pair) {
+    SSL *ssl = pair->ssl;
+    SOCKET sd = pair->sd;
     fd_set rout, wout;
     struct timeval tv;
     int ret = 0;
     int err;
-    if (Debug > 8) message(LOG_DEBUG, "TCP %d: doSSL_shutdown...", sd);
     do {
 	ret = SSL_shutdown(ssl);
+	if (Debug > 9)
+	    message(LOG_DEBUG, "TCP %d: SSL_shutdown ret=%d", sd, ret);
 	if (ret <= 0) {
 	    err = SSL_get_error(ssl, ret);
-	    if (Debug > 9)
-		message(LOG_DEBUG, "TCP %d: doSSL_shutdown... err=%d",
-			sd, err);
 	} else {
-	    err = SSL_ERROR_NONE;
+	    return ret;
 	}
 	FD_ZERO(&rout);
 	FD_ZERO(&wout);
@@ -2015,14 +2015,36 @@ int doSSL_shutdown(SSL *ssl, SOCKET sd) {
 	    if (errno == EAGAIN) {
 		FdSet(sd, &rout);
 		FdSet(sd, &wout);
-	    } else break;
-	} else break;
+	    } else {
+		unsigned long e = ERR_get_error();
+		if (e == 0) {
+#ifdef WINDOWS
+		    errno = WSAGetLastError();
+#endif
+		    if (Debug > 2)
+			message(LOG_DEBUG,
+				"TCP %d: SSL_shutdown ret=%d errno=%d",
+				sd, ret, errno);
+		} else {
+		    message(priority(pair), "TCP %d: SSL_shutdown %s",
+			    sd, ERR_error_string(e, NULL));
+		}
+		return ret;
+	    }
+	} else {
+	    message(priority(pair), "TCP %d: SSL_shutdown err=%d", sd, err);
+	    return ret;
+	}
 	tv.tv_sec = 1;
 	tv.tv_usec = 0;
     } while (select(FD_SETSIZE, &rout, &wout, NULL, &tv) >= 0);
-    if (Debug > 8)
-	message(LOG_DEBUG, "TCP %d: doSSL_shutdown... ret=%d", sd, ret);
-    return ret;
+#ifdef WINDOWS
+    errno = WSAGetLastError();
+#endif
+    if (errno != EINTR)
+	message(priority(pair), "TCP %d: doSSL_shutdown select errno=%d",
+		errno);
+    return 0;
 }
 
 int SSL_smart_shutdown(Pair *pair, int how) {
@@ -2030,36 +2052,17 @@ int SSL_smart_shutdown(Pair *pair, int how) {
     SOCKET sd = pair->sd;
     int ret = 0;
     if (!ssl) return 1;	/* other thread may close the object, ignore */
-    ret = doSSL_shutdown(ssl, sd);
+    ret = doSSL_shutdown(pair);
     if (!ret) {
 	if (shutdown(sd, 1) < 0) {
 #ifdef WINDOWS
 	    errno = WSAGetLastError();
 #endif
-	    message(LOG_ERR, "TCP %d: shutdown 1 for SSL_shutdown errno=%d",
+	    message(priority(pair),
+		    "TCP %d: shutdown 1 for SSL_shutdown errno=%d",
 		    sd, errno);
 	}
-	ret = doSSL_shutdown(ssl, sd);
-    }
-    if (ret <= 0) {
-	int err = SSL_get_error(ssl, ret);
-	if (err == SSL_ERROR_SYSCALL) {
-	    unsigned long e = ERR_get_error();
-	    if (e == 0) {
-#ifdef WINDOWS
-		errno = WSAGetLastError();
-#endif
-		if (Debug > 2)
-		    message(LOG_DEBUG, "TCP %d: SSL_shutdown errno=%d",
-			    sd, errno);
-	    } else {
-		message(priority(pair), "TCP %d: SSL_shutdown %s",
-			sd, ERR_error_string(e, NULL));
-	    }
-	} else {
-	    message(priority(pair), "TCP %d: SSL_shutdown err=%d",
-		    sd, err);
-	}
+	ret = doSSL_shutdown(pair);
     }
     if (how != 1) ret = shutdown(sd, how);
     return ret;
@@ -2170,8 +2173,7 @@ void doclose(Pair *pair) {	/* close pair */
 	pair->proto |= (proto_eof | proto_shutdown | proto_close);
 	if (ValidSocket(sd)) {
 #ifdef USE_SSL
-	    SSL *ssl = pair->ssl;
-	    if (ssl) doSSL_shutdown(ssl, sd);	/* reply close_notify */
+	    if (pair->ssl) doSSL_shutdown(pair);    /* reply close_notify */
 #endif
 	    if (Debug > 2) message(LOG_DEBUG, "TCP %d: closing... "
 				   "tx:%d rx:%d", sd, pair->tx, pair->rx);
@@ -4554,6 +4556,9 @@ void repeater(void) {
     scanConns();
     if (oldstones) rmoldstone();
     if (OldConfigArgc) rmoldconfig();
+#ifdef USE_SSL
+    ERR_remove_state(0);
+#endif
 }
 
 int reusestone(Stone *stone) {
