@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.95 2003/10/29 04:49:24 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.96 2003/10/29 04:55:07 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3528,6 +3528,7 @@ Stone *mkstone(
 	}
 	sin.sin_family = family;
     }
+    stonep->nsins = 1;
     if ((proto & proto_command) != command_proxy) {
 	struct sockaddr_in dsin;
 	LBSet *lbset;
@@ -3547,7 +3548,6 @@ Stone *mkstone(
 		exit(1);
 	    }
 	    bcopy(&dsin, stonep->sins, sizeof(dsin));
-	    stonep->nsins = 1;
 	}
     }
     stonep->proto = proto;
