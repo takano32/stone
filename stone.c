@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.52 2003/05/10 03:55:27 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.53 2003/05/10 08:08:08 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1655,16 +1655,25 @@ Pair *doaccept(Stone *stonep) {
     return pair1;
 }
 
-int strnPeerAddr(char *buf, int limit, SOCKET sd) {
+int strnPeerAddr(char *buf, int limit, SOCKET sd, int isport) {
     int i = 0;
     struct sockaddr_in name;
     int len;
     char str[STRMAX];
     len = sizeof(name);
     if (getpeername(sd,(struct sockaddr*)&name,&len) < 0) {
-	strcpy(str, "0.0.0.0");
+	if (isport) {
+	    strcpy(str, "0.0.0.0:0");
+	} else {
+	    strcpy(str, "0.0.0.0");
+	}
     } else {
 	addr2ip(&name.sin_addr, str);
+	if (isport) {
+	    len = strlen(str);
+	    snprintf(str+len, STRMAX-1-len, ":%d",
+		     ntohs((unsigned short)name.sin_port));
+	}
     }
     len = strlen(str);
     if (len > limit) len = limit;
@@ -1697,7 +1706,8 @@ int strnparse(char *buf, int limit, char *p, Pair *pair) {
 	    case 'n':  c = '\n';  break;
 	    case 'r':  c = '\r';  break;
 	    case 't':  c = '\t';  break;
-	    case 'a':  i += strnPeerAddr(buf+i,limit-i,pair->sd); continue;
+	    case 'a':  i += strnPeerAddr(buf+i,limit-i,pair->sd,0); continue;
+	    case 'A':  i += strnPeerAddr(buf+i,limit-i,pair->sd,1); continue;
 	    case '\0':
 		c = '\\';
 		p--;
