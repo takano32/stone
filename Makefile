@@ -70,7 +70,7 @@ logmsg.o: logmsg.rc
 	windres $? -o $@
 
 svc_stone: logmsg.rc stone.o $(SVC_LIBS)
-	$(CC) -o stone.exe stone.o $(SVC_LIBS) $(SSL_LIBS) -lwsock32 -ladvapi32 -luser32 -lgdi32 -lshell32 -lkernel32
+	$(CC) -o stone.exe stone.o $(SVC_LIBS) $(SSL_LIBS) -lwsock32 -lregex -ladvapi32 -luser32 -lgdi32 -lshell32 -lkernel32
 
 stone.exe: stone.c
 	$(CC) $(FLAGS) $? $(LIBS)
@@ -183,7 +183,7 @@ mingw-ssl:
 	$(MAKE) CC=gcc FLAGS="$(SSL_FLAGS)" SSL_LIBS="-lssl32 -leay32" TARGET=mingw ssl_stone
 
 mingw-svc:
-	$(MAKE) CC=gcc CFLAGS="-DWINDOWS -DNT_SERVICE $(POP_FLAGS) $(SSL_FLAGS) $(CFLAGS)" SSL_LIBS="-lssl32 -leay32" TARGET=mingw svc_stone
+	$(MAKE) CC=gcc CFLAGS="-DWINDOWS -DNT_SERVICE -DNO_RINDEX -DNO_ADDRINFO $(POP_FLAGS) $(SSL_FLAGS) $(CFLAGS)" SSL_LIBS="-lssl32 -leay32" TARGET=mingw svc_stone
 
 emx:
 	$(MAKE) CC=gcc FLAGS="-DOS2 -Zmts -Zsysv-signals $(FLAGS)" LIBS="$(LIBS) -lsocket" stone.exe
