@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.127 2004/05/05 15:01:59 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.128 2004/05/05 16:04:00 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -4142,7 +4142,7 @@ Stone *mkstone(
 void help(char *com) {
     message(LOG_INFO, "stone %s  http://www.gcd.org/sengoku/stone/", VERSION);
     message(LOG_INFO, "%s",
-	    "Copyright(C)2003 by Hiroaki Sengoku <sengoku@gcd.org>");
+	    "Copyright(C)2004 by Hiroaki Sengoku <sengoku@gcd.org>");
 #ifdef USE_SSL
     message(LOG_INFO, "%s",
 	    "using " OPENSSL_VERSION_TEXT "  http://www.openssl.org/");

@@ -118,6 +118,11 @@ HOWTO USE
 	depth=<n>	The maximum of the certificate chain.
 			If the peer's certificate exceeds <n>, the
 			verification fails.  The maximum of <n> is 9.
+	no_tls1		Turn off TLSv1 protocol.
+	no_ssl3		Turn off SSLv3 protocol.
+	no_ssl2		Turn off SSLv2 protocol.
+	bugs		Switch on all SSL implementation bug workarounds.
+	serverpref	Use server's cipher preferences (only SSLv2).
 	key=<file>	The filename of the secret key of the certificate.
 	cert=<file>	The filename of the certificate.
 	CAfile=<file>	The filename of the certificate of the CA.
