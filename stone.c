@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.86 2003/10/23 10:28:40 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.87 2003/10/23 10:45:12 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -892,7 +892,7 @@ int scanBackups(void) {
     time_t now;
     time(&now);
     for (b=backups; b != NULL; b=b->next) {
-	if (!b->used) continue;		/* not assigned */
+	if (b->used < 2) continue;		/* not used */
 	if (now - b->last < b->interval) continue;
 	if (healthCheck(&b->master)) {	/* healthy ? */
 	    if (b->bn) {
