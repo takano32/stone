@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.150 2004/08/30 04:22:37 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.151 2004/08/30 11:24:54 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -982,7 +982,6 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
     }
     addr2str(&sinp->sin_addr, addr, STRMAX);
     port2str(sinp->sin_port, proto, proto_dest, port, STRMAX);
-    if (Debug > 2) message(LOG_DEBUG, "health check: %s:%s", addr, port);
     ret = connect(sd, (struct sockaddr*)sinp, sizeof(*sinp));
     if (ret < 0) {
 #ifdef WINDOWS
@@ -1009,8 +1008,16 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 	}
 	len = 0;
 	do {
-	    time(&now);
-	    if (now - start >= timeout) goto timeout;
+	    fd_set rout;
+	    struct timeval tv;
+	    do {
+		time(&now);
+		if (now - start >= timeout) goto timeout;
+		tv.tv_sec = 1;
+		tv.tv_usec = 0;
+		FD_ZERO(&rout);
+		FdSet(sd, &rout);
+	    } while (select(FD_SETSIZE, &rout, NULL, NULL, &tv) == 0);
 	    ret = recv(sd, buf+len, BUFMAX-len, 0);
 	    if (ret < 0) {
 #ifdef WINDOWS
@@ -1049,49 +1056,24 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 
 void asyncHealthCheck(Backup *b) {
     time_t now;
+    char addr[STRMAX];
+    char port[STRMAX];
     ASYNC_BEGIN;
     time(&now);
     b->last = now + 60 * 60;	/* suppress further check */
-    if (Debug > 8) {
-	char addr[STRMAX];
-	char port[STRMAX];
-	addr2str(&b->master.sin_addr, addr, STRMAX);
-	port2str(b->master.sin_port, b->proto, proto_dest, port, STRMAX);
+    addr2str(&b->master.sin_addr, addr, STRMAX);
+    port2str(b->master.sin_port, b->proto, proto_dest, port, STRMAX);
+    if (Debug > 8)
 	message(LOG_DEBUG, "asyncHealthCheck %s:%s ...", addr, port);
-    }
     if (healthCheck(&b->master, b->proto,
 		    b->interval, b->chat)) {	/* healthy ? */
-	if (b->bn) {
-	    if (Debug > 1) {
-		char addr[STRMAX];
-		char port[STRMAX];
-		addr2str(&b->master.sin_addr, addr, STRMAX);
-		port2str(b->master.sin_port, b->proto, proto_dest,
-			 port, STRMAX);
-		message(LOG_DEBUG, "health check %s:%s success", addr, port);
-	    }
-	    b->bn = 0;
-	}
+	if (Debug > 3 || (b->bn && Debug > 1))
+	    message(LOG_DEBUG, "health check %s:%s success", addr, port);
+	if (b->bn) b->bn = 0;
     } else {	/* unhealthy */
-	if (b->bn == 0) {
-	    if (Debug > 0) {
-		char addr[STRMAX];
-		char port[STRMAX];
-		addr2str(&b->master.sin_addr, addr, STRMAX);
-		port2str(b->master.sin_port, b->proto, proto_dest,
-			 port, STRMAX);
-		message(LOG_DEBUG, "health check %s:%s fail", addr, port);
-	    }
-	    b->bn++;
-	}
-    }
-    if (Debug > 8) {
-	char addr[STRMAX];
-	char port[STRMAX];
-	addr2str(&b->master.sin_addr, addr, STRMAX);
-	port2str(b->master.sin_port, b->proto, proto_dest, port, STRMAX);
-	message(LOG_DEBUG, "asyncHealthCheck %s:%s ... %s",
-		addr, port, (b->bn == 0 ? "success" : "fail"));
+	if (Debug > 3 || (b->bn == 0 && Debug > 0))
+	    message(LOG_DEBUG, "health check %s:%s fail", addr, port);
+	if (b->bn == 0) b->bn++;
     }
     b->last = now;
     ASYNC_END;
@@ -4680,7 +4662,9 @@ static int gettoken(FILE *fp, char *buf) {
     int i = 0;
     int quote = 0;
     int c;
-    while ((c=getc(fp)) != EOF) {
+    for (;;) {
+	c = getc(fp);
+	if (c == EOF) return -1;
 	if (c == '#') {
 	    skipcomment(fp);
 	    continue;
@@ -4690,7 +4674,12 @@ static int gettoken(FILE *fp, char *buf) {
 	    break;
 	}
     }
-    while ((c=getc(fp)) != EOF && i < BUFMAX-1) {
+    while (i < BUFMAX-1) {
+	c = getc(fp);
+	if (c == EOF) {
+	    if (i > 0) break;
+	    return -1;
+	}
 	if (quote != '\'') {
 	    if (c == '$') {
 		i += getvar(fp, &buf[i], BUFMAX-1-i);
@@ -4836,7 +4825,7 @@ void getconfig(void) {
 	ConfigArgv[ConfigArgc] = malloc(len+1);
 	bcopy(buf, ConfigArgv[ConfigArgc], len+1);
 	ConfigArgc++;
-    } while ((len=gettoken(fp, buf)) > 0);
+    } while ((len=gettoken(fp, buf)) >= 0);
     fclose(fp);
 #ifdef CPP
     if (CppCommand != NULL && *CppCommand != '\0') {
