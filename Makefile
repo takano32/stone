@@ -14,6 +14,8 @@
 # -DNO_THREAD	without thread
 # -DOS2		OS/2 with EMX
 # -DWINDOWS	Windows95/98/NT
+# -DNT_SERVICE	WindowsNT/2000 native service
+# -DUNIX_DAEMON	fork into background and become a UNIX Daemon
 
 CFLAGS=		# -g
 
@@ -63,7 +65,7 @@ ssl_stone.exe:
 #	$(MAKE) FLAGS=-DUSE_SSL LIBS="ssl32.lib crypt32.lib" $(TARGET)
 
 linux:
-	$(MAKE) FLAGS="-DINET_ADDR -DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
+	$(MAKE) FLAGS="-DINET_ADDR -DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
 
 linux-pop:
 	$(MAKE) TARGET=linux pop_stone
@@ -72,7 +74,7 @@ linux-ssl:
 	$(MAKE) TARGET=linux ssl_stone
 
 bsd:
-	$(MAKE) FLAGS="-DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD $(FLAGS)" LIBS="-pthread $(LIBS)" stone
+	$(MAKE) FLAGS="-DCPP='\"/usr/bin/cpp -traditional\"' -D_THREAD_SAFE -DPTHREAD $(FLAGS)" LIBS="-pthread $(LIBS)" stone
 
 bsd-pop:
 	$(MAKE) TARGET=bsd pop_stone
