@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.142 2004/08/14 06:01:15 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.143 2004/08/15 01:54:42 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -271,7 +271,6 @@ typedef struct {
 
 typedef struct {
     int verbose;
-    int cache;
     int mode;
     int depth;
     long off;
@@ -3868,20 +3867,6 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 	    ss->re[i] = NULL;
 	}
     }
-    if (opts->cache) {
-	if (isserver) {
-	    char str[SSL_MAX_SSL_SESSION_ID_LENGTH+1];
-	    SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_SERVER);
-	    snprintf(str, SSL_MAX_SSL_SESSION_ID_LENGTH, "%lx",
-		     (long)ss->ctx ^ (long)&stones ^ MyPid);	/* randomize */
-	    SSL_CTX_set_session_id_context(ss->ctx, str, strlen(str));
-	    if (Debug > 1) {
-		message(LOG_DEBUG, "SSL session ID: %s", str);
-	    }
-	}
-    } else {
-	SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_OFF);
-    }
     return ss;
  error:
     if (opts->verbose)
@@ -4349,7 +4334,6 @@ void help(char *com) {
 #ifdef USE_SSL
 	    "SSL:   default          ; reset to default\n"
 	    "       verbose          ; verbose mode\n"
-	    "       cache            ; enable session cache\n"
 	    "       verify           ; require peer's certificate\n"
 	    "       verify,once      ; verify client's certificate only once\n"
 	    "       verify,ifany     ; verify client's certificate if any\n"
@@ -4667,7 +4651,6 @@ int getdist(
 void sslopts_default(SSLOpts *opts, int isserver) {
     int i;
     opts->verbose = 0;
-    opts->cache = 0;
     opts->mode = SSL_VERIFY_NONE;
     opts->depth = DEPTH_MAX - 1;
     opts->off = 0;
@@ -4692,8 +4675,6 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	sslopts_default(opts, isserver);
     } else if (!strcmp(argv[i], "verbose")) {
 	opts->verbose++;
-    } else if (!strcmp(argv[i], "cache")) {
-	opts->cache = 1;
     } else if (!strncmp(argv[i], "verify", 6)
 	       && (argv[i][6] == '\0' || argv[i][6] == ',')) {
 	if (!strcmp(argv[i]+6, ",none")) {
