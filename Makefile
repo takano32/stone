@@ -28,6 +28,7 @@ POP_LIBS=	md5c.o
 all:
 	@echo "run make with one of the following arguments"
 	@echo "linux     ; for Linux"
+	@echo "zaurus    ; for Linux Zaurus"
 	@echo "bsd       ; for FreeBSD or BSD/OS"
 	@echo "sun       ; for SunOS 4.x with gcc"
 	@echo "solaris   ; for Solaris with gcc"
@@ -72,6 +73,16 @@ linux-pop:
 
 linux-ssl:
 	$(MAKE) TARGET=linux ssl_stone
+
+zaurus:
+	$(MAKE) CC="arm-linux-gcc" FLAGS="-DPTHREAD -DUNIX_DAEMON $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
+	arm-linux-strip stone
+
+zaurus-pop:
+	$(MAKE) CC="arm-linux-gcc" TARGET=zaurus pop_stone
+
+zaurus-ssl:
+	$(MAKE) CC="arm-linux-gcc" SSL_LIBS="-lssl -lcrypto" TARGET=zaurus ssl_stone
 
 bsd:
 	$(MAKE) FLAGS="-DCPP='\"/usr/bin/cpp -traditional\"' -D_THREAD_SAFE -DPTHREAD $(FLAGS)" LIBS="-pthread $(LIBS)" stone
