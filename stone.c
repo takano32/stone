@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.41 2003/05/04 04:16:01 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.42 2003/05/04 09:59:48 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -237,12 +237,22 @@ typedef int SOCKET;
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
-SSL_CTX *ssl_ctx_server, *ssl_ctx_client;
-char *keyfile, *certfile, *CAfile, *CApath;
-char ssl_file_path[BUFMAX];
-int ssl_verbose_flag = 0;
-int ssl_verify_flag = SSL_VERIFY_NONE;
-char *cipher_list = NULL;
+
+typedef struct {
+    int verbose;
+    int mode;
+    int depth;
+    int (*callback)(int, X509_STORE_CTX *);
+    char *keyFile;
+    char *certFile;
+    char *caFile;
+    char *caPath;
+    char *cipherList;
+} SSLOpts;
+
+SSLOpts ServerOpts;
+SSLOpts ClientOpts;
+
 #include <openssl/md5.h>
 #define MD5Init		MD5_Init
 #define MD5Update	MD5_Update
@@ -272,9 +282,8 @@ typedef struct _Stone {
     int timeout;
     struct _Stone *next;
 #ifdef USE_SSL
-    SSL *ssl;			/* SSL handle */
-    char *keyfile;
-    char *certfile;
+    SSL_CTX *ssl_ctx_server;
+    SSL_CTX *ssl_ctx_client;
 #endif
     int nhosts;			/* # of hosts */
     XHost xhosts[0];		/* hosts permitted to connect */
@@ -290,6 +299,7 @@ typedef struct _Pair {
     struct _Pair *pair;
     struct _Pair *prev;
     struct _Pair *next;
+    Stone *stone;	/* parent */
 #ifdef USE_SSL
     SSL *ssl;		/* SSL handle */
 #endif
@@ -1211,10 +1221,7 @@ Pair *pair;
     int ret;
     unsigned long err;
     if (pair->proto & proto_ssl_intr) {
-	if (SSL_want_nothing(pair->ssl)) {
-	    pair->proto &= ~proto_ssl_intr;
-	    return 1;
-	}
+	if (SSL_want_nothing(pair->ssl)) goto finished;
     }
     ret = SSL_accept(pair->ssl);
     if (Debug > 4)
@@ -1231,18 +1238,17 @@ Pair *pair;
 		|| err == SSL_ERROR_WANT_READ
 		|| err == SSL_ERROR_WANT_WRITE) {
 	    if (Debug > 4)
-		message(LOG_DEBUG,"TCP %d: SSL_accept interrupted",pair->sd);
+		message(LOG_DEBUG,"TCP %d: SSL_accept interrupted WANT=%d",
+			pair->sd,err);
 	    pair->proto |= proto_ssl_intr;
 	    return 0;	/* EINTR */
 	} else if (err) {
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
 	    message(LOG_ERR,"TCP %d: SSL_accept error err=%d",pair->sd,err);
-#ifdef FIXME
-	    if (ssl_verbose_flag)
+	    if (ServerOpts.verbose)
 		message(LOG_INFO,"TCP %d: %s",
 			pair->sd,ERR_error_string(err,NULL));
-#endif
 	    message_pair(pair);
 	    SSL_free(ssl);
 	    return -1;
@@ -1251,42 +1257,23 @@ Pair *pair;
     if (SSL_in_accept_init(pair->ssl)) {
 	SSL *ssl = pair->ssl;
 	pair->ssl = NULL;
-	if (ssl_verbose_flag) {
+	if (ServerOpts.verbose) {
 	    message(LOG_NOTICE,"TCP %d: SSL_accept unexpected EOF",pair->sd);
 	    message_pair(pair);
 	}
 	SSL_free(ssl);
 	return -1;	/* unexpected EOF */
     }
+ finished:
+    if (ServerOpts.verbose) printSSLinfo(pair->ssl);
     pair->proto &= ~proto_ssl_intr;
-    pair->proto |= proto_connect;
     return 1;
 }
 
-int doSSL_accept(Pair *pair, char *key, char *cert) {
+int doSSL_accept(Pair *pair) {
     int ret;
-    pair->ssl = SSL_new(ssl_ctx_server);
+    pair->ssl = SSL_new(pair->stone->ssl_ctx_server);
     SSL_set_fd(pair->ssl,pair->sd);
-    if (!SSL_use_RSAPrivateKey_file(pair->ssl,key,X509_FILETYPE_PEM)) {
-	SSL *ssl = pair->ssl;
-	pair->ssl = NULL;
-	message(LOG_ERR,"SSL_use_RSAPrivateKey_file(%s) error",key);
-	if (ssl_verbose_flag)
-	    message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
-	SSL_free(ssl);
-	return -1;
-    }
-    if (!SSL_use_certificate_file(pair->ssl,cert,X509_FILETYPE_PEM)) {
-	SSL *ssl = pair->ssl;
-	pair->ssl = NULL;
-	message(LOG_ERR,"SSL_use_certificate_file(%s) error",cert);
-	if (ssl_verbose_flag)
-	    message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
-	SSL_free(ssl);
-	return -1;
-    }
-    if (cipher_list) SSL_set_cipher_list(pair->ssl,cipher_list);
-    SSL_set_verify(pair->ssl,ssl_verify_flag,NULL);
     ret = trySSL_accept(pair);
     return ret;
 }
@@ -1296,15 +1283,10 @@ Pair *pair;
 {
     int err, ret;
     if (!(pair->proto & proto_ssl_intr)) {
-	pair->ssl = SSL_new(ssl_ctx_client);
+	pair->ssl = SSL_new(pair->stone->ssl_ctx_client);
 	SSL_set_fd(pair->ssl,pair->sd);
-	if (cipher_list) SSL_set_cipher_list(pair->ssl,cipher_list);	    
-	SSL_set_verify(pair->ssl,ssl_verify_flag,NULL);
     } else {
-	if (SSL_want_nothing(pair->ssl)) {
-	    pair->proto |= proto_connect;
-	    return 1;
-	}
+	if (SSL_want_nothing(pair->ssl)) goto finished;
     }
     ret = SSL_connect(pair->ssl);
     if (ret < 0) {
@@ -1313,21 +1295,28 @@ Pair *pair;
 		|| err == SSL_ERROR_WANT_READ
 		|| err == SSL_ERROR_WANT_WRITE) {
 	    if (Debug > 4)
-		message(LOG_DEBUG,"TCP %d: SSL_connect interrupted",pair->sd);
+		message(LOG_DEBUG,"TCP %d: SSL_connect interrupted WANT=%d",
+			pair->sd,err);
+	    pair->proto |= proto_ssl_intr;
 	    return 0;	/* EINTR */
 	} else if (err) {
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
 	    message(LOG_ERR,"TCP %d: SSL_connect error err=%d",pair->sd,err);
-#ifdef FIXME
-	    if (ssl_verbose_flag)
+	    if (ClientOpts.verbose)
 		message(LOG_INFO,"TCP %d: %s",
 			pair->sd,ERR_error_string(err,NULL));
-#endif
 	    message_pair(pair);
 	    SSL_free(ssl);
 	    return -1;
 	}
+    }
+ finished:
+    if (ClientOpts.verbose) printSSLinfo(pair->ssl);
+    pair->proto &= ~proto_ssl_intr;
+    if (Debug > 3) {
+	message(LOG_DEBUG,"TCP %d: SSL_connect succeeded",pair->sd);
+	message_pair(pair);
     }
     return 1;
 }
@@ -1406,22 +1395,15 @@ struct sockaddr_in *sinp;	/* connect to */
 		return -1;
 	    }
 	}
+	pair->proto |= proto_connect;	/* pair & dst is connected */
 	if (Debug > 2)
 	    message(LOG_DEBUG,"TCP %d: established to %d",
 		    p->sd,pair->sd);
     }
     ret = 1;
 #ifdef USE_SSL
-    if (pair->proto & proto_ssl) {
-	ret = doSSL_connect(pair);
-	if (ret == 0) {	/* EINTR */
-	    pair->proto |= proto_ssl_intr;
-	} else if (ret > 0) {
-	    pair->proto &= ~proto_ssl_intr;
-	}
-    }
+    if (pair->proto & proto_ssl) ret = doSSL_connect(pair);
 #endif
-    if (ret > 0) pair->proto |= proto_connect;
     return ret;
 }
 
@@ -1686,9 +1668,11 @@ Stone *stonep;
 	if (pair2) free(pair2);
 	return NULL;
     }
+    pair1->stone = stonep;
     pair1->sd = nsd;
     pair1->proto = ((stonep->proto & proto_src) |
-		    proto_first_r | proto_first_w | proto_source);
+		    proto_first_r | proto_first_w | proto_source |
+		    proto_connect);	/* src & pair1 is connected */
     pair1->count = 0;
     pair1->start = 0;
     pair1->len = 0;
@@ -1700,10 +1684,11 @@ Stone *stonep;
 #ifdef USE_SSL
     pair1->ssl = pair2->ssl = NULL;
     if (stonep->proto & proto_ssl_s) {
-	ret = doSSL_accept(pair1,stonep->keyfile,stonep->certfile);
+	ret = doSSL_accept(pair1);
 	if (ret < 0) goto error;
     }
 #endif
+    pair2->stone = stonep;
     pair2->sd = socket(AF_INET,SOCK_STREAM,0);
     if (InvalidSocket(pair2->sd)) {
 #ifdef WINDOWS
@@ -1723,7 +1708,6 @@ Stone *stonep;
     pair2->timeout = stonep->timeout;
     pair2->pair = pair1;
     pair1->pair = pair2;
-    pair1->proto |= proto_connect;
     return pair1;
 }
 
@@ -1933,9 +1917,6 @@ Pair *pair;
 		return len;	/* error */
 	    }
 	}
-	if (ssl_verbose_flag &&
-	    (pair->proto & proto_first_r) &&
-	    (pair->proto & proto_first_w)) printSSLinfo(pair->ssl);
     } else {
 #endif
 	len = send(sd,&pair->buf[pair->start],pair->len,0);
@@ -2078,9 +2059,9 @@ Pair *pair;		/* read into buf from pair->pair->start */
     if (p == NULL) {	/* no pair, no more read */
 	char buf[BUFMAX];
 #ifdef USE_SSL
-	if (pair->ssl)
+	if (pair->ssl) {
 	    len = SSL_read(pair->ssl,buf,BUFMAX);
-	else
+	} else
 #endif
 	    len = recv(sd,buf,BUFMAX,0);
 	if (pair->proto & proto_close) return -1;
@@ -2138,9 +2119,6 @@ Pair *pair;		/* read into buf from pair->pair->start */
 		return -1;	/* error */
 	    }
 	}
-	if (ssl_verbose_flag &&
-	    (pair->proto & proto_first_r) &&
-	    (pair->proto & proto_first_w)) printSSLinfo(pair->ssl);
     } else {
 #endif
 	len = recv(sd,&p->buf[start],bufmax,0);
@@ -2857,6 +2835,55 @@ fd_set *rop, *wop, *eop;
 
 /* stone */
 
+#ifdef USE_SSL
+SSL_CTX *mkSSL_CTX(SSLOpts *opts, int isserver) {
+    SSL_CTX *ctx;
+    if (isserver) {
+	ctx = SSL_CTX_new(SSLv23_server_method());
+    } else {
+	ctx = SSL_CTX_new(SSLv23_client_method());
+    }
+    if (!ctx) {
+	message(LOG_ERR,"SSL_CTX_new error");
+	goto error;
+    }
+    SSL_CTX_set_mode(ctx,SSL_MODE_ENABLE_PARTIAL_WRITE);
+    SSL_CTX_set_verify(ctx,opts->mode,opts->callback);
+    SSL_CTX_set_verify_depth(ctx,opts->depth);
+    if ((opts->caFile || opts->caPath)
+	&& !SSL_CTX_load_verify_locations(ctx,opts->caFile,opts->caPath)) {
+	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s,%s) error",
+		opts->caFile,opts->caPath);
+	goto error;
+    }
+    if (opts->keyFile
+	&& !SSL_CTX_use_PrivateKey_file(ctx,opts->keyFile,X509_FILETYPE_PEM)) {
+	message(LOG_ERR,"SSL_CTX_use_PrivateKey_file(%s) error",opts->keyFile);
+	goto error;
+    }
+    if (opts->certFile
+	&& !SSL_CTX_use_certificate_file(ctx,opts->certFile,
+					 X509_FILETYPE_PEM)) {
+	message(LOG_ERR,"SSL_CTX_use_certificate_file(%s) error",
+		opts->certFile);
+	goto error;
+    }
+    if (opts->cipherList
+	&& !SSL_CTX_set_cipher_list(ctx,opts->cipherList)) {
+	message(LOG_ERR,"SSL_CTX_set_cipher_list(%s) error",opts->cipherList);
+	goto error;
+    }
+    return ctx;
+ error:
+    if (opts->verbose)
+	message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
+    if (ctx) {
+	SSL_CTX_free(ctx);
+    }
+    exit(1);
+}
+#endif
+
 int scanStones(rop,eop)
 fd_set *rop, *eop;
 {
@@ -2906,7 +2933,8 @@ void rmoldstone() {
 	    closesocket(stone->sd);
 	}
 #ifdef USE_SSL
-	if (stone->ssl) SSL_free(stone->ssl);
+	if (stone->ssl_ctx_server) SSL_CTX_free(stone->ssl_ctx_server);
+	if (stone->ssl_ctx_client) SSL_CTX_free(stone->ssl_ctx_client);
 #endif
 	free(stone);
     }
@@ -3006,10 +3034,6 @@ int proto;	/* UDP/TCP/SSL */
     stonep->p = NULL;
     stonep->nhosts = nhosts;
     stonep->port = port;
-#ifdef USE_SSL
-    stonep->keyfile = keyfile;
-    stonep->certfile = certfile;
-#endif
     stonep->timeout = PairTimeOut;
     bzero((char *)&sin,sizeof(sin)); /* clear sin struct */
     sin.sin_family = AF_INET;
@@ -3067,6 +3091,18 @@ int proto;	/* UDP/TCP/SSL */
 	    }
 	}
     }
+#ifdef USE_SSL
+    if (proto & proto_ssl_s) {	/* server side SSL */
+	stonep->ssl_ctx_server = mkSSL_CTX(&ServerOpts,1);
+    } else {
+	stonep->ssl_ctx_server = NULL;
+    }
+    if (proto & proto_ssl_d) {	/* client side SSL */
+	stonep->ssl_ctx_client = mkSSL_CTX(&ClientOpts,0);
+    } else {
+	stonep->ssl_ctx_client = NULL;
+    }
+#endif
     for (i=0; i < nhosts; i++) {
 	strcpy(xhost,hosts[i]);
 	p = strchr(xhost,'/');
@@ -3494,30 +3530,44 @@ char *p;
 }
 
 #ifdef USE_SSL
-int sslopts(argc,i,argv)
-int argc;
-int i;
-char *argv[];
-{
+void sslopts_default(SSLOpts *opts, int isserver) {
+    opts->verbose = 0;
+    opts->mode = SSL_VERIFY_NONE;
+    opts->depth = 9;
+    opts->callback = NULL;
+    if (isserver) {
+	char path[BUFMAX];
+	snprintf(path,BUFMAX-1,"%s/stone.pem",X509_get_default_cert_dir());
+	opts->keyFile = opts->certFile = strdup(path);
+    } else {
+	opts->keyFile = opts->certFile = NULL;
+    }
+    opts->caFile = opts->caPath = NULL;
+    opts->cipherList = getenv("SSL_CIPHER");
+}
+
+int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
     if (++i >= argc) help(argv[0]);
-    if (!strncmp(argv[i],"cert=",5)) {
-	certfile = strdup(argv[i]+5);
-    } else if (!strncmp(argv[i],"key=",4)) {
-	keyfile = strdup(argv[i]+4);
-    } else if (!strncmp(argv[i],"verify=",7)) {
-	ssl_verify_flag = atoi(argv[i]+7);
-    } else if (!strcmp(argv[i],"certrequired")) {
-	if (!ssl_verify_flag) ssl_verify_flag++;
-    } else if (!strcmp(argv[i],"secure")) {
-	if (!ssl_verify_flag) ssl_verify_flag++;
-    } else if (!strncmp(argv[i],"cipher=",7)) {
-	cipher_list = strdup(argv[i]+7);
+    if (!strcmp(argv[i],"default")) {
+	sslopts_default(opts,isserver);
     } else if (!strcmp(argv[i],"verbose")) {
-	ssl_verbose_flag++;
+	opts->verbose++;
+    } else if (!strncmp(argv[i],"verify",6)) {
+	if (isserver) {
+	    opts->mode = (SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE);
+	} else {
+	    opts->mode = SSL_VERIFY_PEER;
+	}
+    } else if (!strncmp(argv[i],"key=",4)) {
+	opts->keyFile = strdup(argv[i]+4);
+    } else if (!strncmp(argv[i],"cert=",5)) {
+	opts->certFile = strdup(argv[i]+5);
     } else if (!strncmp(argv[i],"CAfile=",7)) {
-	CAfile = strdup(argv[i]+7);
+	opts->caFile = strdup(argv[i]+7);
     } else if (!strncmp(argv[i],"CApath=",7)) {
-	CApath = strdup(argv[i]+7);
+	opts->caPath = strdup(argv[i]+7);
+    } else if (!strncmp(argv[i],"cipher=",7)) {
+	opts->cipherList = strdup(argv[i]+7);
     } else {
 	message(LOG_ERR,"Invalid SSL Option: %s",argv[i]);
 	help(argv[0]);
@@ -3622,8 +3672,11 @@ char *argv[];
 		break;
 #endif
 #ifdef USE_SSL
+	    case 'q':
+		i = sslopts(argc,i,argv,&ClientOpts,0);
+		break;
 	    case 'z':
-		i = sslopts(argc,i,argv);
+		i = sslopts(argc,i,argv,&ServerOpts,1);
 		break;
 #endif
 #ifdef CPP
@@ -3676,8 +3729,11 @@ char *argv[];
 		Debug++;
 		break;
 #ifdef USE_SSL
+	    case 'q':
+		i = sslopts(argc,i,argv,&ClientOpts,0);
+		break;
 	    case 'z':
-		i = sslopts(argc,i,argv);
+		i = sslopts(argc,i,argv,&ServerOpts,1);
 		break;
 #endif
 	    default:
@@ -3922,12 +3978,10 @@ char *argv[];
 	}
     }
 #ifdef USE_SSL
-    SSLeay_add_ssl_algorithms();
+    OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
-    sprintf(ssl_file_path,"%s/stone.pem",	/* default */
-	    X509_get_default_cert_dir());
-    keyfile = certfile = ssl_file_path;
-    CAfile = CApath = NULL;
+    sslopts_default(&ServerOpts,1);
+    sslopts_default(&ClientOpts,0);
 #endif
     i = doopts(argc,argv);
     if (ConfigFile) {
@@ -3960,13 +4014,6 @@ char *argv[];
 	exit(1);
     }
     atexit((void(*)(void))WSACleanup);
-#endif
-#ifdef USE_SSL
-    ssl_ctx_server = SSL_CTX_new(SSLv23_server_method());
-    ssl_ctx_client = SSL_CTX_new(SSLv23_client_method());
-    SSL_CTX_set_mode(ssl_ctx_server,SSL_MODE_ENABLE_PARTIAL_WRITE);
-    SSL_CTX_set_mode(ssl_ctx_client,SSL_MODE_ENABLE_PARTIAL_WRITE);
-    if (!cipher_list) cipher_list = getenv("SSL_CIPHER");
 #endif
     pairs.next = NULL;
     conns.next = NULL;
@@ -4081,15 +4128,6 @@ char *argv[];
     }
     if (SetUID) if (setuid(SetUID) < 0) {
 	message(LOG_WARNING,"Can't set uid err=%d.",errno);
-    }
-#endif
-#ifdef USE_SSL
-    if ((CAfile || CApath)
-	&& !SSL_CTX_load_verify_locations(ssl_ctx_server,CAfile,CApath)) {
-	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s,%s) error",
-		CAfile,CApath);
-	if (ssl_verbose_flag)
-	    message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
     }
 #endif
 }
