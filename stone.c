@@ -84,7 +84,7 @@
  * -DWINDOWS	  Windows95/98/NT
  * -DNT_SERVICE	  WindowsNT/2000 native service
  */
-#define VERSION	"2.1u"
+#define VERSION	"2.1v"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -737,7 +737,7 @@ int h;
 	}
 	if (FastMutexs[h] == 0) {
 	    FastMutexs[h]++;
-	    if (Debug > 10) message(LOG_DEBUG,"Lock Mutex %d = %d",
+	    if (Debug > 20) message(LOG_DEBUG,"Lock Mutex %d = %d",
 				    h,FastMutexs[h]);
 	    pthread_mutex_unlock(&FastMutex);
 	    break;
@@ -759,7 +759,7 @@ int h;
 	    message(LOG_ERR,"Mutex %d Locked Recursively (%d)",
 		    h,FastMutexs[h]);
 	FastMutexs[h]--;
-	if (Debug > 10) message(LOG_DEBUG,"Unlock Mutex %d = %d",
+	if (Debug > 20) message(LOG_DEBUG,"Unlock Mutex %d = %d",
 				h,FastMutexs[h]);
     }
     pthread_mutex_unlock(&FastMutex);
@@ -1398,17 +1398,20 @@ Conn *conn;
     message(LOG_INFO,"Conn %d: %08x %s",sd,proto,str);
 }
 
-int reqconn(pair,sinp)	/* request pair to connect to destination */
-Pair *pair;
-struct sockaddr_in *sinp;	/* connect to */
-{
+int reqconn(Pair *pair,		/* request pair to connect to destination */
+	    fd_set *rinp,
+	    struct sockaddr_in *sinp) {	/* connect to */
     Conn *conn;
     Pair *p = pair->pair;
     if ((pair->proto & proto_command) == command_proxy) {
 	if (p && !(p->proto & proto_close)) {
-	    waitMutex(FdRinMutex);
-	    FD_SET(p->sd,&rin);	/* must read request header */
-	    freeMutex(FdRinMutex);
+	    if (rinp) {
+		FD_SET(p->sd,rinp);	/* must read request header */
+	    } else {
+		waitMutex(FdRinMutex);
+		FD_SET(p->sd,&rin);	/* must read request header */
+		freeMutex(FdRinMutex);
+	    }
 	}
 	return 0;
     }
@@ -1468,20 +1471,32 @@ Conn *conn;
 	doclose(p2);
 	doclose(p1);
     } else {	/* success to connect */
+	waitMutex(FdRinMutex);
+	waitMutex(FdWinMutex);
 	if (p1->len > 0) {
-	    waitMutex(FdWinMutex);
+	    if (Debug > 8)
+		message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
+			p1->sd, p1->len);
 	    FD_SET(p1->sd,&win);
-	    freeMutex(FdWinMutex);
 	} else {
-	    waitMutex(FdRinMutex);
+	    if (Debug > 8)
+		message(LOG_DEBUG, "TCP %d: request to read", p2->sd);
 	    FD_SET(p2->sd,&rin);
-	    freeMutex(FdRinMutex);
 	}
-	if (!(p2->proto & proto_ohttp)) {
-	    waitMutex(FdRinMutex);
-	    FD_SET(p1->sd,&rin);
-	    freeMutex(FdRinMutex);
+	if (!(p2->proto & proto_ohttp_s)) {
+	    if (p2->len > 0) {
+		if (Debug > 8)
+		    message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
+			    p2->sd, p2->len);
+		FD_SET(p2->sd,&win);
+	    } else {
+		if (Debug > 8)
+		    message(LOG_DEBUG, "TCP %d: request to read", p1->sd);
+		FD_SET(p1->sd,&rin);
+	    }
 	}
+	freeMutex(FdWinMutex);
+	freeMutex(FdRinMutex);
 	waitMutex(FdEinMutex);
 	FD_SET(p2->sd,&ein);
 	FD_SET(p1->sd,&ein);
@@ -1560,6 +1575,11 @@ Stone *stonep;
 		message(LOG_DEBUG,"stone %d: accept no connection",stonep->sd);
 	    return NULL;
 	}
+#ifndef NO_FORK
+	else if (errno == EBADF && NForks > 0 && Debug <= 0) {
+	    return NULL;
+	}
+#endif
 	message(LOG_ERR,"stone %d: accept error err=%d.",stonep->sd,errno);
 	return NULL;
     }
@@ -1674,14 +1694,14 @@ Stone *stone;
 	sprintf(p2->buf,"%s\r%c",stone->p,'\n');
 	p2->start = strlen(p2->buf);
     }
-    if (p2->proto & proto_ohttp) {
+    if (p2->proto & proto_ohttp_d) {
 	sprintf(p2->buf,
 		"%s\r%c"
 		"\r%c",
 		stone->p,'\n','\n');
 	p2->len = strlen(p2->buf);
     }
-    if (reqconn(p2,&stone->sin) < 0) {
+    if (reqconn(p2,NULL,&stone->sin) < 0) {
 	if (ValidSocket(p2->sd)) closesocket(p2->sd);
 	if (ValidSocket(p1->sd)) closesocket(p1->sd);
 	p1->pair = p2->pair = NULL;
@@ -1822,13 +1842,18 @@ char *str;
     }
 }
 
+
+/* read write thread */
+/* no Mutex are needed because in the single thread */
+
 int dowrite(pair)	/* write from buf from pair->start */
 Pair *pair;
 {
     SOCKET sd = pair->sd;
     Pair *p;
     int len;
-    if (Debug > 5) message(LOG_DEBUG,"TCP %d: write ...",sd);
+    if (Debug > 5) message(LOG_DEBUG,"TCP %d: write %d bytes ...",
+			   sd, pair->len);
     if (InvalidSocket(sd)) return -1;
 #ifdef USE_SSL
     if (pair->ssl) {
@@ -2115,7 +2140,7 @@ Pair *pair;		/* read into buf from pair->pair->start */
 
 #define METHOD_LEN_MAX	10
 
-int commOutput(Pair *pair, fd_set *rinp, fd_set *winp, char *fmt, ...) {
+int commOutput(Pair *pair, fd_set *winp, char *fmt, ...) {
     Pair *p = pair->pair;
     SOCKET psd;
     char *str;
@@ -2129,17 +2154,11 @@ int commOutput(Pair *pair, fd_set *rinp, fd_set *winp, char *fmt, ...) {
     va_end(ap);
     if (p->proto & proto_base) p->len += baseEncode(str,strlen(str));
     else p->len += strlen(str);
-    waitMutex(FdWinMutex);
     FD_SET(psd,winp);		/* need to write */
-    freeMutex(FdWinMutex);
     return p->len;
 }
 
-int doproxy(pair,host,port)
-Pair *pair;
-char *host;
-int port;
-{
+int doproxy(Pair *pair, fd_set *rinp, char *host, int port) {
     struct sockaddr_in sin;
     short family;
     bzero((char *)&sin,sizeof(sin)); /* clear sin struct */
@@ -2149,7 +2168,7 @@ int port;
     }
     sin.sin_family = family;
     pair->proto &= ~proto_command;
-    return reqconn(pair,&sin);
+    return reqconn(pair,rinp,&sin);
 }
 
 int proxyCONNECT(Pair *pair, fd_set *rinp, fd_set *winp,
@@ -2172,15 +2191,11 @@ int proxyCONNECT(Pair *pair, fd_set *rinp, fd_set *winp,
     pair->len += pair->start;
     pair->start = 0;
     p = pair->pair;
-    if (p) p->proto |= proto_ohttp;	/* remove request header */
-    return doproxy(pair,parm,port);
+    if (p) p->proto |= proto_ohttp_s;	/* remove request header */
+    return doproxy(pair,rinp,parm,port);
 }
 
-int proxyCommon(pair,parm,start)
-Pair *pair;
-char *parm;
-int start;
-{
+int proxyCommon(Pair *pair, fd_set *rinp, char *parm, int start) {
     int port = 80;
     char *host;
     char *top = &pair->buf[start];
@@ -2223,17 +2238,17 @@ int start;
 	message(LOG_DEBUG,"proxy %d -> http://%s:%d",
 		(r ? r->sd : INVALID_SOCKET),host,port);
     }
-    return doproxy(pair,host,port);
+    return doproxy(pair,rinp,host,port);
 }
 
 int proxyGET(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_INFO,": GET %s",parm);
-    return proxyCommon(pair,parm,start);
+    return proxyCommon(pair,rinp,parm,start);
 }
 
 int proxyPOST(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_INFO,": POST %s",parm);
-    return proxyCommon(pair,parm,start);
+    return proxyCommon(pair,rinp,parm,start);
 }
 
 int proxyErr(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
@@ -2255,12 +2270,12 @@ int popUSER(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     ulen = strlen(parm);
     tlen = strlen(pair->p);
     if (ulen + 1 + tlen + 1 >= BUFMAX) {
-	commOutput(pair,rinp,winp,"+Err Too long user name\r\n");
+	commOutput(pair,winp,"+Err Too long user name\r\n");
 	return -1;
     }
     bcopy(pair->p, pair->p + ulen + 1, tlen + 1);
     strcpy(pair->p, parm);
-    commOutput(pair,rinp,winp,"+OK Password required for %s\r\n",parm);
+    commOutput(pair,winp,"+OK Password required for %s\r\n",parm);
     pair->proto &= ~state_mask;
     pair->proto |= 1;
     return -2;	/* read more */
@@ -2278,7 +2293,7 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     pair->p = NULL;
     if (Debug > 5) message(LOG_DEBUG,": PASS %s",parm);
     if (state < 1) {
-	commOutput(pair,rinp,winp,"-ERR USER first\r\n");
+	commOutput(pair,winp,"-ERR USER first\r\n");
 	return -2;	/* read more */
     }
     ulen = strlen(p);
@@ -2286,7 +2301,7 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     tlen = strlen(str);
     plen = strlen(parm);
     if (ulen + 1 + tlen + plen + 1 >= BUFMAX) {
-	commOutput(pair,rinp,winp,"+Err Too long password\r\n");
+	commOutput(pair,winp,"+Err Too long password\r\n");
 	return -1;
     }
     strcat(str, parm);
@@ -2308,13 +2323,13 @@ int popPASS(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
 
 int popAUTH(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_INFO,": AUTH %s",parm);
-    commOutput(pair,rinp,winp,"-ERR authorization first\r\n");
+    commOutput(pair,winp,"-ERR authorization first\r\n");
     return -2;	/* read more */
 }
 
 int popCAPA(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     message(LOG_INFO,": CAPA %s",parm);
-    commOutput(pair,rinp,winp,"-ERR authorization first\r\n");
+    commOutput(pair,winp,"-ERR authorization first\r\n");
     return -2;	/* read more */
 }
 
@@ -2484,8 +2499,10 @@ fd_set *rinp, *winp;
     if (pair->proto & proto_ohttp) {	/* over http */
 	len = rmheader(p);
 	if (len >= 0) {
-	    if (pair->proto & proto_ohttp_s)
-		commOutput(p,rinp,winp,"HTTP/1.0 200 OK\r\n\r\n");
+	    if (pair->proto & proto_ohttp_s) {
+		commOutput(p,winp,"HTTP/1.0 200 OK\r\n\r\n");
+		pair->proto &= ~proto_ohttp_s;
+	    }
 	}
     }
 #ifdef USE_POP
@@ -2510,9 +2527,10 @@ fd_set *rinp, *winp;
     }
 #endif
     if (len <= 0 && !(pair->proto & proto_close)) {
-	waitMutex(FdRinMutex);
+	if (Debug > 8) {
+	    message(LOG_DEBUG,"TCP %d: read more",sd);
+	}
 	FD_SET(sd,rinp);		/* read more */
-	freeMutex(FdRinMutex);
 	if (len < 0) pair->proto |= proto_first_r;
     }
     return len;
@@ -2534,6 +2552,8 @@ fd_set *rout, *wout, *eout;
 	}
     }
 }
+
+/* main event loop */
 
 void asyncReadWrite(pair)
 Pair *pair;
@@ -2545,6 +2565,7 @@ Pair *pair;
     Pair *p[2];
     Pair *rPair, *wPair;
     SOCKET rsd, wsd;
+    int established;
     int len;
     int i;
     ASYNC_BEGIN;
@@ -2562,8 +2583,11 @@ Pair *pair;
 	    FD_SET(p[i]->sd,&ri);
 	    p[i]->proto &= ~proto_select_r;
 	}
-	if (p[i]->proto & proto_select_w) {
-	    FD_SET(p[i]->sd,&wi);
+	if ((p[i]->proto & proto_select_w)
+	    && npairs > 1
+	    && (p[i]->proto & proto_connect)
+	    && (p[1-i]->proto & proto_connect)) {
+	    FD_SET(p[i]->sd,&wi);	/* never write unless establish */
 	    p[i]->proto &= ~proto_select_w;
 	}
 	FD_SET(p[i]->sd,&ei);
@@ -2601,6 +2625,8 @@ Pair *pair;
 			    && !(wPair->proto & proto_close)
 			    && !(rPair->proto & proto_close)) {
 			    FD_SET(wsd,&wi);
+			} else {
+			    goto leave;
 			}
 		    } else {	/* EINTR */
 			FD_SET(rsd,&ri);
@@ -2634,6 +2660,8 @@ Pair *pair;
 			    && !(rPair->proto & proto_close)
 			    && !(wPair->proto & proto_close)) {
 			    FD_SET(rsd,&ri);
+			} else {
+			    goto leave;
 			}
 		    } else {	/* EINTR */
 			FD_SET(wsd,&wi);
@@ -2643,6 +2671,7 @@ Pair *pair;
 	}
 	if (Debug > 10) select_debug("selectReadWrite2",&ri,&wi,&ei);
     }
+ leave:
     waitMutex(FdRinMutex);
     waitMutex(FdWinMutex);
     waitMutex(FdEinMutex);

@@ -1,7 +1,7 @@
 
 			    Simple Repeater
 
-			   stone version 2.1u
+			   stone version 2.1v
 
 		Copyright(c)1995-2001 by Hiroaki Sengoku
 			    sengoku@gcd.org
@@ -38,12 +38,13 @@ from outside to inside.
 
 HOWTO USE
 
-	stone [-d] [-n] [-u <max>] [-f <n>] [-a <file>] [-L <file>] [-l]
+	stone [-d] [-p] [-n] [-u <max>] [-f <n>] [-a <file>] [-L <file>] [-l]
 	      [-T <n>] [-o <n>] [-g <n>] [-t <dir>] [-z <SSL>]
 	      [-C <file>] [-P <command>]
 	      <st> [-- <st>]...
 
-	If the ``-d'' flag is used, then increase the debug level.  The
+	If the ``-d'' flag is used, then increase the debug level.  If
+	the ``-p'' flag is used, data repeated by stone are dumped.  The
 	``-z'' is the flag for SSL encryption.  If the ``-n'' is used,
 	IP addresses and service port numbers are shown instead of host
 	names and service names.  If the ``-u <max>'' flag (``<max>'' is

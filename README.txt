@@ -1,7 +1,7 @@
 
 			    Simple Repeater
 
-			   stone version 2.1u
+			   stone version 2.1v
 
 		Copyright(c)1995-2001 by Hiroaki Sengoku
 			    sengoku@gcd.org
@@ -38,12 +38,13 @@ UDP パケットを中継します。
 
 使用方法
 
-	stone [-d] [-n] [-u <max>] [-f <n>] [-a <file>] [-L <file>] [-l]
+	stone [-d] [-p] [-n] [-u <max>] [-f <n>] [-a <file>] [-L <file>] [-l]
 	      [-T <n>] [-o <n>] [-g <n>] [-t <dir>] [-z <SSL>]
 	      [-C <file>] [-P <command>]
 	      <st> [-- <st>]...
 
 	オプションとして -d を指定すると、デバッグレベルを増加させます。 
+	-p を指定すると中継したデータをダンプします。
 	-z は、SSL 暗号化のオプションです。-n を指定すると、ホスト名やサー
 	ビス名の代わりに IP アドレスやサービス番号を表示します。-u オプ
 	ションは同時に記憶できる UDP パケットの発信元の最大数を指定しま
