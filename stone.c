@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.89 2003/10/23 12:11:13 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.90 2003/10/27 08:53:24 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3483,27 +3483,28 @@ Stone *mkstone(
 		    stonep->sd,errno);
 	    exit(1);
 	}
-	if (bind(stonep->sd,(struct sockaddr*)&sin,sizeof(sin)) < 0) {
+	if (bind(stonep->sd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
 #ifdef WINDOWS
 	    errno = WSAGetLastError();
 #endif
-	    message(LOG_ERR,"stone %d: Can't bind err=%d.",stonep->sd,errno);
+	    message(LOG_ERR, "stone %d: Can't bind port=%d err=%d.",
+		    stonep->sd, ntohs(sin.sin_port), errno);
 	    exit(1);
 	}
 #ifndef NO_FORK
-	fcntl(stonep->sd,F_SETFL,O_NONBLOCK);
+	fcntl(stonep->sd, F_SETFL, O_NONBLOCK);
 #endif
 	if (sin.sin_port == 0) {
 	    i = sizeof(sin);
-	    getsockname(stonep->sd,(struct sockaddr*)&sin,&i);
+	    getsockname(stonep->sd, (struct sockaddr*)&sin, &i);
 	}
 	if (!(proto & proto_udp)) {	/* TCP */
-	    if (listen(stonep->sd,BACKLOG_MAX) < 0) {
+	    if (listen(stonep->sd, BACKLOG_MAX) < 0) {
 #ifdef WINDOWS
 		errno = WSAGetLastError();
 #endif
-		message(LOG_ERR,"stone %d: Can't listen err=%d.",
-			stonep->sd,errno);
+		message(LOG_ERR, "stone %d: Can't listen err=%d.",
+			stonep->sd, errno);
 		exit(1);
 	    }
 	}
@@ -4048,6 +4049,120 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 }
 #endif
 
+int dohyphen(char opt, int argc, char *argv[], int argi) {
+    switch(opt) {
+    case 'd':
+	Debug++;
+	break;
+    case 'p':
+	PacketDump = 1;
+	break;
+#ifndef NO_SYSLOG
+    case 'l':
+	Syslog++;
+	break;
+#endif
+    case 'L':
+	argi++;
+	if (!strcmp(argv[argi],"-")) {
+	    LogFp = stdout;
+	} else {
+	    if (LogFp && LogFp != stderr) fclose(LogFp);
+	    LogFp = fopen(argv[argi],"a");
+	    if (LogFp == NULL) {
+		LogFp = stderr;
+		message(LOG_ERR,"Can't create log file err=%d: %s",
+			errno,argv[argi]);
+		exit(1);
+	    }
+	    LogFileName = strdup(argv[argi]);
+	}
+	setbuf(LogFp,NULL);
+	break;
+    case 'a':
+	argi++;
+	if (!strcmp(argv[argi],"-")) {
+	    AccFp = stdout;
+	} else {
+	    if (AccFp && AccFp != stdout) fclose(AccFp);
+	    AccFp = fopen(argv[argi],"a");
+	    if (AccFp == NULL) {
+		message(LOG_ERR,
+			"Can't create account log file err=%d: %s",
+			errno,argv[argi]);
+		exit(1);
+	    }
+	    AccFileName = strdup(argv[argi]);
+	}
+	setbuf(AccFp,NULL);
+	break;
+    case 'i':
+	PidFile = strdup(argv[++argi]);
+	break;
+#ifndef NO_CHROOT
+    case 't':
+	RootDir = strdup(argv[++argi]);
+	break;
+#endif
+    case 'n':
+	AddrFlag = 1;
+	break;
+    case 'u':
+	OriginMax = atoi(argv[++argi]);
+	break;
+    case 'X':
+	XferBufMax = atoi(argv[++argi]);
+	break;
+    case 'T':
+	PairTimeOut = atoi(argv[++argi]);
+	break;
+#ifndef NO_SETUID
+    case 'o':
+	SetUID = atoi(argv[++argi]);
+	break;
+    case 'g':
+	SetGID = atoi(argv[++argi]);
+	break;
+#endif
+#ifndef NO_FORK
+    case 'f':
+	NForks = atoi(argv[++argi]);
+	break;
+#endif
+#ifdef UNIX_DAEMON
+    case 'D':
+	DaemonMode = 1;
+	break;
+#endif
+    case 'r':
+	ReuseAddr = 1;
+	break;
+    case 'b':
+	mkBackup(atoi(argv[argi+1]), argv[argi+2], argv[argi+3]);
+	argi += 3;
+	break;
+#ifdef USE_SSL
+    case 'q':
+	argi = sslopts(argc,argi,argv,&ClientOpts,0);
+	break;
+    case 'z':
+	argi = sslopts(argc,argi,argv,&ServerOpts,1);
+	break;
+#endif
+#ifdef CPP
+    case 'P':
+	CppCommand = strdup(argv[++argi]);
+	break;
+    case 'Q':
+	CppOptions = strdup(argv[++argi]);
+	break;
+#endif
+    default:
+	return -1;
+    }
+    return argi;
+}
+
 int doopts(int argc, char *argv[]) {
     int i;
     char *p;
@@ -4056,129 +4171,29 @@ int doopts(int argc, char *argv[]) {
 	p = argv[i];
 	if (*p == '-') {
 	    p++;
-	    while(*p) switch(*p++) {
-	    case 'd':
-		Debug++;
-		break;
-	    case 'p':
-		PacketDump = 1;
-		break;
-#ifndef NO_SYSLOG
-	    case 'l':
-		Syslog++;
-		break;
-#endif
-	    case 'L':
-		i++;
-		if (!strcmp(argv[i],"-")) {
-		    LogFp = stdout;
-		} else {
-		    if (LogFp && LogFp != stderr) fclose(LogFp);
-		    LogFp = fopen(argv[i],"a");
-		    if (LogFp == NULL) {
-			LogFp = stderr;
-			message(LOG_ERR,"Can't create log file err=%d: %s",
-				errno,argv[i]);
-			exit(1);
-		    }
-		    LogFileName = strdup(argv[i]);
+	    while(*p) {
+		int ret = dohyphen(*p, argc, argv, i);
+		if (ret >= 0) {
+		    i = ret;
+		} else switch(*p) {
+		case '-':	/* end of global options */
+		    return i+1;
+		case 'C':
+		    if (!ConfigFile) {
+			i++;
+			ConfigFile = malloc(strlen(argv[i]) + 1);
+			if (ConfigFile == NULL) {
+			    message(LOG_ERR,"Out of memory.");
+			    exit(1);
+			}
+			strcpy(ConfigFile,argv[i]);
+			break;
+		    }	/* drop through */
+		default:
+		    message(LOG_ERR,"Invalid Option: %s",argv[i]);
+		    help(argv[0]);
 		}
-		setbuf(LogFp,NULL);
-		break;
-	    case 'a':
-		i++;
-		if (!strcmp(argv[i],"-")) {
-		    AccFp = stdout;
-		} else {
-		    if (AccFp && AccFp != stdout) fclose(AccFp);
-		    AccFp = fopen(argv[i],"a");
-		    if (AccFp == NULL) {
-			message(LOG_ERR,
-				"Can't create account log file err=%d: %s",
-				errno,argv[i]);
-			exit(1);
-		    }
-		    AccFileName = strdup(argv[i]);
-		}
-		setbuf(AccFp,NULL);
-		break;
-	    case 'i':
-		PidFile = strdup(argv[++i]);
-		break;
-#ifndef NO_CHROOT
-	    case 't':
-		RootDir = strdup(argv[++i]);
-		break;
-#endif
-	    case 'n':
-		AddrFlag = 1;
-		break;
-	    case 'u':
-		OriginMax = atoi(argv[++i]);
-		break;
-	    case 'X':
-		XferBufMax = atoi(argv[++i]);
-		break;
-	    case 'T':
-		PairTimeOut = atoi(argv[++i]);
-		break;
-#ifndef NO_SETUID
-	    case 'o':
-		SetUID = atoi(argv[++i]);
-		break;
-	    case 'g':
-		SetGID = atoi(argv[++i]);
-		break;
-#endif
-#ifndef NO_FORK
-	    case 'f':
-		NForks = atoi(argv[++i]);
-		break;
-#endif
-#ifdef UNIX_DAEMON
-	    case 'D':
-		DaemonMode = 1;
-		break;
-#endif
-	    case 'r':
-		ReuseAddr = 1;
-		break;
-	    case 'b':
-		mkBackup(atoi(argv[i+1]), argv[i+2], argv[i+3]);
-		i += 3;
-		break;
-#ifdef USE_SSL
-	    case 'q':
-		i = sslopts(argc,i,argv,&ClientOpts,0);
-		break;
-	    case 'z':
-		i = sslopts(argc,i,argv,&ServerOpts,1);
-		break;
-#endif
-#ifdef CPP
-	    case 'P':
-		CppCommand = strdup(argv[++i]);
-		break;
-	    case 'Q':
-		CppOptions = strdup(argv[++i]);
-		break;
-#endif
-	    case '-':	/* end of global options */
-		return i+1;
-	    case 'C':
-		if (!ConfigFile) {
-		    i++;
-		    ConfigFile = malloc(strlen(argv[i]) + 1);
-		    if (ConfigFile == NULL) {
-			message(LOG_ERR,"Out of memory.");
-			exit(1);
-		    }
-		    strcpy(ConfigFile,argv[i]);
-		    break;
-		}	/* drop through */
-	    default:
-		message(LOG_ERR,"Invalid Option: %s",argv[i]);
-		help(argv[0]);
+		p++;
 	    }
 	} else break;
     }
@@ -4198,27 +4213,15 @@ void doargs(int argc, int i, char *argv[]) {
 	p = argv[i];
 	if (*p == '-') {
 	    p++;
-	    while(*p) switch(*p++) {
-	    case 'd':
-		Debug++;
-		break;
-	    case 'b':
-		mkBackup(atoi(argv[i+1]), argv[i+2], argv[i+3]);
-		i += 3;
-		break;
-#ifdef USE_SSL
-	    case 'q':
-		i = sslopts(argc,i,argv,&ClientOpts,0);
-		proto |= proto_ssl_d;
-		break;
-	    case 'z':
-		i = sslopts(argc,i,argv,&ServerOpts,1);
-		proto |= proto_ssl_s;
-		break;
-#endif
-	    default:
-		message(LOG_ERR,"Invalid Option: %s",argv[i]);
-		help(argv[0]);
+	    while(*p) {
+		int ret = dohyphen(*p, argc, argv, i);
+		if (ret >= 0) {
+		    i = ret;
+		} else {
+		    message(LOG_ERR,"Invalid Option: %s",argv[i]);
+		    help(argv[0]);
+		}
+		p++;
 	    }
 	    continue;
 	}
