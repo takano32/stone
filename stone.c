@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.65 2003/08/05 14:15:06 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.66 2003/08/06 01:24:27 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -115,7 +115,7 @@ typedef void (*FuncPtr)(void*);
 #define NO_SETUID
 #define NO_CHROOT
 #define ValidSocket(sd)		((sd) != INVALID_SOCKET)
-#define FdSet(fd,set)		if (!FD_ISSET((fd),(set))) FD_SET((fd),(set))
+#define FD_SET_BUG
 #undef EINTR
 #define EINTR	WSAEINTR
 #define NO_BCOPY
@@ -183,10 +183,16 @@ typedef void *(*aync_start_routine) (void *);
 typedef int SOCKET;
 #define INVALID_SOCKET		-1
 #define ValidSocket(sd)		((sd) >= 0)
-#define FdSet(fd,set)		FD_SET((fd),(set))
 #define closesocket(sd)		close(sd)
 #endif
 #define InvalidSocket(sd)	(!ValidSocket(sd))
+#ifdef FD_SET_BUG
+int FdSetBug = 0;
+#define FdSet(fd,set)		do{if (!FdSetBug || !FD_ISSET((fd),(set))) \
+					FD_SET((fd),(set));}while(0)
+#else
+#define FdSet(fd,set)		FD_SET((fd),(set))
+#endif
 
 #ifdef NO_THREAD
 #define ASYNC_BEGIN		/* */
@@ -3983,6 +3989,20 @@ void message_conns(void) {	/* dump for debug */
 	message_conn(conn);
 }
 
+#ifdef FD_SET_BUG
+void checkFdSetBug(void) {
+    fd_set set;
+    FD_SET(0, &set);
+    FD_SET(0, &set);
+    FD_CLR(0, &set);
+    if (FD_ISSET(0, &set)) {
+	if (Debug > 0)
+	    message("FD_SET bug detected");
+	FdSetBug = 1;
+    }
+}
+#endif
+
 #ifndef WINDOWS
 static void handler(int sig) {
     static unsigned int g = 0;
@@ -4172,6 +4192,9 @@ void initialize(int argc, char *argv[]) {
     pairs.next = NULL;
     conns.next = NULL;
     origins.next = NULL;
+#ifdef FD_SET_BUG
+    checkFdSetBug();
+#endif
     FD_ZERO(&rin);
     FD_ZERO(&win);
     FD_ZERO(&ein);
