@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.179 2004/09/20 16:39:01 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.180 2004/09/21 09:22:38 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -486,8 +486,11 @@ const int proto_base_d =	0x20000000;	/*        destination */
 #define proto_all	(proto_src|proto_dest)
 
 #ifdef USE_SSL
-const int sf_wb_on_r =	0x00004;	/* SSL_write blocked on read */
-const int sf_rb_on_w =	0x00008;	/* SSL_read blocked on write */
+const int sf_mask    =  0x0000f;
+const int sf_sb_on_r =  0x00010;	/* SSL_shutdown blocked on read */
+const int sf_sb_on_w =  0x00020;	/* SSL_shutdown blocked on write */
+const int sf_wb_on_r =	0x00040;	/* SSL_write blocked on read */
+const int sf_rb_on_w =	0x00080;	/* SSL_read blocked on write */
 #endif
 
 int BacklogMax = BACKLOG_MAX;
@@ -1987,85 +1990,58 @@ int doSSL_connect(Pair *pair) {
     return 1;
 }
 
-/* Blocking SSL_shutdown */
-int doSSL_shutdown(Pair *pair) {
-    SSL *ssl = pair->ssl;
-    SOCKET sd = pair->sd;
-    fd_set rout, wout;
-    struct timeval tv;
-    int ret = 0;
+void doSSL_shutdown(Pair *pair, int how) {
+    int ret;
     int err;
-    do {
-	ret = SSL_shutdown(ssl);
-	if (Debug > 9)
-	    message(LOG_DEBUG, "TCP %d: SSL_shutdown ret=%d", sd, ret);
-	if (ret <= 0) {
-	    err = SSL_get_error(ssl, ret);
-	} else {
-	    return ret;
-	}
-	FD_ZERO(&rout);
-	FD_ZERO(&wout);
-	if (err == SSL_ERROR_WANT_READ) FdSet(sd, &rout);
-	else if (err == SSL_ERROR_WANT_WRITE) FdSet(sd, &wout);
-	else if (err == SSL_ERROR_SYSCALL) {
-#ifdef WINDOWS
-	    errno = WSAGetLastError();
-#endif
-	    if (errno == EAGAIN) {
-		FdSet(sd, &rout);
-		FdSet(sd, &wout);
-	    } else {
-		unsigned long e = ERR_get_error();
-		if (e == 0) {
-#ifdef WINDOWS
-		    errno = WSAGetLastError();
-#endif
-		    if (Debug > 2)
-			message(LOG_DEBUG,
-				"TCP %d: SSL_shutdown ret=%d errno=%d",
-				sd, ret, errno);
-		} else {
-		    message(priority(pair), "TCP %d: SSL_shutdown %s",
-			    sd, ERR_error_string(e, NULL));
-		}
-		return ret;
-	    }
-	} else {
-	    message(priority(pair), "TCP %d: SSL_shutdown err=%d", sd, err);
-	    return ret;
-	}
-	tv.tv_sec = 1;
-	tv.tv_usec = 0;
-    } while (select(FD_SETSIZE, &rout, &wout, NULL, &tv) >= 0);
-#ifdef WINDOWS
-    errno = WSAGetLastError();
-#endif
-    if (errno != EINTR)
-	message(priority(pair), "TCP %d: doSSL_shutdown select errno=%d",
-		errno);
-    return 0;
-}
-
-int SSL_smart_shutdown(Pair *pair, int how) {
-    SSL *ssl = pair->ssl;
-    SOCKET sd = pair->sd;
-    int ret = 0;
-    if (!ssl) return 1;	/* other thread may close the object, ignore */
-    ret = doSSL_shutdown(pair);
-    if (!ret) {
-	if (shutdown(sd, 1) < 0) {
-#ifdef WINDOWS
-	    errno = WSAGetLastError();
-#endif
-	    message(priority(pair),
-		    "TCP %d: shutdown 1 for SSL_shutdown errno=%d",
-		    sd, errno);
-	}
-	ret = doSSL_shutdown(pair);
+    SOCKET sd;
+    SSL *ssl;
+    if (!pair) return;
+    sd = pair->sd;
+    if (InvalidSocket(sd)) return;
+    ssl = pair->ssl;
+    if (!ssl) return;
+    if (how >= 0) pair->ssl_flag = (how & sf_mask);
+    else pair->ssl_flag = sf_mask;
+    ret = SSL_shutdown(ssl);
+    if (ret > 0) {	/* success */
+	if (Debug > 4)
+	    message(LOG_DEBUG, "TCP %d: SSL_shutdown sf=%x",
+		    sd, pair->ssl_flag);
+	if ((pair->ssl_flag & sf_mask) != sf_mask)
+	    shutdown(sd, (pair->ssl_flag & sf_mask));
+	return;
     }
-    if (how != 1) ret = shutdown(sd, how);
-    return ret;
+    err = SSL_get_error(ssl, ret);
+    if (err == SSL_ERROR_WANT_READ) {
+	pair->ssl_flag |= sf_sb_on_r;
+    } else if (err == SSL_ERROR_WANT_WRITE) {
+	pair->ssl_flag |= sf_sb_on_w;
+    } else if (err == SSL_ERROR_SYSCALL) {
+	unsigned long e = ERR_get_error();
+	if (e == 0) {
+#ifdef WINDOWS
+	    errno = WSAGetLastError();
+#endif
+	    if (errno == 0) {
+		return;
+	    } else if (errno == EINTR) {
+		pair->ssl_flag |= (sf_sb_on_r | sf_sb_on_r);
+		if (Debug > 4)
+		    message(LOG_DEBUG, "TCP %d: SSL_shutdown "
+			    "interrupted sf=%x", sd, pair->ssl_flag);
+		return;
+	    }
+	    message(priority(pair), "TCP %d: SSL_shutdown "
+		    "I/O error sf=%x errno=%d", sd, pair->ssl_flag, errno);
+	} else {
+	    message(priority(pair), "TCP %d: SSL_shutdown sf=%x %s",
+		    sd, pair->ssl_flag, ERR_error_string(e, NULL));
+	}
+	return;
+    }
+    if (Debug > 4)
+	message(LOG_DEBUG, "TCP %d: SSL_shutdown interrupted sf=%x err=%d",
+		sd, pair->ssl_flag, err);
 }
 #endif	/* USE_SSL */
 
@@ -2122,64 +2098,6 @@ void message_time_log(Pair *pair) {
 		(int)(now - log->clock), log->str);
 	log->clock = 0;
     }
-}
-
-int doshutdown(Pair *pair, int how) {
-    SOCKET sd;
-    int ret = 0;
-    int err;
-    if (!pair) return -1;
-    sd = pair->sd;
-    if ((pair->proto & proto_close)
-	|| InvalidSocket(sd) || !(pair->proto & proto_connect))
-	return -1;	/* no connection */
-    if (pair->proto & proto_shutdown)
-	return 0;	/* no need to shutdown */
-    pair->proto |= proto_shutdown;
-    if (Debug > 2) message(LOG_DEBUG, "TCP %d: shutdown %d", sd, how);
-#ifdef USE_SSL
-    if (pair->ssl) err = SSL_smart_shutdown(pair, how);
-    else
-#endif
-	err = shutdown(sd, how);
-    if (err < 0) {
-	ret = err;
-#ifdef WINDOWS
-	errno = WSAGetLastError();
-#endif
-	message(priority(pair), "TCP %d: shutdown %d err=%d",
-		sd, how, errno);
-    }
-    if (pair->proto & proto_eof) {
-	pair->proto |= proto_close;
-	if (Debug > 2)
-	    message(LOG_DEBUG, "TCP %d: EOF & shutdown, so closing... "
-		    "tx:%d rx:%d", sd, pair->tx, pair->rx);
-    }
-    if (ret < 0) {
-	pair->proto |= (proto_eof | proto_close);
-	if (Debug > 2)
-	    message(LOG_DEBUG, "TCP %d: fail to shutdown, so closing... "
-		    "tx:%d rx:%d", sd, pair->tx, pair->rx);
-    }
-    return ret;
-}
-
-void doclose(Pair *pair) {	/* close pair */
-    Pair *p = pair->pair;
-    SOCKET sd = pair->sd;
-    message_time_log(pair);
-    if (!(pair->proto & proto_close)) {		/* request to close */
-	pair->proto |= (proto_eof | proto_shutdown | proto_close);
-	if (ValidSocket(sd)) {
-#ifdef USE_SSL
-	    if (pair->ssl) doSSL_shutdown(pair);    /* reply close_notify */
-#endif
-	    if (Debug > 2) message(LOG_DEBUG, "TCP %d: closing... "
-				   "tx:%d rx:%d", sd, pair->tx, pair->rx);
-	}
-    }
-    doshutdown(p, 2);
 }
 
 /* pair connect to destination */
@@ -2391,8 +2309,14 @@ void asyncConn(Conn *conn) {
     if (ret < 0		/* fail to connect */
 	|| (p1->proto & proto_close)
 	|| (p2->proto & proto_close)) {
-	doclose(p2);
-	doclose(p1);
+#ifdef USE_SSL
+	if (ssl) doSSL_shutdown(p2, 2);
+	else shutdown(p2->sd, 2);
+#else
+	shutdown(p2->sd, 2);
+#endif
+	p2->proto |= (proto_shutdown | proto_close);
+	p1->proto |= proto_close;
 	goto finish;
     }
     waitMutex(FdRinMutex);
@@ -2965,6 +2889,17 @@ void message_conns(void) {	/* dump for debug */
 
 /* read write thread */
 /* no Mutex are needed because in the single thread */
+
+void setclose(Pair *pair, int flag) {	/* set close flag */
+    SOCKET sd = pair->sd;
+    message_time_log(pair);
+    if (!(pair->proto & proto_close)) {		/* request to close */
+	pair->proto |= (flag | proto_close);
+	if (Debug > 2 && ValidSocket(sd))
+	    message(LOG_DEBUG, "TCP %d: closing... "
+		    "tx:%d rx:%d", sd, pair->tx, pair->rx);
+    }
+}
 
 int dowrite(Pair *pair) {	/* write from buf from pair->start */
     SOCKET sd = pair->sd;
@@ -3820,8 +3755,22 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
 		message(LOG_DEBUG, "TCP %d: read more from %d", psd, sd);
 	    }
 	} else if (len < 0) {
-	    doclose(p);
-	    doclose(pair);
+#ifdef USE_SSL
+	    if (pair->ssl) doSSL_shutdown(pair, 2);
+	    else shutdown(sd, 2);
+#else
+	    shutdown(sd, 2);
+#endif
+	    setclose(pair, proto_shutdown);
+	    if (ValidSocket(psd)) {
+#ifdef USE_SSL
+		if (p->ssl) doSSL_shutdown(p, 2);
+		else shutdown(psd, 2);
+#else
+		shutdown(psd, 2);
+#endif
+		setclose(p, proto_shutdown);
+	    }
 	    return -1;
 	} else {
 	    len = p->len;
@@ -3948,8 +3897,18 @@ void asyncReadWrite(Pair *pair) {
 		FD_CLR(sd, &ri);
 		FD_CLR(sd, &wi);
 		FD_CLR(sd, &ei);
-		doclose(p[i]);
+		shutdown(sd, 2);
+		setclose(p[i], proto_shutdown);
 		goto leave;
+#ifdef USE_SSL
+	    } else if (((p[i]->ssl_flag & sf_sb_on_r) && FD_ISSET(sd, &ro))
+		       || ((p[i]->ssl_flag & sf_sb_on_w) && FD_ISSET(sd, &wo))
+		) {
+		p[i]->ssl_flag &= ~(sf_sb_on_r | sf_sb_on_w);
+		FD_CLR(sd, &ri);
+		FD_CLR(sd, &wi);
+		doSSL_shutdown(p[i], -1);
+#endif
 	    } else if ((!(p[i]->proto & proto_eof)
 			&& FD_ISSET(sd, &ro)	/* read */
 #ifdef USE_SSL
@@ -3980,17 +3939,43 @@ void asyncReadWrite(Pair *pair) {
 			/* and not bi-directional EOF
 			   and peer is not yet shutdowned, */
 			&& ValidSocket(wsd)) {	/* and pair is valid, */
+			/*
+			  recevied EOF from rPair,
+			  so reply SSL notify to rPair
+			  and send SSL notify and FIN to wPair...
+			*/
 			rPair->proto |= proto_eof;	/* no more to read */
-			if (doshutdown(wPair, 1) < 0) {
-			    doclose(rPair);
-			    goto leave;
-			}
+#ifdef USE_SSL
+			/*
+			  Don't send notify, or further SSL_write will fail
+			  if (rPair->ssl) doSSL_shutdown(rPair, 0);
+			  else shutdown(rsd, 0);
+			*/
+			if (wPair->ssl) doSSL_shutdown(wPair, 1);
+			else shutdown(wsd, 1);
+#else
+			shutdown(rsd, 0);
+			shutdown(wsd, 1);	/* send FIN */
+#endif
+			wPair->proto |= proto_shutdown;
 		    } else {
-			/* error or already shutdowned
-			   or bi-directional EOF */
-			if (wPair) doclose(wPair);
-			doclose(rPair);
-			goto leave;
+			/*
+			  error, already shutdowned, or bi-directional EOF,
+			  so reply SSL notify to rPair,
+			  send SSL notify to wPair and shutdown wPair,
+			  set close flag
+			*/
+#ifdef USE_SSL
+			if (rPair->ssl) doSSL_shutdown(rPair, 2);
+			else shutdown(rsd, 2);
+			if (wPair->ssl) doSSL_shutdown(wPair, 2);
+			else shutdown(wsd, 2);
+#else
+			shutdown(rsd, 2);
+			shutdown(wsd, 2);
+#endif
+			setclose(rPair, (proto_eof | proto_shutdown));
+			setclose(wPair, proto_shutdown);
 		    }
 		} else {
 		    if (len > 0) {
@@ -4010,11 +3995,6 @@ void asyncReadWrite(Pair *pair) {
 			FdSet(rsd, &ri);
 		    }
 		}
-#ifdef USE_SSL
-		if (rPair->ssl_flag & sf_rb_on_w) {	/* WANT_WRITE */
-		    FdSet(rsd, &wi);
-		}
-#endif
 	    } else if ((!(p[i]->proto & proto_shutdown)
 			&& FD_ISSET(sd, &wo))	/* write */
 #ifdef USE_SSL
@@ -4039,12 +4019,21 @@ void asyncReadWrite(Pair *pair) {
 		wPair->count -= REF_UNIT;
 		if (len < 0 || (wPair->proto & proto_close) || rPair == NULL) {
 		    if (rPair && ValidSocket(rsd)) {
-			FD_CLR(rsd, &ri);
-			doclose(rPair);	/* if error, close */
+#ifdef USE_SSL
+			if (rPair->ssl) doSSL_shutdown(rPair, 2);
+			else shutdown(rsd, 2);
+#else
+			shutdown(rsd, 2);
+#endif
+			setclose(rPair, proto_shutdown);
 		    }
-		    FD_CLR(wsd, &wi);
-		    doclose(wPair);
-		    goto leave;
+#ifdef USE_SSL
+		    if (wPair->ssl) doSSL_shutdown(wPair, 2);
+		    else shutdown(wsd, 2);
+#else
+		    shutdown(wsd, 2);
+#endif
+		    setclose(wPair, proto_shutdown);
 		} else {
 		    /* (wPair->proto & proto_eof) may be true */
 		    if (wPair->len <= 0) {	/* all written */
@@ -4073,12 +4062,17 @@ void asyncReadWrite(Pair *pair) {
 			FdSet(wsd, &wi);
 		    }
 		}
-#ifdef USE_SSL
-		if (wPair->ssl_flag & sf_wb_on_r) {	/* WANT_READ */
-		    FdSet(wsd, &ri);
-		}
-#endif
 	    }
+#ifdef USE_SSL
+	    if (p[i]->ssl_flag & (sf_wb_on_r | sf_sb_on_r)) {
+		/* SSL_* is blocked on read, so want read */
+		FdSet(sd, &ri);
+	    }
+	    if (p[i]->ssl_flag & (sf_rb_on_w | sf_sb_on_w)) {
+		/* SSL_* is blocked on write, so want write */
+		FdSet(sd, &wi);
+	    }
+#endif
 	}
 	if (Debug > 10)
 	    message_select(LOG_DEBUG, "selectReadWrite2", &ri, &wi, &ei);
@@ -4116,9 +4110,37 @@ void asyncReadWrite(Pair *pair) {
 }
 
 void asyncClose(Pair *pair) {
+    SOCKET sd = pair->sd;
+#ifdef USE_SSL
+    fd_set ro, wo;
+    struct timeval tv;
+#endif
     ASYNC_BEGIN;
+    if (InvalidSocket(sd)) goto exit;
     if (Debug > 8) message(LOG_DEBUG, "asyncClose...");
-    doclose(pair);
+#ifdef USE_SSL
+    do {
+	if (pair->ssl) doSSL_shutdown(pair, 2);
+	else {
+	    shutdown(sd, 2);
+	    break;
+	}
+	FD_ZERO(&ro);
+	FD_ZERO(&wo);
+	if (pair->ssl_flag & sf_sb_on_r) {
+	    FdSet(sd, &ro);
+	}
+	if (pair->ssl_flag & sf_sb_on_w) {
+	    FdSet(sd, &wo);
+	}
+	tv.tv_sec = 0;
+	tv.tv_usec = TICK_SELECT;
+    } while (select(FD_SETSIZE, &ro, &wo, NULL, &tv) >= 0);
+#else
+    shutdown(sd, 2);
+#endif
+ exit:
+    setclose(pair, proto_shutdown);
     ASYNC_END;
 }
 
