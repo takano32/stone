@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.164 2004/09/13 02:54:14 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.165 2004/09/13 02:56:16 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3645,7 +3645,7 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
 	    break;
 #endif
 	case command_health:
-	    if (memCheck()) len = -1;
+	    if (!memCheck()) len = -1;
 	    else len = docomm(p, rinp, winp, healthComm);
 	    break;
 	default:
