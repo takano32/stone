@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.56 2003/05/25 04:04:31 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.57 2003/07/11 03:34:46 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -353,6 +353,7 @@ typedef struct _Comm {
 
 Stone *stones = NULL;
 Stone *oldstones = NULL;
+int ReuseAddr = 0;
 Pair pairs;
 Pair *trash = NULL;
 Conn conns;
@@ -3154,6 +3155,11 @@ Stone *mkstone(
 	    stonep->sd = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);/* UDP */
 	} else {
 	    stonep->sd = socket(AF_INET,SOCK_STREAM,0);		/* TCP */
+	    if (ReuseAddr && ValidSocket(stonep->sd)) {
+		i = 1;
+		setsockopt(stonep->sd, SOL_SOCKET, SO_REUSEADDR,
+			   &i, sizeof(i));
+	    }
 	}
 	if (InvalidSocket(stonep->sd)) {
 #ifdef WINDOWS
@@ -3289,6 +3295,7 @@ void help(char *com) {
 	    "      -i <file>         ; write process ID to <file>\n"
 	    "      -X <n>            ; size [byte] of Xfer buffer\n"
 	    "      -T <n>            ; timeout [sec] of TCP sessions\n"
+	    "      -r                ; reuse socket\n"
 #ifndef NO_SETUID
 	    "      -o <n>            ; set uid to <n>\n"
 	    "      -g <n>            ; set gid to <n>\n"
@@ -3769,6 +3776,9 @@ int doopts(int argc, char *argv[]) {
 		DaemonMode = 1;
 		break;
 #endif
+	    case 'r':
+		ReuseAddr = 1;
+		break;
 #ifdef USE_SSL
 	    case 'q':
 		i = sslopts(argc,i,argv,&ClientOpts,0);
@@ -4278,3 +4288,11 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 #endif
+
+/*
+  For Gnu Emacs.
+  Local Variables:
+  tab-width: 8
+  c-basic-offset: 4
+  End:
+*/
