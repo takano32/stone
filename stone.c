@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.175 2004/09/17 10:30:08 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.176 2004/09/18 04:17:47 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -437,7 +437,7 @@ time_t lastScanBackups = 0;
 time_t lastEstablished = 0;
 time_t lastReadWrite = 0;
 Pair pairs;
-Pair *trash = NULL;
+Pair trash;
 Conn conns;
 Origin origins;
 int OriginMax = 10;
@@ -2076,7 +2076,7 @@ void freePair(Pair *pair) {
     if (!pair) return;
     sd = pair->sd;
     pair->sd = INVALID_SOCKET;
-    if (ValidSocket(sd)) closesocket(sd);
+    if (Debug > 8) message(LOG_DEBUG, "TCP %d: freePair ...", sd);
     p = pair->p;
     if (p) {
 	pair->p = NULL;
@@ -2090,10 +2090,21 @@ void freePair(Pair *pair) {
 #ifdef USE_SSL
     ssl = pair->ssl;
     if (ssl) {
+	int state;
 	pair->ssl = NULL;
+	state = SSL_get_shutdown(ssl);
+	if (!(state & SSL_RECEIVED_SHUTDOWN) && Debug > 2) {
+	    message(LOG_DEBUG, "TCP %d: SSL close notify was not received",
+		    sd);
+	}
+	if (!(state & SSL_SENT_SHUTDOWN)) {
+	    message(LOG_ERR, "TCP %d: SSL close notify was not sent", sd);
+	    SSL_set_shutdown(ssl, (state | SSL_SENT_SHUTDOWN));
+	}
 	SSL_free(ssl);
     }
 #endif
+    if (ValidSocket(sd)) closesocket(sd);
     free(pair);
 }
 
@@ -2849,58 +2860,76 @@ void asyncAccept(Stone *stone) {
 }
 
 int scanClose(void) {	/* scan close request */
-    Pair *p1, *p2;
-    p1 = trash;
-    trash = NULL;
+    Pair *p1, *p2, *p;
+    int n = 0;
+    int m = 0;
+    p1 = trash.next;
     while (p1 != NULL) {
+	SOCKET sd;
 	p2 = p1;
 	p1 = p1->next;
+	if (p2->count > 0) {
+	    p2->count--;
+	    n++;
+	    continue;
+	}
+	sd = p2->sd;
+	if (ValidSocket(sd)) {
+	    waitMutex(FdRinMutex);
+	    if (FD_ISSET(sd, &rin)) {
+		FD_CLR(sd, &rin);
+		p2->count = REF_UNIT;
+	    }
+	    freeMutex(FdRinMutex);
+	    waitMutex(FdWinMutex);
+	    if (FD_ISSET(sd, &win)) {
+		FD_CLR(sd, &win);
+		p2->count = REF_UNIT;
+	    }
+	    freeMutex(FdWinMutex);
+	    waitMutex(FdEinMutex);
+	    if (FD_ISSET(sd, &ein)) {
+		FD_CLR(sd, &ein);
+		p2->count = REF_UNIT;
+	    }
+	    freeMutex(FdEinMutex);
+	    if (p2->count > 0) {
+		n++;
+		continue;
+	    }
+	}
+	p = p2->prev;
+	if (p) p->next = p1;	/* remove `p2' from trash */
+	if (p1) p1->prev = p;
 	freePair(p2);
+	m++;
     }
+    if (Debug > 8 && (n > 0 || m > 0))
+	message(LOG_DEBUG, "trash: queued=%d, removed=%d", n, m);
     p1 = pairs.next;
     while (p1 != NULL) {
 	p2 = p1;
 	p1 = p1->next;
-	if (InvalidSocket(p2->sd)) {
-	    Pair *p;
-	    waitMutex(PairMutex);
-	    p = p2->prev;
-	    if (p) p->next = p1;	/* remove `p2' from list */
-	    if (p1) p1->prev = p;
-	    p = p2->pair;
-	    if (p) {
-		p->pair = NULL;
-		doclose(p);
-	    }
-	    freeMutex(PairMutex);
-	    p2->next = trash;		/* push `p2' to trash */
-	    trash = p2;
-	} else if (p2->proto & proto_close) {
-	    if (p2->count > 0) {
-		p2->count--;
-	    } else {
-		waitMutex(FdRinMutex);
-		waitMutex(FdWinMutex);
-		waitMutex(FdEinMutex);
-		if (!FD_ISSET(p2->sd, &rin) &&
-		    !FD_ISSET(p2->sd, &win) &&
-		    !FD_ISSET(p2->sd, &ein)) {
-		    SOCKET sd;
-		    sd = p2->sd;
-		    p2->sd = INVALID_SOCKET;
-		    if (ValidSocket(sd)) closesocket(sd);
-		    if (Debug > 3)
-			message(LOG_DEBUG, "TCP %d: closesocket", sd);
-		} else {
-		    FD_CLR(p2->sd, &rin);
-		    FD_CLR(p2->sd, &win);
-		    FD_CLR(p2->sd, &ein);
-		}
-		freeMutex(FdEinMutex);
-		freeMutex(FdWinMutex);
-		freeMutex(FdRinMutex);
-	    }
+	if (!(p2->proto & proto_close)) continue;	/* skip */
+	if (p2->count > 0) {
+	    p2->count--;
+	    continue;
 	}
+	waitMutex(PairMutex);
+	p = p2->prev;
+	if (p) p->next = p1;	/* remove `p2' from list */
+	if (p1) p1->prev = p;
+	p = p2->pair;
+	if (p) {
+	    p->pair = NULL;
+	    doclose(p);
+	}
+	freeMutex(PairMutex);
+	if (trash.next) trash.next->prev = p2;	/* push `p2' to trash */
+	p2->prev = &trash;
+	p2->count = REF_UNIT;
+	p2->next = trash.next;
+	trash.next = p2;
     }
     return 1;
 }
@@ -3532,10 +3561,10 @@ int nStones(void) {
     return n;
 }
 
-int nPairs(void) {
+int nPairs(Pair *top) {
     int n = 0;
     Pair *pair;
-    for (pair=pairs.next; pair != NULL; pair=pair->next) n++;
+    for (pair=top; pair != NULL; pair=pair->next) n++;
     return n;
 }
 
@@ -3609,8 +3638,8 @@ int healthHELO(Pair *pair, fd_set *rinp, fd_set *winp, char *parm, int start) {
     time_t now;
     time(&now);
     snprintf(str, BUFMAX-1,
-	     "stone=%d pair=%d conn=%d established=%d readwrite=%d async=%d",
-	     nStones(), nPairs(), nConns(),
+	     "stone=%d pair=%d trash=%d conn=%d established=%d readwrite=%d async=%d",
+	     nStones(), nPairs(pairs.next), nPairs(trash.next), nConns(),
 	     (int)(now - lastEstablished), (int)(now - lastReadWrite),
 	     AsyncCount);
     if (Debug) message(LOG_DEBUG, ": HELO %s: %s", parm, str);
@@ -4476,7 +4505,7 @@ void repeater(void) {
     rout = rin;
     wout = win;
     eout = ein;
-    if (conns.next || spin > 0 || AsyncCount > 0) {
+    if (conns.next || trash.next || spin > 0 || AsyncCount > 0) {
 	if (AsyncCount == 0 && spin > 0) spin--;
 	timeout = &tv;
 	timeout->tv_sec = 0;
@@ -5834,6 +5863,7 @@ void initialize(int argc, char *argv[]) {
 	message(LOG_DEBUG, "Debug level: %d", Debug);
     }
     pairs.next = NULL;
+    trash.next = NULL;
     conns.next = NULL;
     origins.next = NULL;
 #ifdef FD_SET_BUG
