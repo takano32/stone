@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.200 2004/10/23 01:47:53 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.201 2004/10/23 05:03:24 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2430,7 +2430,6 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
 }
 
 void asyncConn(Conn *conn) {
-    int ret;
     Pair *p1, *p2;
     ASYNC_BEGIN;
     p1 = conn->pair;
@@ -2910,10 +2909,12 @@ void asyncAccept(Stone *stone) {
 	p2->buf[i++] = '\n';
 	p2->len = i;
     }
-    if (reqconn(p2, &stone->sins[0]) < 0) {	/* 0 is default */
-	freePair(p2);
-	freePair(p1);
-	goto exit;
+    if (p1->proto & proto_connect) {
+	if (reqconn(p2, &stone->sins[0]) < 0) {	/* 0 is default */
+	    freePair(p2);
+	    freePair(p1);
+	    goto exit;
+	}
     }
     waitMutex(PairMutex);
     p2->next = pairs.next;	/* insert pair */
@@ -4100,6 +4101,8 @@ void asyncReadWrite(Pair *pair) {	/* pair must be source side */
 		    /* SSL_accept fails */
 		    p[i]->proto |= proto_close;
 		}
+		if (p[i]->proto & proto_connect)
+		    reqconn(p[1-i], &p[i]->stone->sins[0]);
 #endif
 	    } else if ((!(p[i]->proto & proto_eof)
 			&& FD_ISSET(sd, &ro)	/* read */
