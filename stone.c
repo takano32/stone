@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.158 2004/09/10 02:08:58 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.159 2004/09/10 06:47:38 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1777,11 +1777,15 @@ static void printSSLinfo(SSL *ssl) {
 	ASN1_INTEGER *n = X509_get_serialNumber(peer);
 	if (n) message(LOG_INFO, "[SSL serial=%lx]", ASN1_INTEGER_get(n));
 	p = X509_NAME_oneline(X509_get_subject_name(peer), NULL, 0);
-	if (p) message(LOG_INFO, "[SSL subject=%s]", p);
-	free(p);
+	if (p) {
+	    message(LOG_INFO, "[SSL subject=%s]", p);
+	    free(p);
+	}
 	p = X509_NAME_oneline(X509_get_issuer_name(peer), NULL, 0);
-	if (p) message(LOG_INFO, "[SSL issuer=%s]", p);
-	free(p);
+	if (p) {
+	    message(LOG_INFO, "[SSL issuer=%s]", p);
+	    free(p);
+	}
 	X509_free(peer);
     }
 }
@@ -1789,20 +1793,19 @@ static void printSSLinfo(SSL *ssl) {
 int trySSL_accept(Pair *pair) {
     int ret;
     unsigned long err;
+    SSL *ssl = pair->ssl;
+    if (!ssl) return -1;
     if (pair->ssl_flag & sf_intr) {
-	if (SSL_want_nothing(pair->ssl)) goto finished;
+	if (SSL_want_nothing(ssl)) goto finished;
     }
-    ret = SSL_accept(pair->ssl);
+    ret = SSL_accept(ssl);
     if (Debug > 4)
 	message(LOG_DEBUG, "TCP %d: SSL_accept ret=%d, state=%x, "
 		"finished=%x, in_init=%x/%x",
-		pair->sd, ret,
-		SSL_state(pair->ssl),
-		SSL_is_init_finished(pair->ssl),
-		SSL_in_init(pair->ssl),
-		SSL_in_accept_init(pair->ssl));
+		pair->sd, ret, SSL_state(ssl), SSL_is_init_finished(ssl),
+		SSL_in_init(ssl), SSL_in_accept_init(ssl));
     if (ret < 0) {
-	err = SSL_get_error(pair->ssl, ret);
+	err = SSL_get_error(ssl, ret);
 	if (err == SSL_ERROR_NONE
 	    || err == SSL_ERROR_WANT_READ
 	    || err == SSL_ERROR_WANT_WRITE) {
@@ -1812,7 +1815,6 @@ int trySSL_accept(Pair *pair) {
 	    pair->ssl_flag |= sf_intr;
 	    return 0;	/* EINTR */
 	} else if (err) {
-	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
 	    if (err == SSL_ERROR_SYSCALL) {
 #ifdef WINDOWS
@@ -1833,8 +1835,7 @@ int trySSL_accept(Pair *pair) {
 	    return -1;
 	}
     }
-    if (SSL_in_accept_init(pair->ssl)) {
-	SSL *ssl = pair->ssl;
+    if (SSL_in_accept_init(ssl)) {
 	pair->ssl = NULL;
 	if (pair->stone->ssl_server->verbose) {
 	    message(LOG_NOTICE, "TCP %d: SSL_accept unexpected EOF", pair->sd);
@@ -1844,7 +1845,7 @@ int trySSL_accept(Pair *pair) {
 	return -1;	/* unexpected EOF */
     }
  finished:
-    if (pair->stone->ssl_server->verbose) printSSLinfo(pair->ssl);
+    if (pair->stone->ssl_server->verbose) printSSLinfo(ssl);
     if (Debug > 3) {
 	SSL_CTX *ctx = pair->stone->ssl_server->ctx;
 	message(LOG_DEBUG,
@@ -1857,28 +1858,46 @@ int trySSL_accept(Pair *pair) {
 }
 
 int doSSL_accept(Pair *pair) {
+    SSL *ssl;
     int ret;
-    if (pair->ssl) SSL_free(pair->ssl);
-    pair->ssl = SSL_new(pair->stone->ssl_server->ctx);
-    SSL_set_ex_data(pair->ssl, PairIndex, pair);
-    SSL_set_fd(pair->ssl, pair->sd);
-    ret = trySSL_accept(pair);
+    ssl = pair->ssl;
+    pair->ssl = NULL;
+    if (ssl) SSL_free(ssl);
+    ssl = SSL_new(pair->stone->ssl_server->ctx);
+    if (ssl) {
+	SSL_set_ex_data(ssl, PairIndex, pair);
+	SSL_set_fd(ssl, pair->sd);
+	pair->ssl = ssl;
+	ret = trySSL_accept(pair);
+    } else {
+	ret = -1;
+    }
     return ret;
 }
 
 int doSSL_connect(Pair *pair) {
+    SSL *ssl;
     int err, ret;
+    ssl = pair->ssl;
     if (!(pair->ssl_flag & sf_intr)) {
-	if (pair->ssl) SSL_free(pair->ssl);
-	pair->ssl = SSL_new(pair->stone->ssl_client->ctx);
-	SSL_set_ex_data(pair->ssl, PairIndex, pair);
-	SSL_set_fd(pair->ssl, pair->sd);
+	pair->ssl = NULL;
+	if (ssl) SSL_free(ssl);
+	ssl = SSL_new(pair->stone->ssl_client->ctx);
+	if (ssl) {
+	    pair->ssl = ssl;
+	    SSL_set_ex_data(ssl, PairIndex, pair);
+	    SSL_set_fd(ssl, pair->sd);
+	} else {
+	    return -1;
+	}
+    } else if (ssl) {
+	if (SSL_want_nothing(ssl)) goto finished;
     } else {
-	if (SSL_want_nothing(pair->ssl)) goto finished;
+	return -1;
     }
-    ret = SSL_connect(pair->ssl);
+    ret = SSL_connect(ssl);
     if (ret < 0) {
-	err = SSL_get_error(pair->ssl, ret);
+	err = SSL_get_error(ssl, ret);
 	if (err== SSL_ERROR_NONE
 		|| err == SSL_ERROR_WANT_READ
 		|| err == SSL_ERROR_WANT_WRITE) {
@@ -1888,7 +1907,6 @@ int doSSL_connect(Pair *pair) {
 	    pair->ssl_flag |= sf_intr;
 	    return 0;	/* EINTR */
 	} else if (err) {
-	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
 	    message(priority(pair), "TCP %d: SSL_connect err=%d %s",
 		    pair->sd, err,
@@ -1899,7 +1917,7 @@ int doSSL_connect(Pair *pair) {
 	}
     }
  finished:
-    if (pair->stone->ssl_client->verbose) printSSLinfo(pair->ssl);
+    if (pair->stone->ssl_client->verbose) printSSLinfo(ssl);
     pair->ssl_flag &= ~sf_intr;
     if (Debug > 3) {
 	SSL_CTX *ctx = pair->stone->ssl_client->ctx;
@@ -2703,12 +2721,12 @@ int scanClose(void) {	/* scan close request */
 	if (p2->p) {
 	    char *p = p2->p;
 	    p2->p = NULL;
-	    free(p);
+	    if (p) free(p);
 	}
 	if (p2->log) {
 	    TimeLog *log = p2->log;
 	    p2->log = NULL;
-	    free(log);
+	    if (log) free(log);
 	}
 	freePair(p2);
     }
@@ -3183,6 +3201,10 @@ static char *comm_match(char *buf, char *str) {
     return buf;
 }
 
+int islocalhost(struct in_addr *addrp) {
+    return ntohl(addrp->s_addr) == 0x7F000001L;
+}
+
 int doproxy(Pair *pair, fd_set *rinp, char *host, int port) {
     struct sockaddr_in sin;
     short family;
@@ -3193,6 +3215,11 @@ int doproxy(Pair *pair, fd_set *rinp, char *host, int port) {
     }
     sin.sin_family = family;
     pair->proto &= ~proto_command;
+    if (islocalhost(&sin.sin_addr)) {
+	TimeLog *log = pair->log;
+	pair->log = NULL;
+	if (log) free(log);
+    }
     return reqconn(pair, rinp, &sin);
 }
 
