@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.160 2004/09/10 16:35:43 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.161 2004/09/11 15:34:45 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1774,18 +1774,13 @@ static void printSSLinfo(SSL *ssl) {
     message(LOG_INFO, "[SSL cipher=%s]", p);
     peer = SSL_get_peer_certificate(ssl);
     if (peer) {
+	char buf[BUFMAX];
 	ASN1_INTEGER *n = X509_get_serialNumber(peer);
 	if (n) message(LOG_INFO, "[SSL serial=%lx]", ASN1_INTEGER_get(n));
-	p = X509_NAME_oneline(X509_get_subject_name(peer), NULL, 0);
-	if (p) {
-	    message(LOG_INFO, "[SSL subject=%s]", p);
-	    free(p);
-	}
-	p = X509_NAME_oneline(X509_get_issuer_name(peer), NULL, 0);
-	if (p) {
-	    message(LOG_INFO, "[SSL issuer=%s]", p);
-	    free(p);
-	}
+	if (X509_NAME_oneline(X509_get_subject_name(peer), buf, BUFMAX-1))
+	    message(LOG_INFO, "[SSL subject=%s]", buf);
+	if (X509_NAME_oneline(X509_get_issuer_name(peer), buf, BUFMAX-1))
+	    message(LOG_INFO, "[SSL issuer=%s]", buf);
 	X509_free(peer);
     }
 }
@@ -1815,7 +1810,6 @@ int trySSL_accept(Pair *pair) {
 	    pair->ssl_flag |= sf_intr;
 	    return 0;	/* EINTR */
 	} else if (err) {
-	    pair->ssl = NULL;
 	    if (err == SSL_ERROR_SYSCALL) {
 #ifdef WINDOWS
 		errno = WSAGetLastError();
@@ -1831,17 +1825,14 @@ int trySSL_accept(Pair *pair) {
 			ERR_error_string(ERR_get_error(), NULL));
 	    }
 	    message_pair(pair);
-	    SSL_free(ssl);
 	    return -1;
 	}
     }
     if (SSL_in_accept_init(ssl)) {
-	pair->ssl = NULL;
 	if (pair->stone->ssl_server->verbose) {
 	    message(LOG_NOTICE, "TCP %d: SSL_accept unexpected EOF", pair->sd);
 	    message_pair(pair);
 	}
-	SSL_free(ssl);
 	return -1;	/* unexpected EOF */
     }
  finished:
@@ -1907,12 +1898,10 @@ int doSSL_connect(Pair *pair) {
 	    pair->ssl_flag |= sf_intr;
 	    return 0;	/* EINTR */
 	} else if (err) {
-	    pair->ssl = NULL;
 	    message(priority(pair), "TCP %d: SSL_connect err=%d %s",
 		    pair->sd, err,
 		    ERR_error_string(ERR_get_error(), NULL));
 	    message_pair(pair);
-	    SSL_free(ssl);
 	    return -1;
 	}
     }
@@ -1943,6 +1932,8 @@ int SSL_smart_shutdown(SSL *ssl) {
 
 void freePair(Pair *pair) {
     SOCKET sd;
+    char *p;
+    TimeLog *log;
 #ifdef USE_SSL
     SSL *ssl;
 #endif
@@ -1950,10 +1941,22 @@ void freePair(Pair *pair) {
     sd = pair->sd;
     pair->sd = INVALID_SOCKET;
     if (ValidSocket(sd)) closesocket(sd);
+    p = pair->p;
+    if (p) {
+	pair->p = NULL;
+	free(p);
+    }
+    log = pair->log;
+    if (log) {
+	pair->log = NULL;
+	free(log);
+    }
 #ifdef USE_SSL
     ssl = pair->ssl;
-    pair->ssl = NULL;
-    if (ssl) SSL_free(ssl);
+    if (ssl) {
+	pair->ssl = NULL;
+	SSL_free(ssl);
+    }
 #endif
     free(pair);
 }
@@ -2716,31 +2719,8 @@ int scanClose(void) {	/* scan close request */
     p1 = trash;
     trash = NULL;
     while (p1 != NULL) {
-	char *p;
-	TimeLog *log;
-#ifdef USE_SSL
-	SSL *ssl;
-#endif
 	p2 = p1;
 	p1 = p1->next;
-	p = p2->p;
-	if (p) {
-	    p2->p = NULL;
-	    free(p);
-	}
-	log = p2->log;
-	if (log) {
-	    p2->log = NULL;
-	    free(log);
-	}
-#ifdef USE_SSL
-	ssl = p2->ssl;
-	if (ssl) {
-	    p2->ssl = NULL;
-	    SSL_free(ssl);
-	}
-#endif
-
 	freePair(p2);
     }
     p1 = pairs.next;
@@ -4116,7 +4096,8 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 	message(LOG_DEBUG, "TCP %d: callback: err=%d, depth=%d, preverify=%d",
 		pair->sd, err, depth, preverify_ok);
     p = X509_NAME_oneline(X509_get_subject_name(err_cert), buf, BUFMAX-1);
-    if (ss->verbose && p) message(LOG_DEBUG, "[depth%d=%s]", depth, p);
+    if (!p) return 0;
+    if (ss->verbose) message(LOG_DEBUG, "[depth%d=%s]", depth, p);
     if (depth > ss->depth) {
 	preverify_ok = 0;
 	X509_STORE_CTX_set_error(ctx, X509_V_ERR_CERT_CHAIN_TOO_LONG);
@@ -5503,8 +5484,6 @@ void checkFdSetBug(void) {
 
 #ifndef WINDOWS
 static void handler(int sig) {
-    static unsigned int g = 0;
-    static int cnt = 0;
     int i;
     switch(sig) {
     case SIGHUP:
