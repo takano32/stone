@@ -132,10 +132,10 @@ mingw:
 	$(MAKE) CC=gcc FLAGS="-DWINDOWS $(FLAGS)" LIBS="-lwsock32 $(LIBS)" mingw.exe
 
 mingw-pop:
-	$(MAKE) TARGET=mingw pop_stone
+	$(MAKE) CC=gcc TARGET=mingw pop_stone
 
 mingw-ssl:
-	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="-lssl32 -leay32" mingw
+	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="-LC:/mingw/lib/openssl -lssl32 -leay32" mingw
 
 emx:
 	$(MAKE) CC=gcc FLAGS="-DOS2 -Zmts -Zsysv-signals $(FLAGS)" LIBS="$(LIBS) -lsocket" stone.exe
