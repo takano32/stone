@@ -1,7 +1,7 @@
 
 			    Simple Repeater
 
-			   stone version 2.2
+			   stone version 2.2a
 
 		Copyright(c)1995-2003 by Hiroaki Sengoku
 			    sengoku@gcd.org
@@ -20,7 +20,7 @@ from outside to inside.
 	FreeBSD, BSD/OS, SunOS, Solaris, HP-UX and so on.
 
 2.  Simple.
-	Stone's source code is only 4000 lines long (written in C
+	Stone's source code is only 5000 lines long (written in C
 	language), so you can minimize the risk of security
 	holes.
 
@@ -42,8 +42,11 @@ HOWTO USE
 
 	stone [-C <file>] [-P <command>] [-Q <options>] [-d] [-p] [-n]
 	      [-u <max>] [-f <n>] [-l] [-L <file>] [-a <file>] [-i <file>]
-	      [-X <n>] [-T <n>] [-o <n>] [-g <n>] [-t <dir>]
-	      [-q <SSL>] [-z <SSL>] [-D]
+	      [-X <n>] [-T <n>] [-r]
+	      [-b <n> <master>:<port> <backup>:<port>]
+	      [-B <host>:<port> <host1>:<port1>... --]
+	      [-o <n>] [-g <n>] [-t <dir>] [-D] [-c <dir>]
+	      [-q <SSL>] [-z <SSL>]
 	      <st> [-- <st>]...
 
 	If the ``-C <file>'' flag is used, the program read these
@@ -71,12 +74,23 @@ HOWTO USE
 
 	The ``-X <n>'' flag alters the buffer size of the repeater.  If
 	the ``-T <n>'' is used, the timeout of TCP sessions can be
-	specified to ``<n>'' sec.
+	specified to ``<n>'' sec.  Default: 600.  The ``-r'' flag is
+	used, SO_REUSEADDR is set on the socket of <st> .
+
+	The ``-b <n> <master>:<port> <backup>:<port>'' flag designates
+	the backup destination for <master>:<port>.  The program checks
+	every <n> seconds whether <master>:<port> is connectable.  If
+	not, the backup is used instead.
+
+	The ``-B <host>:<port> <host1>:<port1>... --'' is for the
+	destination group.  If the destination of <st> is <host>:<port>,
+	the program chooses a destination randomly from the group.
 
 	If the ``-o <n>'' or ``-g <n>'' flag is used, the program set
 	its uid or gid to ``<n>'' respectively.  If the ``-t <dir>''
 	flag (``<dir>'' is a directory) is used, the program change its
-	root to the directory.
+	root to the directory.  The ``-c <dir>'' flag designates the
+	directory for core dump.
 
 	The ``-q <SSL>'' and the ``-z <SSL>'' flags are for SSL
 	encryption.  The ``-q <SSL>'' is for the client mode, that is,
@@ -93,11 +107,12 @@ HOWTO USE
 	verify		require SSL certificate to the peer.
 	verify,once	request a client certificate on the initial TLS/SSL
 			handshake. (-z only)
+	uniq		if the serial number of peer's SSL certificate
+			is different from the previous session, deny it.
 	verify,ifany	The certificate returned (if any) is checked. (-z only)
 	verify,none	never request SSL certificate to the peer.
-	re<n>=<regex>	designate a regular expression <regex>.
-			The certificate of the peer must satisfy the
-			regex.  <n> is the depth.  re0 means the subject
+	re<n>=<regex>	The certificate of the peer must satisfy the
+			<regex>.  <n> is the depth.  re0 means the subject
 			of the certificate, and re1 means the issure.
 			The maximum of <n> is 9.
 	depth=<n>	The maximum of the certificate chain.
@@ -108,6 +123,12 @@ HOWTO USE
 	CAfile=<file>	The filename of the certificate of the CA.
 	CApath=<dir>	The directory of the certificate files.
 	cipher=<list>	The list of ciphers.
+	lb<n>=<m>	change the destination according to the
+			certificate of the peer.  The number calculated
+			from the matched string to the <n>th ( ... ) in
+			the ``regex'' of SSL options (mod <m>) is used
+			to select the destination from the destination
+			group defined by ``-B'' flag.
 
 	``<st>'' is one of the following.  Multiple ``<st>'' can be
 	designated, separated by ``--''.
