@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.188 2004/09/23 17:06:12 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.189 2004/09/24 06:51:44 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -496,6 +496,8 @@ const int sf_wb_on_r =	0x00040;	/* SSL_write blocked on read */
 const int sf_rb_on_w =	0x00080;	/* SSL_read  blocked on write */
 const int sf_cb_on_r =  0x00100;	/* SSL_connect blocked on read */
 const int sf_cb_on_w =  0x00200;	/* SSL_connect blocked on write */
+const int sf_ab_on_r =  0x00400;	/* SSL_accept blocked on read */
+const int sf_ab_on_w =  0x00800;	/* SSL_accept blocked on write */
 #endif
 
 int BacklogMax = BACKLOG_MAX;
@@ -1879,76 +1881,82 @@ static void printSSLinfo(int pri, SSL *ssl) {
     }
 }
 
-/* Blocking SSL_accept (1: success, -1: error) */
 int doSSL_accept(Pair *pair) {
-    fd_set rout, wout;
-    struct timeval tv;
-    SSL *ssl;
     int err, ret;
+    SOCKET sd;
+    SSL *ssl;
+    if (!pair) return -1;
+    sd = pair->sd;
+    if (InvalidSocket(sd)) return -1;
     ssl = pair->ssl;
-    pair->ssl = NULL;
-    if (ssl) SSL_free(ssl);
-    ssl = SSL_new(pair->stone->ssl_server->ctx);
     if (!ssl) {
-	message(LOG_ERR, "TCP %d: SSL_new failed", pair->sd);
-	return -1;
+	ssl = SSL_new(pair->stone->ssl_server->ctx);
+	if (!ssl) {
+	    message(LOG_ERR, "TCP %d: SSL_new failed", sd);
+	    return -1;
+	}
+	SSL_set_ex_data(ssl, PairIndex, pair);
+	SSL_set_fd(ssl, sd);
+	pair->ssl = ssl;
     }
-    SSL_set_ex_data(ssl, PairIndex, pair);
-    SSL_set_fd(ssl, pair->sd);
-    pair->ssl = ssl;
-    do {
-	ret = SSL_accept(ssl);	/* blocking I/O */
-	if (Debug > 7)
-	    message(LOG_DEBUG, "TCP %d: SSL_accept ret=%d, state=%x, "
-		    "finished=%x, in_init=%x/%x",
-		    pair->sd, ret, SSL_state(ssl), SSL_is_init_finished(ssl),
-		    SSL_in_init(ssl), SSL_in_accept_init(ssl));
-	if (ret <= 0) err = SSL_get_error(ssl, ret);
-	else break;
-	FD_ZERO(&rout);
-	FD_ZERO(&wout);
-	if (err == SSL_ERROR_WANT_READ) FdSet(pair->sd, &rout);
-	else if (err == SSL_ERROR_WANT_WRITE) FdSet(pair->sd, &wout);
-	else break;
-	tv.tv_sec = 1;
-	tv.tv_usec = 0;
-    } while (select(FD_SETSIZE, &rout, &wout, NULL, &tv) >= 0);
-    if (ret <= 0) {
-	if (err == SSL_ERROR_SYSCALL) {
-	    unsigned long e = ERR_get_error();
-	    if (e == 0) {
-#ifdef WINDOWS
-		errno = WSAGetLastError();
-#endif
-		message(priority(pair), "TCP %d: SSL_accept "
-			"I/O error errno=%d", pair->sd, errno);
-	    } else {
-		message(priority(pair), "TCP %d: SSL_accept %s",
-			pair->sd, ERR_error_string(e, NULL));
+    pair->ssl_flag &= ~(sf_ab_on_r | sf_ab_on_w);
+    ret = SSL_accept(ssl);
+    if (Debug > 7)
+	message(LOG_DEBUG, "TCP %d: SSL_accept ret=%d, state=%x, "
+		"finished=%x, in_init=%x/%x",
+		sd, ret, SSL_state(ssl), SSL_is_init_finished(ssl),
+		SSL_in_init(ssl), SSL_in_accept_init(ssl));
+    if (ret > 0) {	/* success */
+	if (SSL_in_accept_init(ssl)) {
+	    if (pair->stone->ssl_server->verbose) {
+		message(LOG_NOTICE, "TCP %d: SSL_accept unexpected EOF", sd);
+		message_pair(LOG_NOTICE, pair);
 	    }
+	    return -1;	/* unexpected EOF */
+	}
+	pair->proto |= proto_connect;	/* src & pair is connected */
+	if (Debug > 3) {
+	    SSL_CTX *ctx = pair->stone->ssl_server->ctx;
+	    message(LOG_DEBUG, "TCP %d: SSL_accept succeeded "
+		    "sess=%ld accept=%ld hits=%ld", sd,
+		    SSL_CTX_sess_number(ctx), SSL_CTX_sess_accept(ctx),
+		    SSL_CTX_sess_hits(ctx));
+	}
+	if (pair->stone->ssl_server->verbose) printSSLinfo(LOG_DEBUG, ssl);
+	return ret;
+    }
+    err = SSL_get_error(ssl, ret);
+    if (err == SSL_ERROR_WANT_READ) {
+	pair->ssl_flag |= sf_ab_on_r;
+	ret = 0;
+    } else if (err == SSL_ERROR_WANT_WRITE) {
+	pair->ssl_flag |= sf_ab_on_w;
+	ret = 0;
+    } else if (err == SSL_ERROR_SYSCALL) {
+	unsigned long e = ERR_get_error();
+	if (e == 0) {
+#ifdef WINDOWS
+	    errno = WSAGetLastError();
+#endif
+	    if (errno == EINTR || errno == EAGAIN) {
+		pair->ssl_flag |= (sf_ab_on_r | sf_ab_on_r);
+		if (Debug > 8)
+		    message(LOG_DEBUG, "TCP %d: SSL_accept "
+			    "interrupted sf=%x", sd, pair->ssl_flag);
+		return 0;
+	    }
+	    message(priority(pair), "TCP %d: SSL_accept "
+		    "I/O error sf=%x errno=%d", sd, pair->ssl_flag, errno);
 	} else {
-	    message(priority(pair), "TCP %d: SSL_accept err=%d %s", pair->sd,
-		    err, ERR_error_string(ERR_get_error(), NULL));
+	    message(priority(pair), "TCP %d: SSL_accept sf=%x %s",
+		    sd, pair->ssl_flag, ERR_error_string(e, NULL));
 	}
-	message_pair(LOG_ERR, pair);
-	return -1;
+	return ret;
     }
-    if (SSL_in_accept_init(ssl)) {
-	if (pair->stone->ssl_server->verbose) {
-	    message(LOG_NOTICE, "TCP %d: SSL_accept unexpected EOF", pair->sd);
-	    message_pair(LOG_NOTICE, pair);
-	}
-	return -1;	/* unexpected EOF */
-    }
-    if (pair->stone->ssl_server->verbose) printSSLinfo(LOG_DEBUG, ssl);
-    if (Debug > 3) {
-	SSL_CTX *ctx = pair->stone->ssl_server->ctx;
-	message(LOG_DEBUG,
-		"TCP %d: SSL_accept succeeded sess=%ld accept=%ld hits=%ld",
-		pair->sd, SSL_CTX_sess_number(ctx), SSL_CTX_sess_accept(ctx),
-		SSL_CTX_sess_hits(ctx));
-    }
-    return 1;
+    if (Debug > 4)
+	message(LOG_DEBUG, "TCP %d: SSL_accept interrupted sf=%x err=%d",
+		sd, pair->ssl_flag, err);
+    return ret;
 }
 
 int doSSL_connect(Pair *pair) {
@@ -1963,7 +1971,7 @@ int doSSL_connect(Pair *pair) {
     if (!ssl) {
 	ssl = SSL_new(pair->stone->ssl_client->ctx);
 	if (!ssl) {
-	    message(LOG_ERR, "TCP %d: SSL_new failed", pair->sd);
+	    message(LOG_ERR, "TCP %d: SSL_new failed", sd);
 	    return -1;
 	}
 	SSL_set_ex_data(ssl, PairIndex, pair);
@@ -1977,7 +1985,7 @@ int doSSL_connect(Pair *pair) {
 	if (Debug > 3) {
 	    SSL_CTX *ctx = pair->stone->ssl_client->ctx;
 	    message(LOG_DEBUG, "TCP %d: SSL_connect succeeded "
-		    "sess=%ld connect=%ld hits=%ld", pair->sd,
+		    "sess=%ld connect=%ld hits=%ld", sd,
 		    SSL_CTX_sess_number(ctx), SSL_CTX_sess_connect(ctx),
 		    SSL_CTX_sess_hits(ctx));
 	    message_pair(LOG_DEBUG, pair);
@@ -2264,6 +2272,7 @@ void asyncConn(Conn *conn) {
     if (p1 == NULL) goto finish;
     p2 = p1->pair;
     if (p2 == NULL) goto finish;
+    if (!(p2->proto & proto_connect)) goto exit;
     time(&clock);
     if (Debug > 8) message(LOG_DEBUG, "asyncConn");
 #ifdef USE_SSL
@@ -2406,13 +2415,14 @@ int scanConns(void) {
     Pair *p1, *p2;
     time_t now;
     time(&now);
+    if (Debug > 8) message(LOG_DEBUG, "scanConns");
     pconn = &conns;
     for (conn=conns.next; conn != NULL; conn=conn->next) {
 	p1 = conn->pair;
 	if (p1) p2 = p1->pair;
 	if (p1 && !(p1->proto & proto_close) &&
 	    p2 && !(p2->proto & proto_close)) {
-	    if (conn->lock == 0) {
+	    if ((p2->proto & proto_connect) && conn->lock == 0) {
 		conn->lock = 1;		/* lock conn */
 		if (Debug > 4) message_conn(LOG_DEBUG, conn);
 		ASYNC(asyncConn, conn);
@@ -2642,14 +2652,19 @@ Pair *doaccept(Stone *stonep) {
 #ifdef USE_SSL
     pair1->ssl = pair2->ssl = NULL;
     pair1->ssl_flag = pair2->ssl_flag = 0;
-    if (stonep->proto & proto_ssl_s)
-	if (doSSL_accept(pair1) <= 0) goto error;
-#endif
-    pair1->proto |= proto_connect;	/* src & pair1 is connected */
     /* now successfully accepted */
 #ifndef WINDOWS
     fcntl(pair1->sd, F_SETFL, O_NONBLOCK);
 #endif
+    if (stonep->proto & proto_ssl_s) {
+	if (doSSL_accept(pair1) < 0) goto error;
+    } else
+#endif
+	pair1->proto |= proto_connect;	/* src & pair1 is connected */
+    /*
+      SSL connection may not be established yet,
+      but we can prepare the prepare for connecting to the destination
+    */
     pair2->sd = socket(AF_INET, SOCK_STREAM, 0);
     if (InvalidSocket(pair2->sd)) {
 #ifdef WINDOWS
@@ -3871,6 +3886,11 @@ void proto2fdset(Pair *pair, int isthread,
 	FD_CLR(sd, woutp);
 	if (pair->ssl_flag & (sf_cb_on_r)) FdSet(sd, routp);
 	if (pair->ssl_flag & (sf_cb_on_w)) FdSet(sd, woutp);
+    } else if (pair->ssl_flag & (sf_ab_on_r | sf_ab_on_w)) {
+	FD_CLR(sd, routp);
+	FD_CLR(sd, woutp);
+	if (pair->ssl_flag & (sf_ab_on_r)) FdSet(sd, routp);
+	if (pair->ssl_flag & (sf_ab_on_w)) FdSet(sd, woutp);
 #endif
     } else if ((pair->proto & proto_connect) && !(pair->proto & proto_close)) {
 	int isset = 0;
@@ -3944,7 +3964,21 @@ void asyncReadWrite(Pair *pair) {	/* pair must be source side */
 		       || ((p[i]->ssl_flag & sf_cb_on_w) && FD_ISSET(sd, &wo))
 		) {
 		p[i]->ssl_flag &= ~(sf_cb_on_r | sf_cb_on_w);
-		doSSL_connect(p[i]);
+		if (doSSL_connect(p[i]) < 0) {
+		    /* SSL_connect fails, shutdown pairs */
+		    if (p[1-i] && !(p[1-i]->proto & proto_shutdown))
+			doshutdown(p[1-i], 2);
+		    p[1-i]->proto |= (proto_shutdown | proto_close);
+		    p[i]->proto |= proto_close;
+		}
+	    } else if (((p[i]->ssl_flag & sf_ab_on_r) && FD_ISSET(sd, &ro))
+		       || ((p[i]->ssl_flag & sf_ab_on_w) && FD_ISSET(sd, &wo))
+		) {
+		p[i]->ssl_flag &= ~(sf_ab_on_r | sf_ab_on_w);
+		if (doSSL_accept(p[i]) < 0) {
+		    /* SSL_accept fails */
+		    p[i]->proto |= proto_close;
+		}
 #endif
 	    } else if ((!(p[i]->proto & proto_eof)
 			&& FD_ISSET(sd, &ro)	/* read */
