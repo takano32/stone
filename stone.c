@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.197 2004/10/21 09:55:14 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.198 2004/10/22 22:27:27 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2452,7 +2452,7 @@ int scanConns(void) {
 	    }
 	} else {
 	    waitMutex(ConnMutex);
-	    if (pconn->next == conn) {
+	    if (pconn->next == conn && conn->lock <= 0) {
 		pconn->next = conn->next;	/* remove conn */
 		free(conn);
 		conn = pconn;
@@ -4033,7 +4033,17 @@ void asyncReadWrite(Pair *pair) {	/* pair must be source side */
 		    if (Debug > 3)
 			message(LOG_DEBUG, "TCP %d: MSG_OOB 0x%02x to %d",
 				sd, buf[0], wsd);
-		    if (ValidSocket(wsd)) send(wsd, buf, 1, MSG_OOB);
+		    if (ValidSocket(wsd)) {
+			len = send(wsd, buf, 1, MSG_OOB);
+			if (len != 1) {
+#ifdef WINDOWS
+			    errno = WSAGetLastError();
+#endif
+			    message(LOG_ERR,
+				    "TCP %d: send MSG_OOB ret=%d, err=%d",
+				    sd, len, errno);
+			}
+		    }
 		} else {
 #ifdef WINDOWS
 		    errno = WSAGetLastError();
@@ -4277,17 +4287,12 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 	    Pair *p = pair->pair;
 	    time_t clock;
 	    int idle = 1;	/* assume no events happen on sd */
-	    if (FD_ISSET(sd, eop)) {
-		idle = 0;
-		message(priority(pair), "TCP %d: exception", sd);
-		message_pair(LOG_ERR, pair);
-		pair->proto |= proto_thread;
-		ASYNC(asyncClose, pair);
-	    } else if ((pair->proto & proto_source) && p
+	    if ((pair->proto & proto_source) && p
 		       && !(pair->proto & (proto_close | proto_thread))
 		       && (psd = p->sd, ValidSocket(psd))) {
 		if (FD_ISSET(sd, rop) || FD_ISSET(sd, wop) ||
-		    FD_ISSET(psd, rop) || FD_ISSET(psd, wop)) {
+		    FD_ISSET(psd, rop) || FD_ISSET(psd, wop) ||
+		    FD_ISSET(sd, eop) || FD_ISSET(psd, eop)) {
 		    idle = 0;
 		    pair->count += REF_UNIT;
 		    p->count += REF_UNIT;
