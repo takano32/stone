@@ -24,13 +24,23 @@ nkf_s	README.en.txt	$stone
 nkf_s	stone.c		$stone
 nkf_s	Makefile	$stone
 nkf_s	GPL.txt		$stone
+nkf_s	logmsg.mc	$stone
+nkf_s	service.c	$stone
+nkf_s	service.h	$stone
+nkf_s	svcbody.c	$stone
+nkf_s	svcbody.h	$stone
 nkf_s	README.txt	$stones
 nkf_s	README.en.txt	$stones
 nkf_s	stone.c		$stones
 nkf_s	Makefile	$stones
 nkf_s	GPL.txt		$stones
+nkf_s	logmsg.mc	$stones
+nkf_s	service.c	$stones
+nkf_s	service.h	$stones
+nkf_s	svcbody.c	$stones
+nkf_s	svcbody.h	$stones
 mkdir stone-$ver
-cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt stone-$ver/.
+cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt logmsg.mc service.c service.h svcbody.c svcbody.h stone-$ver/.
 sed -e "s/^Version: .*/Version: $ver/" stone.spec > stone-$ver/stone.spec
 if [ -n "$stamp" ]
 then	touch -t $stamp $stone $stones stone-$ver  \
@@ -38,8 +48,16 @@ then	touch -t $stamp $stone $stones stone-$ver  \
 		$stone/stone.c   $stones/stone.c   \
 		$stone/stone.exe $stones/stone.exe \
 		$stone/Makefile  $stones/Makefile  \
+		$stone/logmsg.mc $stones/logmsg.mc \
+		$stone/service.c $stones/service.c \
+		$stone/service.h $stones/service.h \
+		$stone/svcbody.c $stones/svcbody.c \
+		$stone/svcbody.h $stones/svcbody.h \
 		stone-$ver/README.* stone-$ver/stone.c stone-$ver/Makefile \
 		stone-$ver/stone.spec \
+		stone-$ver/logmsg.mc \
+		stone-$ver/service.c stone-$ver/service.h \
+		stone-$ver/svcbody.c stone-$ver/svcbody.h \
 		README.* stone.c Makefile
 	tar czf stone-$ver.tar.gz stone-$ver
 	lha u stone-$ver.lzh $stone

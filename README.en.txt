@@ -164,6 +164,7 @@ HOWTO USE
 		\\	\ itself (0x5C)
 		\a	the IP address of the client connecting to the stone.
 		\A	<IP address of the client>:<port number>
+		\0	the serial number of peer's SSL certificate.
 		\1 - \9	the matched string in the ``regex'' of SSL options.
 
 	Type (6) repeats http request with ``<header>'' in the top of
