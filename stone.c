@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.180 2004/09/21 09:22:38 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.181 2004/09/21 23:04:15 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -399,6 +399,7 @@ typedef struct _Pair {
     TimeLog *log;
     int tx;		/* sent bytes */
     int rx;		/* received bytes */
+    int loop;		/* loop count */
     int start;		/* index of buf */
     int len;
     int bufmax;		/* buffer size */
@@ -1011,11 +1012,11 @@ void waitMutex(HANDLE h) {
     if (h) {
 	ret = WaitForSingleObject(h, 5000);	/* 5 sec */
 	if (ret == WAIT_FAILED) {
-	    message(LOG_ERR, "Fail to wait mutex err=%d, existing ...",
+	    message(LOG_ERR, "Fail to wait mutex err=%d, existing",
 		    GetLastError());
 	    exit(1);
 	} else if (ret == WAIT_TIMEOUT) {
-	    message(LOG_ERR, "timeout to wait mutex, existing ...");
+	    message(LOG_ERR, "timeout to wait mutex, existing");
 	    exit(1);
 	}
     }
@@ -1212,7 +1213,7 @@ void asyncHealthCheck(Backup *b) {
     addrport2str(&b->check, sizeof(b->check),
 		 b->proto, proto_dest, addrport, STRMAX);
     if (Debug > 8)
-	message(LOG_DEBUG, "asyncHealthCheck %s ...", addrport);
+	message(LOG_DEBUG, "asyncHealthCheck %s", addrport);
     if (healthCheck(&b->check, b->proto,
 		    b->interval, b->chat)) {	/* healthy ? */
 	if (Debug > 3 || (b->bn && Debug > 1))
@@ -1493,7 +1494,7 @@ int lbsopts(int argc, int i, char *argv[]) {
 
 /* relay UDP */
 
-void message_origin(Origin *origin) {
+void message_origin(int pri, Origin *origin) {
     struct sockaddr_in name;
     SOCKET sd;
     Stone *stone;
@@ -1523,7 +1524,7 @@ void message_origin(Origin *origin) {
     else sd = INVALID_SOCKET;
     addrport2str(&origin->sin, sizeof(origin->sin),
 		 proto_udp, proto_all, str+i, STRMAX-i);
-    message(LOG_INFO, "UDP%3d:%3d %s", origin->sd, sd, str);
+    message(pri, "UDP%3d:%3d %s", origin->sd, sd, str);
 }
 
 static int recvUDP(SOCKET sd, struct sockaddr *from, socklen_t *fromlenp,
@@ -1648,7 +1649,7 @@ void asyncOrg(Origin *origin) {
     Stone *stone = origin->stone;
     char *pkt_buf;
     ASYNC_BEGIN;
-    if (Debug > 8) message(LOG_DEBUG, "asyncOrg...");
+    if (Debug > 8) message(LOG_DEBUG, "asyncOrg");
     if (stone) sd = stone->sd;
     else goto end;
     pkt_buf = malloc(pkt_len_max);
@@ -1729,7 +1730,7 @@ int scanUDP(fd_set *rop, fd_set *eop) {
 	freeMutex(FdEinMutex);
 	if (isset) {
 	    message(LOG_ERR, "UDP %d: exception", origin->sd);
-	    message_origin(origin);
+	    message_origin(LOG_ERR, origin);
 	    docloseUDP(origin, 1);	/* wait mutex */
 	    goto next;
 	}
@@ -1758,7 +1759,7 @@ void asyncUDP(Stone *stonep) {
     char addrport[STRMAX];
     char *pkt_buf;
     ASYNC_BEGIN;
-    if (Debug > 8) message(LOG_DEBUG, "asyncUDP...");
+    if (Debug > 8) message(LOG_DEBUG, "asyncUDP");
     pkt_buf = malloc(pkt_len_max);
     if (!pkt_buf) {
 	message(LOG_CRIT, "UDP %d: Out of memory to allocate %d bytes",
@@ -1800,7 +1801,7 @@ void asyncUDP(Stone *stonep) {
 
 /* relay TCP */
 
-void message_pair(Pair *pair) {
+void message_pair(int pri, Pair *pair) {
     struct sockaddr_storage name;
     socklen_t namelen;
     SOCKET sd, psd;
@@ -1844,31 +1845,31 @@ void message_pair(Pair *pair) {
     if (p) psd = p->sd;
     else psd = INVALID_SOCKET;
     if (p && p->p) {
-	message(LOG_INFO, "TCP%3d:%3d %08x %d %s %s tx:%d rx:%d",
+	message(pri, "TCP%3d:%3d %08x %d %s %s tx:%d rx:%d lp:%d",
 		sd, psd, pair->proto, pair->count, str, p->p,
-		pair->tx, pair->rx);
+		pair->tx, pair->rx, pair->loop);
     } else {
-	message(LOG_INFO, "TCP%3d:%3d %08x %d %s tx:%d rx:%d",
+	message(pri, "TCP%3d:%3d %08x %d %s tx:%d rx:%d lp:%d",
 		sd, psd, pair->proto, pair->count, str,
-		pair->tx, pair->rx);
+		pair->tx, pair->rx, pair->loop);
     }
 }
 
 #ifdef USE_SSL
-static void printSSLinfo(SSL *ssl) {
+static void printSSLinfo(int pri, SSL *ssl) {
     X509 *peer;
     char *p = (char *)SSL_get_cipher(ssl);
     if (p == NULL) p = "<NULL>";
-    message(LOG_INFO, "[SSL cipher=%s]", p);
+    message(pri, "[SSL cipher=%s]", p);
     peer = SSL_get_peer_certificate(ssl);
     if (peer) {
 	char buf[BUFMAX];
 	ASN1_INTEGER *n = X509_get_serialNumber(peer);
-	if (n) message(LOG_INFO, "[SSL serial=%lx]", ASN1_INTEGER_get(n));
+	if (n) message(pri, "[SSL serial=%lx]", ASN1_INTEGER_get(n));
 	if (X509_NAME_oneline(X509_get_subject_name(peer), buf, BUFMAX-1))
-	    message(LOG_INFO, "[SSL subject=%s]", buf);
+	    message(pri, "[SSL subject=%s]", buf);
 	if (X509_NAME_oneline(X509_get_issuer_name(peer), buf, BUFMAX-1))
-	    message(LOG_INFO, "[SSL issuer=%s]", buf);
+	    message(pri, "[SSL issuer=%s]", buf);
 	X509_free(peer);
     }
 }
@@ -1922,17 +1923,17 @@ int doSSL_accept(Pair *pair) {
 		    pair->sd, err,
 		    ERR_error_string(ERR_get_error(), NULL));
 	}
-	message_pair(pair);
+	message_pair(LOG_ERR, pair);
 	return -1;
     }
     if (SSL_in_accept_init(ssl)) {
 	if (pair->stone->ssl_server->verbose) {
 	    message(LOG_NOTICE, "TCP %d: SSL_accept unexpected EOF", pair->sd);
-	    message_pair(pair);
+	    message_pair(LOG_NOTICE, pair);
 	}
 	return -1;	/* unexpected EOF */
     }
-    if (pair->stone->ssl_server->verbose) printSSLinfo(ssl);
+    if (pair->stone->ssl_server->verbose) printSSLinfo(LOG_DEBUG, ssl);
     if (Debug > 3) {
 	SSL_CTX *ctx = pair->stone->ssl_server->ctx;
 	message(LOG_DEBUG,
@@ -1975,17 +1976,17 @@ int doSSL_connect(Pair *pair) {
     if (ret < 0) {
 	message(priority(pair), "TCP %d: SSL_connect err=%d %s",
 		pair->sd, err, ERR_error_string(ERR_get_error(), NULL));
-	message_pair(pair);
+	message_pair(LOG_ERR, pair);
 	return -1;
     }
-    if (pair->stone->ssl_client->verbose) printSSLinfo(ssl);
+    if (pair->stone->ssl_client->verbose) printSSLinfo(LOG_DEBUG, ssl);
     if (Debug > 3) {
 	SSL_CTX *ctx = pair->stone->ssl_client->ctx;
 	message(LOG_DEBUG,
 		"TCP %d: SSL_connect succeeded sess=%ld connect=%ld hits=%ld",
 		pair->sd, SSL_CTX_sess_number(ctx), SSL_CTX_sess_connect(ctx),
 		SSL_CTX_sess_hits(ctx));
-	message_pair(pair);
+	message_pair(LOG_DEBUG, pair);
     }
     return 1;
 }
@@ -2055,7 +2056,7 @@ void freePair(Pair *pair) {
     if (!pair) return;
     sd = pair->sd;
     pair->sd = INVALID_SOCKET;
-    if (Debug > 8) message(LOG_DEBUG, "TCP %d: freePair ...", sd);
+    if (Debug > 8) message(LOG_DEBUG, "TCP %d: freePair", sd);
     p = pair->p;
     if (p) {
 	pair->p = NULL;
@@ -2108,7 +2109,7 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
     addrport2str(sinp, sizeof(*sinp),
 		 pair->proto, proto_all, addrport, STRMAX);
     if (Debug > 2)
-	message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s ...",
+	message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s",
 		p->sd, pair->sd, addrport);
     if (connect(pair->sd, (struct sockaddr*)sinp, sizeof(*sinp)) < 0) {
 #ifdef WINDOWS
@@ -2126,7 +2127,7 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
 	    if (Debug > 4) {	/* SunOS's bug ? */
 		message(LOG_DEBUG, "TCP %d: connect bug err=%d",
 			pair->sd, errno);
-		message_pair(pair);
+		message_pair(LOG_DEBUG, pair);
 	    }
 	} else {
 	    message(priority(pair),
@@ -2151,7 +2152,7 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
     return 1;
 }
 
-void message_conn(Conn *conn) {
+void message_conn(int pri, Conn *conn) {
     SOCKET sd = INVALID_SOCKET;
     Pair *p1, *p2;
     int proto = 0;
@@ -2170,7 +2171,7 @@ void message_conn(Conn *conn) {
     i = strlen(str);
     if (i >= BUFMAX) i = BUFMAX-1;
     str[i] = '\0';
-    message(LOG_INFO, "Conn %d: %08x %s", sd, proto, str);
+    message(pri, "Conn %d: %08x %s", sd, proto, str);
 }
 
 int reqconn(Pair *pair,		/* request pair to connect to destination */
@@ -2225,7 +2226,7 @@ void asyncConn(Conn *conn) {
     p2 = p1->pair;
     if (p2 == NULL) goto finish;
     time(&clock);
-    if (Debug > 8) message(LOG_DEBUG, "asyncConn...");
+    if (Debug > 8) message(LOG_DEBUG, "asyncConn");
 #ifdef USE_SSL
     ssl = p2->ssl;
     if (ssl) {
@@ -2309,12 +2310,14 @@ void asyncConn(Conn *conn) {
     if (ret < 0		/* fail to connect */
 	|| (p1->proto & proto_close)
 	|| (p2->proto & proto_close)) {
+	if (!(p2->proto & proto_shutdown)) {
 #ifdef USE_SSL
-	if (ssl) doSSL_shutdown(p2, 2);
-	else shutdown(p2->sd, 2);
+	    if (ssl) doSSL_shutdown(p2, 2);
+	    else shutdown(p2->sd, 2);
 #else
-	shutdown(p2->sd, 2);
+	    shutdown(p2->sd, 2);
 #endif
+	}
 	p2->proto |= (proto_shutdown | proto_close);
 	p1->proto |= proto_close;
 	goto finish;
@@ -2387,7 +2390,7 @@ int scanConns(void) {
 	    p2 && !(p2->proto & proto_close)) {
 	    if (conn->lock == 0) {
 		conn->lock = 1;		/* lock conn */
-		if (Debug > 4) message_conn(conn);
+		if (Debug > 4) message_conn(LOG_DEBUG, conn);
 		ASYNC(asyncConn, conn);
 	    }
 	} else {
@@ -2608,6 +2611,7 @@ Pair *doaccept(Stone *stonep) {
     pair1->log = pair2->log = NULL;
     pair1->tx = pair2->tx = 0;
     pair1->rx = pair2->rx = 0;
+    pair1->loop = pair2->loop = 0;
     time(&pair1->clock);
     time(&pair2->clock);
     pair1->timeout = pair2->timeout = stonep->timeout;
@@ -2750,7 +2754,7 @@ int strnparse(char *buf, int limit, char **pp, Pair *pair, char term) {
 void asyncAccept(Stone *stone) {
     Pair *p1, *p2;
     ASYNC_BEGIN;
-    if (Debug > 8) message(LOG_DEBUG, "asyncAccept...");
+    if (Debug > 8) message(LOG_DEBUG, "asyncAccept");
     p1 = doaccept(stone);
     if (p1 == NULL) goto exit;
     p2 = p1->pair;
@@ -2779,7 +2783,7 @@ void asyncAccept(Stone *stone) {
     freeMutex(PairMutex);
     if (Debug > 4) {
 	message(LOG_DEBUG, "TCP %d: pair %d inserted", p1->sd, p2->sd);
-	message_pair(p1);
+	message_pair(LOG_DEBUG, p1);
     }
  exit:
     ASYNC_END;
@@ -2870,21 +2874,22 @@ void message_buf(Pair *pair, int len, char *str) {	/* dump for debug */
     packet_dump(head, pair->buf + pair->start, len);
 }
 
-void message_pairs(void) {	/* dump for debug */
+void message_pairs(int pri) {	/* dump for debug */
     Pair *pair;
-    for (pair=pairs.next; pair != NULL; pair=pair->next) message_pair(pair);
+    for (pair=pairs.next; pair != NULL; pair=pair->next)
+	message_pair(pri, pair);
 }
 
-void message_origins(void) {	/* dump for debug */
+void message_origins(int pri) {	/* dump for debug */
     Origin *origin;
     for (origin=origins.next; origin != NULL; origin=origin->next)
-	message_origin(origin);
+	message_origin(pri, origin);
 }
 
-void message_conns(void) {	/* dump for debug */
+void message_conns(int pri) {	/* dump for debug */
     Conn *conn;
     for (conn=conns.next; conn != NULL; conn=conn->next)
-	message_conn(conn);
+	message_conn(pri, conn);
 }
 
 /* read write thread */
@@ -2896,8 +2901,8 @@ void setclose(Pair *pair, int flag) {	/* set close flag */
     if (!(pair->proto & proto_close)) {		/* request to close */
 	pair->proto |= (flag | proto_close);
 	if (Debug > 2 && ValidSocket(sd))
-	    message(LOG_DEBUG, "TCP %d: closing... "
-		    "tx:%d rx:%d", sd, pair->tx, pair->rx);
+	    message(LOG_DEBUG, "TCP %d: close tx:%d rx:%d lp:%d",
+		    sd, pair->tx, pair->rx, pair->loop);
     }
 }
 
@@ -2905,7 +2910,7 @@ int dowrite(Pair *pair) {	/* write from buf from pair->start */
     SOCKET sd = pair->sd;
     Pair *p;
     int len;
-    if (Debug > 5) message(LOG_DEBUG, "TCP %d: write %d bytes ...",
+    if (Debug > 5) message(LOG_DEBUG, "TCP %d: write %d bytes",
 			   sd, pair->len);
     if (InvalidSocket(sd)) return -1;
 #ifdef USE_SSL
@@ -2944,19 +2949,19 @@ int dowrite(Pair *pair) {	/* write from buf from pair->start */
 		    message(priority(pair),
 			    "TCP %d: SSL_write I/O error err=%d, closing",
 			    sd, errno);
-		    message_pair(pair);
+		    message_pair(LOG_ERR, pair);
 		} else {
 		    message(priority(pair),
 			    "TCP %d: SSL_write I/O %s, closing",
 			    sd, ERR_error_string(e, NULL));
-		    message_pair(pair);
+		    message_pair(LOG_ERR, pair);
 		}
 		return -1;	/* error */
 	    } else if (err != SSL_ERROR_ZERO_RETURN) {
 		message(priority(pair),
 			"TCP %d: SSL_write err=%d %s, closing",
 			sd, err, ERR_error_string(ERR_get_error(), NULL));
-		message_pair(pair);
+		message_pair(LOG_ERR, pair);
 		return len;	/* error */
 	    }
 	}
@@ -2975,7 +2980,7 @@ int dowrite(Pair *pair) {	/* write from buf from pair->start */
 	    }
 	    message(priority(pair), "TCP %d: write error err=%d, closing",
 		    sd, errno);
-	    message_pair(pair);
+	    message_pair(LOG_ERR, pair);
 	    return len;	/* error */
 	}
 #ifdef USE_SSL
@@ -2994,7 +2999,7 @@ int dowrite(Pair *pair) {	/* write from buf from pair->start */
 	message(LOG_NOTICE,
 		"TCP %d: write %d bytes, but only %d bytes written",
 		sd, pair->len, len);
-	message_pair(pair);
+	message_pair(LOG_NOTICE, pair);
     }
     pair->len -= len;
     pair->tx += len;
@@ -3092,7 +3097,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
     int len, i;
     int bufmax, start;
     if (InvalidSocket(sd)) return -1;
-    if (Debug > 5) message(LOG_DEBUG, "TCP %d: read ...", sd);
+    if (Debug > 5) message(LOG_DEBUG, "TCP %d: read", sd);
     p = pair->pair;
     if (p == NULL) {	/* no pair, no more read */
 	char buf[BUFMAX];
@@ -3107,7 +3112,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 	if (len == 0) return -1;	/* EOF w/o pair */
 	if (len > 0) {
 	    message(priority(pair), "TCP %d: no pair, closing", sd);
-	    message_pair(pair);
+	    message_pair(LOG_ERR, pair);
 	    len = -1;
 	}
 	return len;
@@ -3163,19 +3168,19 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 		    message(priority(pair),
 			    "TCP %d: SSL_read I/O error err=%d, closing",
 			    sd, errno);
-		    message_pair(pair);
+		    message_pair(LOG_ERR, pair);
 		} else {
 		    message(priority(pair),
 			    "TCP %d: SSL_read I/O %s, closing",
 			    sd, ERR_error_string(e, NULL));
-		    message_pair(pair);
+		    message_pair(LOG_ERR, pair);
 		}
 		return -1;	/* error */
 	    } else if (err != SSL_ERROR_ZERO_RETURN) {
 		message(priority(pair),
 			"TCP %d: SSL_read err=%d %s, closing",
 			sd, err, ERR_error_string(ERR_get_error(), NULL));
-		message_pair(pair);
+		message_pair(LOG_ERR, pair);
 		return -1;	/* error */
 	    }
 	}
@@ -3194,7 +3199,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 	    }
 	    message(priority(pair), "TCP %d: read error err=%d, closing",
 		    sd, errno);
-	    message_pair(pair);
+	    message_pair(LOG_ERR, pair);
 	    return len;	/* error */
 	}
 #ifdef USE_SSL
@@ -3755,20 +3760,24 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
 		message(LOG_DEBUG, "TCP %d: read more from %d", psd, sd);
 	    }
 	} else if (len < 0) {
+	    if (!(pair->proto & proto_shutdown)) {
 #ifdef USE_SSL
-	    if (pair->ssl) doSSL_shutdown(pair, 2);
-	    else shutdown(sd, 2);
+		if (pair->ssl) doSSL_shutdown(pair, 2);
+		else shutdown(sd, 2);
 #else
-	    shutdown(sd, 2);
+		shutdown(sd, 2);
 #endif
+	    }
 	    setclose(pair, proto_shutdown);
 	    if (ValidSocket(psd)) {
+		if (!(p->proto & proto_shutdown)) {
 #ifdef USE_SSL
-		if (p->ssl) doSSL_shutdown(p, 2);
-		else shutdown(psd, 2);
+		    if (p->ssl) doSSL_shutdown(p, 2);
+		    else shutdown(psd, 2);
 #else
-		shutdown(psd, 2);
+		    shutdown(psd, 2);
 #endif
+		}
 		setclose(p, proto_shutdown);
 	    }
 	    return -1;
@@ -3845,7 +3854,6 @@ void asyncReadWrite(Pair *pair) {
     Pair *p[2];
     Pair *rPair, *wPair;
     SOCKET sd, rsd, wsd;
-    int again = 0;
     int len;
     int i;
     ASYNC_BEGIN;
@@ -3854,7 +3862,7 @@ void asyncReadWrite(Pair *pair) {
     FD_ZERO(&ei);
     p[0] = pair;
     p[1] = pair->pair;
-    if (Debug > 8) message(LOG_DEBUG, "TCP %d, %d: asyncReadWrite ...",
+    if (Debug > 8) message(LOG_DEBUG, "TCP %d, %d: asyncReadWrite",
 			   (p[0] ? p[0]->sd : INVALID_SOCKET),
 			   (p[1] ? p[1]->sd : INVALID_SOCKET));
     if (p[1]) npairs++;
@@ -3879,21 +3887,32 @@ void asyncReadWrite(Pair *pair) {
 	}
 	if (isset) FdSet(sd, &ei);
     }
-    tv.tv_sec = 0;
-    tv.tv_usec = TICK_SELECT;
-    if (Debug > 10)
-	message_select(LOG_DEBUG, "selectReadWrite1", &ri, &wi, &ei);
-    while (again
-	   || (ro=ri, wo=wi, eo=ei,
-	       select(FD_SETSIZE, &ro, &wo, &eo, &tv) > 0)) {
-	again = 0;
+    for (;;) {	/* loop until timeout or EOF/error */
+	tv.tv_sec = 0;
+	tv.tv_usec = TICK_SELECT;
+	ro = ri;
+	wo = wi;
+	eo = ei;
+#ifdef USE_SSL
+	for (i=0; i < npairs; i++) {
+	    if (!p[i]) continue;
+	    sd = p[i]->sd;
+	    if (InvalidSocket(sd)) continue;
+	    if (p[i]->ssl_flag & (sf_sb_on_r | sf_wb_on_r)) FdSet(sd, &ro);
+	    if (p[i]->ssl_flag & (sf_sb_on_w | sf_rb_on_w)) FdSet(sd, &wo);
+	}
+#endif
+	if (Debug > 10)
+	    message_select(LOG_DEBUG, "selectReadWrite1", &ri, &wi, &ei);
+	if (select(FD_SETSIZE, &ro, &wo, &eo, &tv) <= 0) goto leave;
 	for (i=0; i < npairs; i++) {
 	    if (!p[i] || (p[i]->proto & proto_close)) continue;
 	    sd = p[i]->sd;
 	    if (InvalidSocket(sd)) continue;
+	    p[i]->loop++;
 	    if (FD_ISSET(sd, &eo)) {	/* exception */
 		message(priority(p[i]), "TCP %d: exception", sd);
-		message_pair(p[i]);
+		message_pair(LOG_ERR, p[i]);
 		FD_CLR(sd, &ri);
 		FD_CLR(sd, &wi);
 		FD_CLR(sd, &ei);
@@ -3905,8 +3924,6 @@ void asyncReadWrite(Pair *pair) {
 		       || ((p[i]->ssl_flag & sf_sb_on_w) && FD_ISSET(sd, &wo))
 		) {
 		p[i]->ssl_flag &= ~(sf_sb_on_r | sf_sb_on_w);
-		FD_CLR(sd, &ri);
-		FD_CLR(sd, &wi);
 		doSSL_shutdown(p[i], -1);
 #endif
 	    } else if ((!(p[i]->proto & proto_eof)
@@ -3924,12 +3941,12 @@ void asyncReadWrite(Pair *pair) {
 		wPair = p[1-i];
 		rsd = sd;
 		if (wPair) wsd = wPair->sd; else wsd = INVALID_SOCKET;
+	    read_pending:
 		FD_CLR(rsd, &ri);
 		rPair->count += REF_UNIT;
 		len = doread(rPair);
 		rPair->count -= REF_UNIT;
 		if (len < 0 || (rPair->proto & proto_close) || wPair == NULL) {
-		    FD_CLR(rsd, &ri);
 		    if (len == -2	/* if EOF w/ pair, */
 			&& !(rPair->proto & proto_shutdown)
 			/* and not yet shutdowned, */
@@ -3951,11 +3968,13 @@ void asyncReadWrite(Pair *pair) {
 			  if (rPair->ssl) doSSL_shutdown(rPair, 0);
 			  else shutdown(rsd, 0);
 			*/
-			if (wPair->ssl) doSSL_shutdown(wPair, 1);
-			else shutdown(wsd, 1);
+			if (!(wPair->proto & proto_shutdown)) {
+			    if (wPair->ssl) doSSL_shutdown(wPair, 1);
+			    else shutdown(wsd, 1);
+			}
 #else
-			shutdown(rsd, 0);
-			shutdown(wsd, 1);	/* send FIN */
+			if (!(wPair->proto & proto_shutdown))
+			    shutdown(wsd, 1);	/* send FIN */
 #endif
 			wPair->proto |= proto_shutdown;
 		    } else {
@@ -3966,13 +3985,17 @@ void asyncReadWrite(Pair *pair) {
 			  set close flag
 			*/
 #ifdef USE_SSL
-			if (rPair->ssl) doSSL_shutdown(rPair, 2);
-			else shutdown(rsd, 2);
-			if (wPair->ssl) doSSL_shutdown(wPair, 2);
-			else shutdown(wsd, 2);
+			if (!(rPair->proto & proto_shutdown)) {
+			    if (rPair->ssl) doSSL_shutdown(rPair, 2);
+			    else shutdown(rsd, 2);
+			}
+			if (!(wPair->proto & proto_shutdown)) {
+			    if (wPair->ssl) doSSL_shutdown(wPair, 2);
+			    else shutdown(wsd, 2);
+			}
 #else
-			shutdown(rsd, 2);
-			shutdown(wsd, 2);
+			if (!(rPair->proto & proto_shutdown)) shutdown(rsd, 2);
+			if (!(wPair->proto & proto_shutdown)) shutdown(wsd, 2);
 #endif
 			setclose(rPair, (proto_eof | proto_shutdown));
 			setclose(wPair, proto_shutdown);
@@ -4018,21 +4041,24 @@ void asyncReadWrite(Pair *pair) {
 		len = dowrite(wPair);
 		wPair->count -= REF_UNIT;
 		if (len < 0 || (wPair->proto & proto_close) || rPair == NULL) {
-		    if (rPair && ValidSocket(rsd)) {
+		    if (rPair && ValidSocket(rsd)
+			&& !(rPair->proto & proto_shutdown)) {
 #ifdef USE_SSL
 			if (rPair->ssl) doSSL_shutdown(rPair, 2);
 			else shutdown(rsd, 2);
 #else
 			shutdown(rsd, 2);
 #endif
-			setclose(rPair, proto_shutdown);
 		    }
+		    setclose(rPair, proto_shutdown);
+		    if (!(wPair->proto & proto_shutdown)) {
 #ifdef USE_SSL
-		    if (wPair->ssl) doSSL_shutdown(wPair, 2);
-		    else shutdown(wsd, 2);
+			if (wPair->ssl) doSSL_shutdown(wPair, 2);
+			else shutdown(wsd, 2);
 #else
-		    shutdown(wsd, 2);
+			shutdown(wsd, 2);
 #endif
+		    }
 		    setclose(wPair, proto_shutdown);
 		} else {
 		    /* (wPair->proto & proto_eof) may be true */
@@ -4051,7 +4077,8 @@ void asyncReadWrite(Pair *pair) {
 				    message(LOG_DEBUG,
 					    "TCP %d: SSL_pending, read again",
 					    rPair->sd);
-				again = 1;
+				i = npairs;	/* read once */
+				goto read_pending;
 			    }
 #endif
 			    FdSet(rsd, &ri);
@@ -4063,16 +4090,6 @@ void asyncReadWrite(Pair *pair) {
 		    }
 		}
 	    }
-#ifdef USE_SSL
-	    if (p[i]->ssl_flag & (sf_wb_on_r | sf_sb_on_r)) {
-		/* SSL_* is blocked on read, so want read */
-		FdSet(sd, &ri);
-	    }
-	    if (p[i]->ssl_flag & (sf_rb_on_w | sf_sb_on_w)) {
-		/* SSL_* is blocked on write, so want write */
-		FdSet(sd, &wi);
-	    }
-#endif
 	}
 	if (Debug > 10)
 	    message_select(LOG_DEBUG, "selectReadWrite2", &ri, &wi, &ei);
@@ -4116,8 +4133,8 @@ void asyncClose(Pair *pair) {
     struct timeval tv;
 #endif
     ASYNC_BEGIN;
-    if (InvalidSocket(sd)) goto exit;
-    if (Debug > 8) message(LOG_DEBUG, "asyncClose...");
+    if (InvalidSocket(sd) || (pair->proto & proto_shutdown)) goto exit;
+    if (Debug > 8) message(LOG_DEBUG, "asyncClose");
 #ifdef USE_SSL
     do {
 	if (pair->ssl) doSSL_shutdown(pair, 2);
@@ -4151,7 +4168,7 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 #endif
     Pair *pair;
     int ret = 1;
-    if (Debug > 8) message(LOG_DEBUG, "scanPairs ...");
+    if (Debug > 8) message(LOG_DEBUG, "scanPairs");
     for (pair=pairs.next; pair != NULL; pair=pair->next) {
 	Pair *p = pair->pair;
 	SOCKET sd = pair->sd;
@@ -4166,7 +4183,7 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 	    if (isset) {
 		idle = 0;
 		message(priority(pair), "TCP %d: exception", sd);
-		message_pair(pair);
+		message_pair(LOG_ERR, pair);
 		waitMutex(FdRinMutex);
 		waitMutex(FdWinMutex);
 		FD_CLR(sd, &rin);
@@ -4225,7 +4242,7 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 		&& (time(&clock), clock - pair->clock > pair->timeout)) {
 		if (pair->count > 0 || Debug > 2) {
 		    message(LOG_NOTICE, "TCP %d: idle time exceeds", sd);
-		    message_pair(pair);
+		    message_pair(LOG_NOTICE, pair);
 		    if (pair->count > 0) pair->count -= REF_UNIT;
 		}
 		waitMutex(FdRinMutex);
@@ -4294,7 +4311,7 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     }
     pair = SSL_get_ex_data(ssl, PairIndex);
     if (!pair) {
-	message(LOG_ERR, "SSL callback don't have ex_data, verify fails...");
+	message(LOG_ERR, "SSL callback don't have ex_data, verify fails");
 	return 0;	/* always fail */
     }
     if (pair->proto & proto_source) {
@@ -4563,7 +4580,7 @@ void repeater(void) {
 	timeout = NULL;		/* block indefinitely */
     }
     if (Debug > 10) {
-	message(LOG_DEBUG, "select main(%ld)...",
+	message(LOG_DEBUG, "select main(%ld)",
 		(timeout ? timeout->tv_usec : 0));
 	message_select(LOG_DEBUG, "select main IN ", &rout, &wout, &eout);
     }
@@ -4572,7 +4589,6 @@ void repeater(void) {
 	message(LOG_DEBUG, "select main: %d", ret);
 	message_select(LOG_DEBUG, "select main OUT", &rout, &wout, &eout);
     }
-    scanClose();
     if (ret > 0) {
 	nerrs = 0;
 	spin = SPIN_MAX;
@@ -4586,17 +4602,18 @@ void repeater(void) {
 	if (errno != EINTR) {
 	    message(LOG_ERR, "select error err=%d", errno);
 	    if (++nerrs >= NERRS_MAX) {
-		message(LOG_ERR, "select error %d times, exiting...", nerrs);
+		message(LOG_ERR, "select error %d times, exiting", nerrs);
 		message_select(LOG_INFO, "IN", &rin, &win, &ein);
-		message_pairs();
-		message_origins();
-		message_conns();
+		message_pairs(LOG_INFO);
+		message_origins(LOG_INFO);
+		message_conns(LOG_INFO);
 		exit(1);
 	    }
 	}
 	usleep(TICK_SELECT);
     }
     scanConns();
+    scanClose();
     if (oldstones) rmoldstone();
     if (OldConfigArgc) rmoldconfig();
 #ifdef USE_SSL
@@ -5725,9 +5742,9 @@ static void handler(int sig) {
 	    }
 	} else {	/* child process */
 #endif
-	    message_pairs();
-	    message_origins();
-	    message_conns();
+	    message_pairs(LOG_INFO);
+	    message_origins(LOG_INFO);
+	    message_conns(LOG_INFO);
 #ifndef NO_FORK
 	}
 #endif
@@ -5765,11 +5782,11 @@ static void handler(int sig) {
     case SIGINT:
 #ifndef NO_FORK
 	if (NForks) {	/* mother process */
-	    message(LOG_INFO, "SIGTERM/INT. killing children and exiting...");
+	    message(LOG_INFO, "SIGTERM/INT. killing children and exiting");
 	    for (i=0; i < NForks; i++) kill(Pid[i], sig);
 	} else
 #endif
-	    message(LOG_INFO, "SIGTERM/INT. exiting...");  /* child process */
+	    message(LOG_INFO, "SIGTERM/INT. exiting");  /* child process */
 	exit(1);
     case SIGUSR1:
 	Debug++;
@@ -5799,7 +5816,7 @@ static void handler(int sig) {
 		abort();
 	    }
 	} else {
-	    message(LOG_ERR, "Signal %d, exiting...");
+	    message(LOG_ERR, "Signal %d, exiting");
 	}
 	exit(1);
 	break;
@@ -6055,7 +6072,7 @@ DWORD WINAPI ThreadProc(LPVOID lpParms) {
     HANDLE hStopEvent;
     char *lpArgs[3];
     char *p;
-    AddToMessageLog("Starting worker thread...");
+    AddToMessageLog("Starting worker thread");
     hStopEvent = (HANDLE)lpParms;
     if (NULL == hStopEvent) {
 	AddToMessageLog("Invalid event handle.");
