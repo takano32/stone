@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.135 2004/08/05 15:10:56 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.136 2004/08/05 16:05:02 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -231,7 +231,7 @@ int FdSetBug = 0;
 #define EADDRINUSE	48		/* Address already in use */
 #endif
 
-#define BACKLOG_MAX	5
+#define BACKLOG_MAX	50
 #define XPORT		6000
 #define BUFMAX		2048
 #define STRMAX		30	/* > 16 */
@@ -465,6 +465,7 @@ const proto_base_d =	0x20000000;	/*        destination */
 			 proto_command)
 #define proto_all	(proto_src|proto_dest)
 
+int BacklogMax = BACKLOG_MAX;
 int XferBufMax = 1000;	/* TCP packet buffer initial size (must < 1024 ?) */
 char *pkt_buf;		/* UDP packet buffer */
 int pkt_len_max;	/* size of pkt_buf */
@@ -4034,7 +4035,7 @@ Stone *mkstone(
 		getsockname(stonep->sd, (struct sockaddr*)&sin, &i);
 	    }
 	    if (!(proto & proto_udp)) {	/* TCP */
-		if (listen(stonep->sd, BACKLOG_MAX) < 0) {
+		if (listen(stonep->sd, BacklogMax) < 0) {
 #ifdef WINDOWS
 		    errno = WSAGetLastError();
 #endif
@@ -4204,6 +4205,7 @@ void help(char *com) {
 	    "      -i <file>         ; write process ID to <file>\n"
 	    "      -X <n>            ; size [byte] of Xfer buffer\n"
 	    "      -T <n>            ; timeout [sec] of TCP sessions\n"
+	    "      -A <n>            ; length of backlog\n"
 	    "      -r                ; reuse socket\n"
 	    "      -b <n> <master>:<port> <backup>:<port>\n"
 	    "                        ; backup host:port for master\n"
@@ -4780,6 +4782,9 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
 	break;
     case 'T':
 	PairTimeOut = atoi(argv[++argi]);
+	break;
+    case 'A':
+	BacklogMax = atoi(argv[++argi]);
 	break;
 #ifndef NO_SETUID
     case 'o':
