@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.210 2004/10/26 23:20:52 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.211 2004/10/26 23:49:57 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -949,10 +949,11 @@ int isdigitaddr(char *name) {
 
 #ifdef DJBDNS
 int host2addr(char *name, struct in_addr *addrp, short *familyp) {
+    char fqdn_buf[BUFMAX];
     char addr_buf[STRMAX];
     stralloc temp;
-    stralloc fqdn = {0};
-    stralloc addr = {addr_buf, 0, BUFMAX};
+    stralloc fqdn = {fqdn_buf, 0, BUFMAX};
+    stralloc addr = {addr_buf, 0, STRMAX};
     int ret = 0;
     temp.s = name;
     temp.len = strlen(name);
@@ -969,7 +970,9 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     }
     message(LOG_ERR, "No IP address for %s", name);
  exit:
-    alloc_free(fqdn);
+    if (temp.s != name) alloc_free(temp);
+    if (fqdn.s != fqdn_buf) alloc_free(fqdn);
+    if (addr.s != addr_buf) alloc_free(addr);
     return ret;
 }
 #else
