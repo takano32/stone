@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.103 2003/11/03 03:31:46 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.104 2003/11/03 06:21:22 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1570,6 +1570,16 @@ int doSSL_connect(Pair *pair) {
     }
     return 1;
 }
+
+int SSL_smart_shutdown(SSL *ssl) {
+    int ret = 0;
+    int i;
+    for (i=0; i < 4; i++) {
+	ret = SSL_shutdown(ssl);
+	if (ret) break;
+    }
+    return ret;
+}
 #endif	/* USE_SSL */
 
 void message_time_log(Pair *pair) {
@@ -1585,6 +1595,35 @@ void message_time_log(Pair *pair) {
     }
 }
 
+int doshutdown(Pair *pair, int how) {
+    int ret = 0;
+    if (!pair || (pair->proto & proto_close)
+	|| InvalidSocket(pair->sd) || !(pair->proto & proto_connect))
+	return -1;	/* no connection */
+    if (pair->proto & proto_shutdown)
+	return 0;	/* no need to shutdown */
+    pair->proto |= proto_shutdown;
+    if (Debug > 2) message(LOG_DEBUG, "TCP %d: shutdown %d", pair->sd, how);
+#ifdef USE_SSL
+    if (pair->ssl) {
+	ret = SSL_smart_shutdown(pair->ssl);
+	if (ret < 0) {
+	    int err = SSL_get_error(pair->ssl, ret);
+	    message(LOG_ERR, "TCP %d: SSL_shutdown err=%d",
+		    pair->sd, err);
+	}
+    } else
+#endif
+	ret = shutdown(pair->sd, how);
+    if (ret < 0) {
+	pair->proto |= (proto_eof | proto_close);
+	if (Debug > 2)
+	    message(LOG_DEBUG, "TCP %d: fail to shutdown, so closing...",
+		    pair->sd);
+    }
+    return ret;
+}
+
 void doclose(Pair *pair) {	/* close pair */
     Pair *p = pair->pair;
     SOCKET sd = pair->sd;
@@ -1594,16 +1633,7 @@ void doclose(Pair *pair) {	/* close pair */
 	if (ValidSocket(sd))
 	    if (Debug > 2) message(LOG_DEBUG, "TCP %d: closing...", sd);
     }
-    if (p && !(p->proto & (proto_shutdown | proto_close))
-	&& ValidSocket(p->sd) && (p->proto & proto_connect)) {
-	p->proto |= proto_shutdown;
-	if (Debug > 2) message(LOG_DEBUG, "TCP %d: shutdown %d", sd, p->sd);
-#ifdef USE_SSL
-	if (p->ssl) SSL_shutdown(p->ssl);
-	else
-#endif
-	    shutdown(p->sd, 2);
-    }
+    doshutdown(p, 2);
 }
 
 /* pair connect to destination */
@@ -3057,15 +3087,7 @@ void asyncReadWrite(Pair *pair) {
 			   and peer is not yet shutdowned, */
 			&& ValidSocket(wsd)) {	/* and pair is valid, */
 			rPair->proto |= proto_eof;	/* no more to read */
-			if (Debug > 2)
-			    message(LOG_DEBUG, "TCP %d: shutdown 1, "
-				    "because %d is EOF", wsd, rsd);
-			wPair->proto |= proto_shutdown;
-#ifdef USE_SSL
-			if (wPair->ssl) SSL_shutdown(wPair->ssl);
-			else
-#endif
-			    shutdown(wsd, 1);	/* no more sends */
+			if (doshutdown(wPair, 1) < 0) doclose(rPair);
 		    } else {
 			/* error or already shutdowned
 			   or bi-directional EOF */
