@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.94 2003/10/28 16:26:48 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.95 2003/10/29 04:49:24 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -240,6 +240,7 @@ int FdSetBug = 0;
 
 #define TICK_SELECT	100000	/* 0.1 sec */
 #define SPIN_MAX	10	/* 1 sec */
+#define	NERRS_MAX	10	/* # of select errors */
 
 #ifdef USE_SSL
 #include <openssl/crypto.h>
@@ -3430,6 +3431,7 @@ void repeater(void) {
     fd_set rout, wout, eout;
     struct timeval tv, *timeout;
     static int spin = 0;
+    static int nerrs = 0;
     rout = rin;
     wout = win;
     eout = ein;
@@ -3446,28 +3448,32 @@ void repeater(void) {
 	timeout = NULL;		/* block indefinitely */
     }
     if (Debug > 10) {
-	message(LOG_DEBUG,"select main(%ld)...",
+	message(LOG_DEBUG, "select main(%ld)...",
 		(timeout ? timeout->tv_usec : 0));
 	select_debug("select main IN ", &rout, &wout, &eout);
     }
-    ret = select(FD_SETSIZE,&rout,&wout,&eout,timeout);
+    ret = select(FD_SETSIZE, &rout, &wout, &eout, timeout);
     if (Debug > 10) {
-	message(LOG_DEBUG,"select main: %d",ret);
+	message(LOG_DEBUG,"select main: %d", ret);
 	select_debug("select main OUT", &rout, &wout, &eout);
     }
     scanClose();
     if (ret > 0) {
+	nerrs = 0;
 	spin = SPIN_MAX;
-	(void)(scanStones(&rout,&eout) > 0 &&
-	       scanPairs(&rout,&wout,&eout) > 0 &&
-	       scanUDP(&rout,&eout) > 0);
+	(void)(scanStones(&rout, &eout) > 0 &&
+	       scanPairs(&rout, &wout, &eout) > 0 &&
+	       scanUDP(&rout, &eout) > 0);
     } else if (ret < 0) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
 #endif
 	if (errno != EINTR) {
-	    message(LOG_ERR,"select error err=%d",errno);
-	    exit(1);
+	    message(LOG_ERR, "select error err=%d", errno);
+	    if (++nerrs >= NERRS_MAX) {
+		message(LOG_ERR, "select error %d times, exiting...");
+		exit(1);
+	    }
 	}
     }
     scanConns();
