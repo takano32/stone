@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.84 2003/10/23 01:52:21 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.85 2003/10/23 09:36:47 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -548,8 +548,14 @@ void message(int pri, char *fmt, ...) {
 	va_start(ap,fmt);
 	vsnprintf(str,BUFMAX,fmt,ap);
 	va_end(ap);
-	if (Recursion) syslog(pri,"(%d) %s",Recursion,str);
-	else syslog(pri,"%s",str);
+	if (Syslog == 1 || pri != LOG_DEBUG) {
+	    if (Recursion) syslog(pri, "(%d) %s", Recursion, str);
+	    else syslog(pri, "%s", str);
+	}
+	if (Syslog > 1) {	/* daemontools */
+	    if (Recursion) fprintf(stdout, "(%d) %s\n", Recursion, str);
+	    else fprintf(stdout, "%s\n", str);
+	}
     } else {
 #endif
 	time_t clock;
@@ -3604,6 +3610,7 @@ void help(char *com) {
 #endif
 #ifndef NO_SYSLOG
 	    "      -l                ; use syslog\n"
+	    "      -ll               ; run under daemontools\n"
 #endif
 	    "      -L <file>         ; write log to <file>\n"
 	    "      -a <file>         ; write accounting to <file>\n"
@@ -4048,7 +4055,7 @@ int doopts(int argc, char *argv[]) {
 		break;
 #ifndef NO_SYSLOG
 	    case 'l':
-		Syslog = 1;
+		Syslog++;
 		break;
 #endif
 	    case 'L':
@@ -4426,7 +4433,7 @@ void initialize(int argc, char *argv[]) {
     WSADATA WSAData;
 #endif
     LogFp = stderr;
-    setbuf(stderr,NULL);
+    setbuf(stderr, NULL);
     DispHost = NULL;
     p = getenv("DISPLAY");
     if (p) {
@@ -4476,6 +4483,7 @@ void initialize(int argc, char *argv[]) {
     if (Syslog) {
 	sprintf(SyslogName,"stone[%d]",getpid());
 	openlog(SyslogName,0,LOG_DAEMON);
+	if (Syslog > 1) setbuf(stdout, NULL);
     }
 #endif
     message(LOG_INFO,"start (%s) [%d]",VERSION,getpid());
