@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.174 2004/09/17 08:35:48 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.175 2004/09/17 10:30:08 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1870,12 +1870,10 @@ static void printSSLinfo(SSL *ssl) {
     }
 }
 
-/*
-  Blocking SSL_accept
-  1:	success
-  -1:	error
-*/
+/* Blocking SSL_accept (1: success, -1: error) */
 int doSSL_accept(Pair *pair) {
+    fd_set rout, wout;
+    struct timeval tv;
     SSL *ssl;
     int err, ret;
     ssl = pair->ssl;
@@ -1898,7 +1896,14 @@ int doSSL_accept(Pair *pair) {
 		    SSL_in_init(ssl), SSL_in_accept_init(ssl));
 	if (ret <= 0) err = SSL_get_error(ssl, ret);
 	else err = SSL_ERROR_NONE;
-    } while (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE);
+	FD_ZERO(&rout);
+	FD_ZERO(&wout);
+	if (err == SSL_ERROR_WANT_READ) FdSet(pair->sd, &rout);
+	else if (err == SSL_ERROR_WANT_WRITE) FdSet(pair->sd, &wout);
+	else break;
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+    } while (select(FD_SETSIZE, &rout, &wout, NULL, &tv) >= 0);
     if (ret < 0) {
 	if (err == SSL_ERROR_SYSCALL) {
 #ifdef WINDOWS
@@ -1935,12 +1940,10 @@ int doSSL_accept(Pair *pair) {
     return 1;
 }
 
-/*
-  Blocking SSL_connect
-  1: success
-  -1: if error
-*/
+/* Blocking SSL_connect (1: success, -1: if error) */
 int doSSL_connect(Pair *pair) {
+    fd_set rout, wout;
+    struct timeval tv;
     SSL *ssl;
     int err, ret;
     ssl = pair->ssl;
@@ -1958,7 +1961,14 @@ int doSSL_connect(Pair *pair) {
 	ret = SSL_connect(ssl);	/* blocking I/O */
 	if (ret <= 0) err = SSL_get_error(ssl, ret);
 	else err = SSL_ERROR_NONE;
-    } while (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE);
+	FD_ZERO(&rout);
+	FD_ZERO(&wout);
+	if (err == SSL_ERROR_WANT_READ) FdSet(pair->sd, &rout);
+	else if (err == SSL_ERROR_WANT_WRITE) FdSet(pair->sd, &wout);
+	else break;
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+    } while (select(FD_SETSIZE, &rout, &wout, NULL, &tv) >= 0);
     if (ret < 0) {
 	message(priority(pair), "TCP %d: SSL_connect err=%d %s",
 		pair->sd, err, ERR_error_string(ERR_get_error(), NULL));
@@ -1986,16 +1996,30 @@ int doSSL_shutdown(SSL *ssl, SOCKET sd) {
     if (Debug > 8) message(LOG_DEBUG, "TCP %d: doSSL_shutdown...", sd);
     do {
 	ret = SSL_shutdown(ssl);
-	if (ret <= 0) err = SSL_get_error(ssl, ret);
-	err = SSL_ERROR_NONE;
+	if (ret <= 0) {
+	    err = SSL_get_error(ssl, ret);
+	    if (Debug > 9)
+		message(LOG_DEBUG, "TCP %d: doSSL_shutdown... err=%d",
+			sd, err);
+	} else {
+	    err = SSL_ERROR_NONE;
+	}
 	FD_ZERO(&rout);
 	FD_ZERO(&wout);
 	if (err == SSL_ERROR_WANT_READ) FdSet(sd, &rout);
 	else if (err == SSL_ERROR_WANT_WRITE) FdSet(sd, &wout);
-	else break;
+	else if (err == SSL_ERROR_SYSCALL) {
+#ifdef WINDOWS
+	    errno = WSAGetLastError();
+#endif
+	    if (errno == EAGAIN) {
+		FdSet(sd, &rout);
+		FdSet(sd, &wout);
+	    } else break;
+	} else break;
 	tv.tv_sec = 1;
 	tv.tv_usec = 0;
-    } while (select(FD_SETSIZE, &rout, &wout, NULL, &tv) == 0);
+    } while (select(FD_SETSIZE, &rout, &wout, NULL, &tv) >= 0);
     if (Debug > 8)
 	message(LOG_DEBUG, "TCP %d: doSSL_shutdown... ret=%d", sd, ret);
     return ret;
