@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.128 2004/05/05 16:04:00 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.129 2004/07/01 04:42:43 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -478,6 +478,7 @@ FILE *AccFp = NULL;
 char *AccFileName = NULL;
 char *ConfigFile = NULL;
 char *PidFile = NULL;
+int DryRun = 0;
 int ConfigArgc = 0;
 int OldConfigArgc = 0;
 char **ConfigArgv = NULL;
@@ -3987,31 +3988,33 @@ Stone *mkstone(
 		    stonep->sd, errno);
 	    exit(1);
 	}
-	if (bind(stonep->sd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
-#ifdef WINDOWS
-	    errno = WSAGetLastError();
-#endif
-	    message(LOG_ERR, "stone %d: Can't bind port=%d err=%d.",
-		    stonep->sd, ntohs(sin.sin_port), errno);
-	    exit(1);
-	}
-#ifndef NO_FORK
-	fcntl(stonep->sd, F_SETFL, O_NONBLOCK);
-#endif
-	if (sin.sin_port == 0) {
-	    i = sizeof(sin);
-	    getsockname(stonep->sd, (struct sockaddr*)&sin, &i);
-	}
-	if (!(proto & proto_udp)) {	/* TCP */
-	    if (listen(stonep->sd, BACKLOG_MAX) < 0) {
+	if (!DryRun) {
+	    if (bind(stonep->sd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
 #ifdef WINDOWS
 		errno = WSAGetLastError();
 #endif
-		message(LOG_ERR, "stone %d: Can't listen err=%d.",
-			stonep->sd, errno);
+		message(LOG_ERR, "stone %d: Can't bind port=%d err=%d.",
+			stonep->sd, ntohs(sin.sin_port), errno);
 		exit(1);
 	    }
-	}
+#ifndef NO_FORK
+	    fcntl(stonep->sd, F_SETFL, O_NONBLOCK);
+#endif
+	    if (sin.sin_port == 0) {
+		i = sizeof(sin);
+		getsockname(stonep->sd, (struct sockaddr*)&sin, &i);
+	    }
+	    if (!(proto & proto_udp)) {	/* TCP */
+		if (listen(stonep->sd, BACKLOG_MAX) < 0) {
+#ifdef WINDOWS
+		    errno = WSAGetLastError();
+#endif
+		    message(LOG_ERR, "stone %d: Can't listen err=%d.",
+			    stonep->sd, errno);
+		    exit(1);
+		}
+	    }
+	}	/* !DryRun */
     }
 #ifdef USE_SSL
     if (proto & proto_ssl_s) {	/* server side SSL */
@@ -4155,6 +4158,7 @@ void help(char *com) {
 	    "      -P <command>      ; preprocessor for config. file\n"
 	    "      -Q <options>      ; options for preprocessor\n"
 #endif
+	    "      -N                ; configuration check only\n"
 	    "      -d                ; increase debug level\n"
 	    "      -p                ; packet dump\n"
 	    "      -n                ; numerical address\n"
@@ -4694,6 +4698,7 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
 #endif
     case 'L':
 	argi++;
+	if (DryRun) break;
 	if (!strcmp(argv[argi], "-")) {
 	    LogFp = stdout;
 	} else {
@@ -4711,6 +4716,7 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
 	break;
     case 'a':
 	argi++;
+	if (DryRun) break;
 	if (!strcmp(argv[argi], "-")) {
 	    AccFp = stdout;
 	} else {
@@ -4822,6 +4828,9 @@ int doopts(int argc, char *argv[]) {
 		} else switch(*p) {
 		case '-':	/* end of global options */
 		    return i+1;
+		case 'N':
+		    DryRun = 1;
+		    break;
 		case 'C':
 		    if (!ConfigFile) {
 			i++;
@@ -5098,6 +5107,11 @@ void initialize(int argc, char *argv[]) {
     int proto;
 #ifdef WINDOWS
     WSADATA WSAData;
+    if (WSAStartup(MAKEWORD(1, 1), &WSAData)) {
+	message(LOG_ERR, "Can't find winsock.");
+	exit(1);
+    }
+    atexit((void(*)(void))WSACleanup);
 #endif
     MyPid = getpid();
     LogFp = stderr;
@@ -5140,7 +5154,7 @@ void initialize(int argc, char *argv[]) {
 #ifdef UNIX_DAEMON
     if (DaemonMode) daemonize();
 #endif
-    if (PidFile) {
+    if (!DryRun && PidFile) {
 	FILE *fp = fopen(PidFile, "w");
 	if (fp) {
 	    fprintf(fp, "%d\n", MyPid);
@@ -5158,13 +5172,6 @@ void initialize(int argc, char *argv[]) {
     if (Debug > 0) {
 	message(LOG_DEBUG, "Debug level: %d", Debug);
     }
-#ifdef WINDOWS
-    if (WSAStartup(MAKEWORD(1, 1), &WSAData)) {
-	message(LOG_ERR, "Can't find winsock.");
-	exit(1);
-    }
-    atexit((void(*)(void))WSACleanup);
-#endif
     pairs.next = NULL;
     conns.next = NULL;
     origins.next = NULL;
@@ -5197,7 +5204,7 @@ void initialize(int argc, char *argv[]) {
     signal(SIGFPE, handler);
 #endif
 #ifndef NO_FORK
-    if (NForks) {
+    if (!DryRun && NForks) {
 	Pid = malloc(sizeof(pid_t) * NForks);
 	if (!Pid) {
 	    message(LOG_ERR, "Out of memory.");
@@ -5359,6 +5366,7 @@ static void clear_args(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
     initialize(argc, argv);
+    if (DryRun) return 0;
     clear_args(argc, argv);
     for (;;) repeater();
     return 0;
