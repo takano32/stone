@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.105 2003/11/03 07:12:54 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.106 2003/11/03 16:36:17 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -366,6 +366,8 @@ typedef struct _Pair {
     int count;		/* reference counter */
     char *p;
     TimeLog *log;
+    int tx;		/* sent bytes */
+    int rx;		/* received bytes */
     int start;		/* index of buf */
     int len;
     int bufmax;		/* buffer size */
@@ -1423,11 +1425,13 @@ void message_pair(Pair *pair) {
     if (p) psd = p->sd;
     else psd = INVALID_SOCKET;
     if (p && p->p) {
-	message(LOG_INFO, "TCP%3d:%3d %08x %d %s %s",
-		sd, psd, pair->proto, pair->count, str, p->p);
+	message(LOG_INFO, "TCP%3d:%3d %08x %d %s %s tx:%d rx:%d",
+		sd, psd, pair->proto, pair->count, str, p->p,
+		pair->tx, pair->rx);
     } else {
-	message(LOG_INFO, "TCP%3d:%3d %08x %d %s",
-		sd, psd, pair->proto, pair->count, str);
+	message(LOG_INFO, "TCP%3d:%3d %08x %d %s tx:%d rx:%d",
+		sd, psd, pair->proto, pair->count, str,
+		pair->tx, pair->rx);
     }
 }
 
@@ -1620,11 +1624,17 @@ int doshutdown(Pair *pair, int how) {
 	ret = err;
 	message(LOG_ERR, "TCP %d: shutdown %d err=%d", pair->sd, how, errno);
     }
+    if (pair->proto & proto_eof) {
+	pair->proto |= proto_close;
+	if (Debug > 2)
+	    message(LOG_DEBUG, "TCP %d: EOF & shutdown, so closing... "
+		    "tx:%d rx:%d", pair->sd, pair->tx, pair->rx);
+    }
     if (ret < 0) {
 	pair->proto |= (proto_eof | proto_close);
 	if (Debug > 2)
-	    message(LOG_DEBUG, "TCP %d: fail to shutdown, so closing...",
-		    pair->sd);
+	    message(LOG_DEBUG, "TCP %d: fail to shutdown, so closing... "
+		    "tx:%d rx:%d", pair->sd, pair->tx, pair->rx);
     }
     return ret;
 }
@@ -1636,7 +1646,8 @@ void doclose(Pair *pair) {	/* close pair */
     if (!(pair->proto & proto_close)) {		/* request to close */
 	pair->proto |= (proto_eof | proto_shutdown | proto_close);
 	if (ValidSocket(sd))
-	    if (Debug > 2) message(LOG_DEBUG, "TCP %d: closing...", sd);
+	    if (Debug > 2) message(LOG_DEBUG, "TCP %d: closing... "
+				   "tx:%d rx:%d", sd, pair->tx, pair->rx);
     }
     doshutdown(p, 2);
 }
@@ -2016,6 +2027,8 @@ Pair *doaccept(Stone *stonep) {
     pair1->len = 0;
     pair1->p = NULL;
     pair1->log = NULL;
+    pair1->tx = 0;
+    pair1->rx = 0;
     time(&pair1->clock);
     pair1->timeout = stonep->timeout;
     pair1->pair = NULL;
@@ -2044,6 +2057,8 @@ Pair *doaccept(Stone *stonep) {
     pair2->len = 0;
     pair2->p = NULL;
     pair2->log = NULL;
+    pair2->tx = 0;
+    pair2->rx = 0;
     time(&pair2->clock);
     pair2->timeout = stonep->timeout;
     pair2->pair = pair1;
@@ -2371,6 +2386,7 @@ int dowrite(Pair *pair) {	/* write from buf from pair->start */
 	message_pair(pair);
     }
     pair->len -= len;
+    pair->tx += len;
     return len;
 }
 
@@ -2554,6 +2570,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 	if (Debug > 2) message(LOG_DEBUG, "TCP %d: EOF", sd);
 	return -2;	/* EOF w/ pair */
     }
+    pair->rx += len;
 #ifdef ENLARGE
     if (len > pair->bufmax - 10
 	&& XferBufMax < pair->bufmax * 2) {
