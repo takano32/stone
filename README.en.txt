@@ -43,6 +43,7 @@ HOWTO USE
 	stone [-C <file>] [-P <command>] [-Q <options>] [-N] [-d] [-p] [-n]
 	      [-u <max>] [-f <n>] [-l] [-L <file>] [-a <file>] [-i <file>]
 	      [-X <n>] [-T <n>] [-r]
+	      [-s <send> <expect>... --]
 	      [-b [<var>=<val>]... <n> <master>:<port> <backup>:<port>]
 	      [-B <host>:<port> <host1>:<port1>... --]
 	      [-o <n>] [-g <n>] [-t <dir>] [-D] [-c <dir>]
@@ -81,14 +82,21 @@ HOWTO USE
 
 	The ``-b <n> <master>:<port> <backup>:<port>'' flag designates
 	the backup destination for <master>:<port>.  The program checks
-	every <n> seconds whether <master>:<port> is connectable.  If
-	not, the backup is used instead.  Alternative <host> can be
+	every <n> seconds whether <master>:<port> is connectable, using
+	the health check script defined by ``-s'' flag described below.
+	If not, the backup is used instead.  Alternative <host> can be
 	checked, using ``host=<host>'' and alternative <port>, using
 	``port=<port>''.
 
+	The ``-s <send> <expect>... --'' flag defines the health check
+	script.  Sending <send>, then checks whether the response match
+	the regular expression <expect>.
+
 	The ``-B <host>:<port> <host1>:<port1>... --'' is for the
 	destination group.  If the destination of <st> is <host>:<port>,
-	the program chooses a destination randomly from the group.
+	the program chooses a destination randomly from the group.  The
+	destination <host>:<port> that is designated by ``-b'' flag and
+	turned out unhealthy, is excluded from the group.
 
 	If the ``-o <n>'' or ``-g <n>'' flag is used, the program set
 	its uid or gid to ``<n>'' respectively.  If the ``-t <dir>''
