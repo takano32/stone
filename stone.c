@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.73 2003/09/17 05:57:56 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.74 2003/09/20 08:57:39 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -254,6 +254,7 @@ int FdSetBug = 0;
 typedef struct {
     int verbose;
     int depth;
+    long serial;
     SSL_CTX *ctx;
     regex_t *re[DEPTH_MAX];
     unsigned char lbmod;
@@ -1204,6 +1205,8 @@ static void printSSLinfo(SSL *ssl) {
     message(LOG_INFO,"[SSL cipher=%s]",p);
     peer = SSL_get_peer_certificate(ssl);
     if (peer) {
+	ASN1_INTEGER *n = X509_get_serialNumber(peer);
+	if (n) message(LOG_INFO,"[SSL serial=%lx]",ASN1_INTEGER_get(n));
 	p = X509_NAME_oneline(X509_get_subject_name(peer),NULL,0);
 	if (p) message(LOG_INFO,"[SSL subject=%s]",p);
 	free(p);
@@ -2950,6 +2953,18 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     } else {
 	ss = pair->stone->ssl_client;
     }
+    if (depth == 0) {
+	ASN1_INTEGER *n = X509_get_serialNumber(err_cert);
+	long serial = -1;
+	if (n) serial = ASN1_INTEGER_get(n);
+	if (ss->serial < 0) {
+	    ss->serial = serial;
+	} else if (serial != ss->serial) {
+	    message(LOG_ERR,"SSL callback serial number mismatch %lx != %lx",
+		    serial, ss->serial);
+	    return 0;	/* fail */
+	}
+    }
     if (Debug > 3)
 	message(LOG_DEBUG,"TCP %d: callback: err=%d, depth=%d, preverify=%d",
 		pair->sd, err, depth, preverify_ok);
@@ -3019,6 +3034,7 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
     SSL_CTX_set_verify(ss->ctx,opts->mode,opts->callback);
     SSL_CTX_set_verify_depth(ss->ctx,opts->depth + 1);
     ss->depth = opts->depth;
+    ss->serial = -1;
     ss->lbmod = opts->lbmod;
     ss->lbparm = opts->lbparm;
     if ((opts->caFile || opts->caPath)
