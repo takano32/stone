@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.191 2004/09/28 10:02:14 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.192 2004/09/28 13:50:58 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1108,6 +1108,9 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
     SOCKET sd;
     int ret;
     char addrport[STRMAX];
+#ifdef WINDOWS
+    u_long param;
+#endif
     time_t start, now;
     time(&start);
     sd = socket(AF_INET, SOCK_STREAM, 0);
@@ -1120,17 +1123,20 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 	return 1;	/* I can't tell the master is healthy or not */
     }
     addrport2str(sinp, sizeof(*sinp), proto, proto_dest, addrport, STRMAX);
-#ifndef WINDOWS
+#ifdef WINDOWS
+    param = 1;
+    ioctlsocket(sd, FIONBIO, &param);
+#else
     fcntl(sd, F_SETFL, O_NONBLOCK);
 #endif
     ret = connect(sd, (struct sockaddr*)sinp, sizeof(*sinp));
     if (ret < 0) {
 #ifdef WINDOWS
-	errno = WSAGetLastError();
-	message(LOG_ERR, "health check: connect %s err=%d",
-		addrport, errno);
-	goto fail;
-#else
+        errno = WSAGetLastError();
+#ifndef EINPROGRESS
+#define EINPROGRESS     WSAEWOULDBLOCK
+#endif
+#endif
 	if (errno == EINPROGRESS) {
 	    fd_set wout;
 	    struct timeval tv;
@@ -1147,7 +1153,6 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 		    addrport, errno);
 	    goto fail;
 	}
-#endif
     }
     time(&now);
     if (now - start >= timeout) goto timeout;
@@ -2273,6 +2278,9 @@ void asyncConn(Conn *conn) {
     int offset = -1;	/* offset in load balancing group */
     time_t clock;
     char addrport[STRMAX];
+#ifdef WINDOWS
+    u_long param;
+#endif
     ASYNC_BEGIN;
     p1 = conn->pair;
     if (p1 == NULL) goto finish;
@@ -2351,7 +2359,10 @@ void asyncConn(Conn *conn) {
     /*
       now destination is determined, engage
     */
-#ifndef WINDOWS
+#ifdef WINDOWS
+    param = 1;
+    ioctlsocket(p1->sd, FIONBIO, &param);
+#else
     fcntl(p1->sd, F_SETFL, O_NONBLOCK);
 #endif
     addrport2str(&conn->sin, sizeof(conn->sin),
@@ -2363,9 +2374,6 @@ void asyncConn(Conn *conn) {
     if (ret < 0) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
-#ifndef EINPROGRESS
-#define EINPROGRESS	WSAEINPROGRESS
-#endif
 #endif
 	if (errno == EINPROGRESS) {
 	    p1->proto |= proto_conninprog;
@@ -2556,6 +2564,9 @@ Pair *doaccept(Stone *stonep) {
 #endif
     char ident[STRMAX];
     char fromstr[STRMAX*2];
+#ifdef WINDOWS
+    u_long param;
+#endif
     nsd = INVALID_SOCKET;
     pair1 = pair2 = NULL;
     fromlen = sizeof(from);
@@ -2662,7 +2673,10 @@ Pair *doaccept(Stone *stonep) {
     pair1->ssl = pair2->ssl = NULL;
     pair1->ssl_flag = pair2->ssl_flag = 0;
     /* now successfully accepted */
-#ifndef WINDOWS
+#ifdef WINDOWS
+    param = 1;
+    ioctlsocket(pair1->sd, FIONBIO, &param);
+#else
     fcntl(pair1->sd, F_SETFL, O_NONBLOCK);
 #endif
     if (stonep->proto & proto_ssl_s) {
