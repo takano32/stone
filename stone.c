@@ -2506,7 +2506,8 @@ fd_set *rinp, *winp;
     return len;
 }
 
-static void select_debug(rout, wout, eout)
+static void select_debug(msg, rout, wout, eout)
+char *msg;
 fd_set *rout, *wout, *eout;
 {
     int i, r, w, e;
@@ -2516,7 +2517,7 @@ fd_set *rout, *wout, *eout;
 	    w = FD_ISSET(i,wout);
 	    e = FD_ISSET(i,eout);
 	    if (r || w || e)
-		message(LOG_DEBUG,"select %d: %c%c%c",
+		message(LOG_DEBUG,"%s %d: %c%c%c", msg,
 			i, (r ? 'r' : ' '), (w ? 'w' : ' '), (e ? 'e' : ' '));
 	}
     }
@@ -2557,7 +2558,7 @@ Pair *pair;
     }
     tv.tv_sec = 0;
     tv.tv_usec = TICK_SELECT;
-    if (Debug > 10) select_debug(&ri,&wi,&ei);
+    if (Debug > 10) select_debug("selectReadWrite1",&ri,&wi,&ei);
     while (ro=ri, wo=wi, eo=ei, select(FD_SETSIZE,&ro,&wo,&eo,&tv) > 0) {
 	for (i=0; i < npairs; i++) {
 	    if (p[i] && FD_ISSET(p[i]->sd,&eo)) {	/* exception */
@@ -2620,7 +2621,7 @@ Pair *pair;
 		}
 	    }
 	}
-	if (Debug > 10) select_debug(&ri,&wi,&ei);
+	if (Debug > 10) select_debug("selectReadWrite2",&ri,&wi,&ei);
     }
     waitMutex(FdRinMutex);
     waitMutex(FdWinMutex);
@@ -2811,13 +2812,14 @@ void repeater() {
 	timeout->tv_usec = TICK_SELECT;
     } else timeout = NULL;		/* block indefinitely */
     if (Debug > 10) {
-	message(LOG_DEBUG,"select(%ld)...",(timeout ? timeout->tv_usec : 0));
-	select_debug(&rout, &wout, &eout);
+	message(LOG_DEBUG,"select main(%ld)...",
+		(timeout ? timeout->tv_usec : 0));
+	select_debug("select main IN ", &rout, &wout, &eout);
     }
     ret = select(FD_SETSIZE,&rout,&wout,&eout,timeout);
     if (Debug > 10) {
-	message(LOG_DEBUG,"select: %d",ret);
-	select_debug(&rout, &wout, &eout);
+	message(LOG_DEBUG,"select main: %d",ret);
+	select_debug("select main OUT", &rout, &wout, &eout);
     }
     scanClose();
     if (ret > 0) {
@@ -3753,10 +3755,8 @@ char *argv[];
 #ifdef USE_SSL
     ssl_ctx_server = SSL_CTX_new(SSLv23_server_method());
     ssl_ctx_client = SSL_CTX_new(SSLv23_client_method());
-    SSL_CTX_set_mode(ssl_ctx_server,
-		     SSL_MODE_ENABLE_PARTIAL_WRITE|SSL_MODE_AUTO_RETRY);
-    SSL_CTX_set_mode(ssl_ctx_client,
-		     SSL_MODE_ENABLE_PARTIAL_WRITE|SSL_MODE_AUTO_RETRY);
+    SSL_CTX_set_mode(ssl_ctx_server,SSL_MODE_AUTO_RETRY);
+    SSL_CTX_set_mode(ssl_ctx_client,SSL_MODE_AUTO_RETRY);
     if (!cipher_list) cipher_list = getenv("SSL_CIPHER");
 #endif
     pairs.next = NULL;
