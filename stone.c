@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.168 2004/09/15 06:59:31 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.169 2004/09/15 16:46:20 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -483,7 +483,6 @@ const proto_base_d =	0x20000000;	/*        destination */
 #define proto_all	(proto_src|proto_dest)
 
 #ifdef USE_SSL
-const sf_intr =		0x00001;	/* SSL accept/connect interrupted */
 const sf_wb_on_r =	0x00004;	/* SSL_write blocked on read */
 const sf_rb_on_w =	0x00008;	/* SSL_read blocked on write */
 #endif
@@ -1821,48 +1820,52 @@ static void printSSLinfo(SSL *ssl) {
     }
 }
 
-int trySSL_accept(Pair *pair) {
-    int ret;
-    unsigned long err;
-    SSL *ssl = pair->ssl;
-    if (!ssl) return -1;
-    if (pair->ssl_flag & sf_intr) {
-	if (SSL_want_nothing(ssl)) goto finished;
+/*
+  Blocking SSL_accept
+  1:	success
+  -1:	error
+*/
+int doSSL_accept(Pair *pair) {
+    SSL *ssl;
+    int err, ret;
+    ssl = pair->ssl;
+    pair->ssl = NULL;
+    if (ssl) SSL_free(ssl);
+    ssl = SSL_new(pair->stone->ssl_server->ctx);
+    if (!ssl) {
+	message(LOG_ERR, "TCP %d: SSL_new failed", pair->sd);
+	return -1;
     }
-    ret = SSL_accept(ssl);
-    if (Debug > 4)
-	message(LOG_DEBUG, "TCP %d: SSL_accept ret=%d, state=%x, "
-		"finished=%x, in_init=%x/%x",
-		pair->sd, ret, SSL_state(ssl), SSL_is_init_finished(ssl),
-		SSL_in_init(ssl), SSL_in_accept_init(ssl));
+    SSL_set_ex_data(ssl, PairIndex, pair);
+    SSL_set_fd(ssl, pair->sd);
+    pair->ssl = ssl;
+    do {
+	ret = SSL_accept(ssl);	/* blocking I/O */
+	if (Debug > 7)
+	    message(LOG_DEBUG, "TCP %d: SSL_accept ret=%d, state=%x, "
+		    "finished=%x, in_init=%x/%x",
+		    pair->sd, ret, SSL_state(ssl), SSL_is_init_finished(ssl),
+		    SSL_in_init(ssl), SSL_in_accept_init(ssl));
+	if (ret <= 0) err = SSL_get_error(ssl, ret);
+	else err = SSL_ERROR_NONE;
+    } while (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE);
     if (ret < 0) {
-	err = SSL_get_error(ssl, ret);
-	if (err == SSL_ERROR_NONE
-	    || err == SSL_ERROR_WANT_READ
-	    || err == SSL_ERROR_WANT_WRITE) {
-	    if (Debug > 4)
-		message(LOG_DEBUG, "TCP %d: SSL_accept interrupted WANT=%d",
-			pair->sd, err);
-	    pair->ssl_flag |= sf_intr;
-	    return 0;	/* EINTR */
-	} else if (err) {
-	    if (err == SSL_ERROR_SYSCALL) {
+	if (err == SSL_ERROR_SYSCALL) {
 #ifdef WINDOWS
-		errno = WSAGetLastError();
+	    errno = WSAGetLastError();
 #endif
-		message(priority(pair), "TCP %d: SSL_accept I/O error err=%d",
-			pair->sd, errno);
-	    } else if (err == SSL_ERROR_SSL) {
-		message(priority(pair), "TCP %d: SSL_accept %s",
-			pair->sd, ERR_error_string(ERR_get_error(), NULL));
-	    } else {
-		message(priority(pair), "TCP %d: SSL_accept err=%d %s",
-			pair->sd, err,
-			ERR_error_string(ERR_get_error(), NULL));
-	    }
-	    message_pair(pair);
-	    return -1;
+	    message(priority(pair), "TCP %d: SSL_accept I/O error err=%d",
+		    pair->sd, errno);
+	} else if (err == SSL_ERROR_SSL) {
+	    message(priority(pair), "TCP %d: SSL_accept %s",
+		    pair->sd, ERR_error_string(ERR_get_error(), NULL));
+	} else {
+	    message(priority(pair), "TCP %d: SSL_accept err=%d %s",
+		    pair->sd, err,
+		    ERR_error_string(ERR_get_error(), NULL));
 	}
+	message_pair(pair);
+	return -1;
     }
     if (SSL_in_accept_init(ssl)) {
 	if (pair->stone->ssl_server->verbose) {
@@ -1871,7 +1874,6 @@ int trySSL_accept(Pair *pair) {
 	}
 	return -1;	/* unexpected EOF */
     }
- finished:
     if (pair->stone->ssl_server->verbose) printSSLinfo(ssl);
     if (Debug > 3) {
 	SSL_CTX *ctx = pair->stone->ssl_server->ctx;
@@ -1880,70 +1882,40 @@ int trySSL_accept(Pair *pair) {
 		pair->sd, SSL_CTX_sess_number(ctx), SSL_CTX_sess_accept(ctx),
 		SSL_CTX_sess_hits(ctx));
     }
-    pair->ssl_flag &= ~sf_intr;
     return 1;
 }
 
-int doSSL_accept(Pair *pair) {
-    SSL *ssl;
-    int ret;
-    ssl = pair->ssl;
-    pair->ssl = NULL;
-    if (ssl) SSL_free(ssl);
-    ssl = SSL_new(pair->stone->ssl_server->ctx);
-    if (ssl) {
-	SSL_set_ex_data(ssl, PairIndex, pair);
-	SSL_set_fd(ssl, pair->sd);
-	pair->ssl = ssl;
-	ret = trySSL_accept(pair);
-    } else {
-	ret = -1;
-    }
-    return ret;
-}
-
+/*
+  Blocking SSL_connect
+  1: success
+  -1: if error
+*/
 int doSSL_connect(Pair *pair) {
     SSL *ssl;
     int err, ret;
     ssl = pair->ssl;
-    if (!(pair->ssl_flag & sf_intr)) {
-	pair->ssl = NULL;
-	if (ssl) SSL_free(ssl);
-	ssl = SSL_new(pair->stone->ssl_client->ctx);
-	if (ssl) {
-	    pair->ssl = ssl;
-	    SSL_set_ex_data(ssl, PairIndex, pair);
-	    SSL_set_fd(ssl, pair->sd);
-	} else {
-	    return -1;
-	}
-    } else if (ssl) {
-	if (SSL_want_nothing(ssl)) goto finished;
-    } else {
+    pair->ssl = NULL;
+    if (ssl) SSL_free(ssl);
+    ssl = SSL_new(pair->stone->ssl_client->ctx);
+    if (!ssl) {
+	message(LOG_ERR, "TCP %d: SSL_new failed", pair->sd);
 	return -1;
     }
-    ret = SSL_connect(ssl);
+    SSL_set_ex_data(ssl, PairIndex, pair);
+    SSL_set_fd(ssl, pair->sd);
+    pair->ssl = ssl;
+    do {
+	ret = SSL_connect(ssl);	/* blocking I/O */
+	if (ret <= 0) err = SSL_get_error(ssl, ret);
+	else err = SSL_ERROR_NONE;
+    } while (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE);
     if (ret < 0) {
-	err = SSL_get_error(ssl, ret);
-	if (err== SSL_ERROR_NONE
-	    || err == SSL_ERROR_WANT_READ
-	    || err == SSL_ERROR_WANT_WRITE) {
-	    if (Debug > 4)
-		message(LOG_DEBUG, "TCP %d: SSL_connect interrupted WANT=%d",
-			pair->sd, err);
-	    pair->ssl_flag |= sf_intr;
-	    return 0;	/* EINTR */
-	} else if (err) {
-	    message(priority(pair), "TCP %d: SSL_connect err=%d %s",
-		    pair->sd, err,
-		    ERR_error_string(ERR_get_error(), NULL));
-	    message_pair(pair);
-	    return -1;
-	}
+	message(priority(pair), "TCP %d: SSL_connect err=%d %s",
+		pair->sd, err, ERR_error_string(ERR_get_error(), NULL));
+	message_pair(pair);
+	return -1;
     }
- finished:
     if (pair->stone->ssl_client->verbose) printSSLinfo(ssl);
-    pair->ssl_flag &= ~sf_intr;
     if (Debug > 3) {
 	SSL_CTX *ctx = pair->stone->ssl_client->ctx;
 	message(LOG_DEBUG,
@@ -2073,55 +2045,51 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
     char addr[STRMAX];
     char port[STRMAX];
     Pair *p = pair->pair;
+    if (pair->proto & proto_close) return -1;
     addr2str(&sinp->sin_addr, addr, STRMAX);
     port2str(sinp->sin_port, pair->proto, proto_all, port, STRMAX);
-#ifdef USE_SSL
-    if (!(pair->ssl_flag & sf_intr)) {
-#endif
-	if (Debug > 2)
-	    message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s:%s ...",
-		    p->sd, pair->sd, addr, port);
-	ret = connect(pair->sd, (struct sockaddr*)sinp, sizeof(*sinp));
-	if (pair->proto & proto_close) return -1;
-	if (ret < 0) {
+    if (Debug > 2)
+	message(LOG_DEBUG, "TCP %d: connecting to TCP %d %s:%s ...",
+		p->sd, pair->sd, addr, port);
+    if (connect(pair->sd, (struct sockaddr*)sinp, sizeof(*sinp)) < 0) {
 #ifdef WINDOWS
-	    errno = WSAGetLastError();
+	errno = WSAGetLastError();
 #endif
-	    if (errno == EINTR) {
-		if (Debug > 4)
-		    message(LOG_DEBUG, "TCP %d: connect interrupted",
-			    pair->sd);
-		return 0;
-	    } else if (errno == EISCONN || errno == EADDRINUSE
+	if (errno == EINTR) {
+	    if (Debug > 4)
+		message(LOG_DEBUG, "TCP %d: connect interrupted", pair->sd);
+	    return 0;
+	} else if (errno == EISCONN || errno == EADDRINUSE
 #ifdef EALREADY
-			|| errno == EALREADY
+		   || errno == EALREADY
 #endif
-		) {
-		if (Debug > 4) {	/* SunOS's bug ? */
-		    message(LOG_DEBUG, "TCP %d: connect bug err=%d",
-			    pair->sd, errno);
-		    message_pair(pair);
-		}
-	    } else {
-		message(priority(pair),
-			"TCP %d: can't connect err=%d: to %s:%s",
-			pair->sd, errno, addr, port);
-		return -1;
+	    ) {
+	    if (Debug > 4) {	/* SunOS's bug ? */
+		message(LOG_DEBUG, "TCP %d: connect bug err=%d",
+			pair->sd, errno);
+		message_pair(pair);
 	    }
+	} else {
+	    message(priority(pair),
+		    "TCP %d: can't connect err=%d: to %s:%s",
+		    pair->sd, errno, addr, port);
+	    return -1;
 	}
-	pair->proto |= proto_connect;	/* pair & dst is connected */
-	if (Debug > 2)
-	    message(LOG_DEBUG, "TCP %d: established to %d",
-		    p->sd, pair->sd);
-	time(&lastEstablished);
-#ifdef USE_SSL
     }
-#endif
-    ret = 1;
+    pair->proto |= proto_connect;	/* pair & dst is connected */
+    if (Debug > 2)
+	message(LOG_DEBUG, "TCP %d: established to %d",
+		p->sd, pair->sd);
+    time(&lastEstablished);
 #ifdef USE_SSL
-    if (pair->stone->proto & proto_ssl_d) ret = doSSL_connect(pair);
+    if (pair->stone->proto & proto_ssl_d)
+	if (doSSL_connect(pair) <= 0) return -1;
 #endif
-    return ret;
+    /* now successfully connected */
+#ifndef WINDOWS
+    fcntl(pair->sd, F_SETFL, O_NONBLOCK);
+#endif
+    return 1;
 }
 
 void message_conn(Conn *conn) {
@@ -2187,8 +2155,13 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
 void asyncConn(Conn *conn) {
     int ret;
     Pair *p1, *p2;
-    Backup *backup = NULL;
+#ifdef USE_SSL
+    SSL *ssl;
+#endif
+    int offset = -1;	/* offset in load balancing group */
     time_t clock;
+    int set1 = 0;
+    int set2 = 0;
     ASYNC_BEGIN;
     p1 = conn->pair;
     if (p1 == NULL) goto finish;
@@ -2196,36 +2169,10 @@ void asyncConn(Conn *conn) {
     if (p2 == NULL) goto finish;
     time(&clock);
     if (Debug > 8) message(LOG_DEBUG, "asyncConn...");
-    if (p1->stone->backups) backup = p1->stone->backups[0];
-    if (p1->stone->nsins > 1) {	/* load balancing */
-	int n = p1->stone->nsins;
-	int ofs = (p1->stone->proto & state_mask) % n;
-	if (p1->stone->backups) {
-	    int i;
-	    for (i=0; i < n; i++) {
-		Backup *b = p1->stone->backups[(ofs+i) % n];
-		if (!b || b->bn == 0) {	/* no backup or healthy, use it */
-		    ofs = (ofs+i) % n;
-		    break;
-		}
-		if (Debug > 8)
-		    message(LOG_DEBUG, "TCP %d: ofs=%d is unhealthy, skipped",
-			    p1->sd, (ofs+i) % n);
-	    }
-	    backup = p1->stone->backups[ofs];
-	}
-	conn->sin = p1->stone->sins[ofs];	/* round robin */
-	p1->stone->proto = ((p1->stone->proto & ~state_mask)
-			    | ((ofs+1) & state_mask));
-    }
 #ifdef USE_SSL
-    if (p2->ssl_flag & sf_intr)
-	ret = trySSL_accept(p2);	/* accept not completed */
-    else ret = 1;
-    if (ret > 0) {
-	SSL *ssl = p2->ssl;
-	SSL_SESSION *sess;
-	if (ssl && (sess = SSL_get1_session(ssl))) {
+    if (ssl) {
+	SSL_SESSION *sess = SSL_get1_session(ssl);
+	if (sess) {
 	    char **match;
 	    if (Debug > 2) {
 		unsigned char str[SSL_MAX_SSL_SESSION_ID_LENGTH * 2 + 1];
@@ -2242,37 +2189,53 @@ void asyncConn(Conn *conn) {
 		if (0 <= lbparm && lbparm <= 9) s = match[lbparm];
 		else s = match[1];
 		if (lbmod) {
-		    int ofs = 0;
+		    offset = 0;
 		    while (*s) {
-			ofs <<= 6;
-			ofs += (*s & 0x3f);
+			offset <<= 6;
+			offset += (*s & 0x3f);
 			s++;
 		    }
-		    ofs %= lbmod;
+		    offset %= lbmod;
 		    if (Debug > 2)
 			message(LOG_DEBUG, "TCP %d: pair %d lb%d=%d",
-				p1->sd, p2->sd, lbparm, ofs);
-		    conn->sin = p1->stone->sins[ofs];
-		    if (p1->stone->backups) {
-			backup = p1->stone->backups[ofs];
-		    }
+				p1->sd, p2->sd, lbparm, offset);
 		}
 	    }
 	    SSL_SESSION_free(sess);
 	}
-#endif
-	/* successfully accepted */
-#ifndef WINDOWS
-	fcntl(p2->sd, F_SETFL, O_NONBLOCK);
-#endif
-	if (backup) {
-	    backup->used = 2;
-	    if (backup->bn) conn->sin = backup->backup;
-	}
-	ret = doconnect(p1, &conn->sin);
-#ifdef USE_SSL
     }
 #endif
+    if (offset < 0 && p1->stone->nsins > 1) {	/* load balancing */
+	int n = p1->stone->nsins;
+	offset = (p1->stone->proto & state_mask) % n;
+	if (p1->stone->backups) {
+	    int i;
+	    for (i=0; i < n; i++) {
+		Backup *b = p1->stone->backups[(offset+i) % n];
+		if (!b || b->bn == 0) {	/* no backup or healthy, use it */
+		    offset = (offset+i) % n;
+		    break;
+		}
+		if (Debug > 8)
+		    message(LOG_DEBUG, "TCP %d: ofs=%d is unhealthy, skipped",
+			    p1->sd, (offset+i) % n);
+	    }
+	}
+	/* round robin */
+	p1->stone->proto = ((p1->stone->proto & ~state_mask)
+			    | ((offset+1) & state_mask));
+    }
+    if (offset >= 0) conn->sin = p1->stone->sins[offset];
+    if (p1->stone->backups) {
+	Backup *backup;
+	if (offset >= 0) backup = p1->stone->backups[offset];
+	else backup = p1->stone->backups[0];
+	if (backup) {
+	    backup->used = 2;
+	    if (backup->bn) conn->sin = backup->backup;	/* unhealthy */
+	}
+    }
+    ret = doconnect(p1, &conn->sin);
     if (ret == 0) {	/* EINTR */
 	char addr[STRMAX];
 	char port[STRMAX];
@@ -2282,69 +2245,59 @@ void asyncConn(Conn *conn) {
 	}
 	addr2str(&conn->sin.sin_addr, addr, STRMAX);
 	port2str(conn->sin.sin_port, p1->proto, proto_all, port, STRMAX);
-#ifdef USE_SSL
-	if (p2->ssl_flag & sf_intr)
-	    message(priority(p2), "TCP %d: SSL_accept timeout", p2->sd);
-	else
-#endif
 	message(priority(p2), "TCP %d: connect timeout to %s:%s",
 		p2->sd, addr, port);
 	ret = -1;
     }
     if (ret < 0		/* fail to connect */
 	|| (p1->proto & proto_close)
-	|| (p2->proto & proto_close)) {	
+	|| (p2->proto & proto_close)) {
 	doclose(p2);
 	doclose(p1);
-    } else {	/* successfully connected */
-	int set1 = 0;
-	int set2 = 0;
-#ifndef WINDOWS
-	fcntl(p1->sd, F_SETFL, O_NONBLOCK);
-#endif
-	waitMutex(FdRinMutex);
-	waitMutex(FdWinMutex);
-	if (p1->len > 0) {
+	goto finish;
+    }
+    waitMutex(FdRinMutex);
+    waitMutex(FdWinMutex);
+    if (p1->len > 0) {
+	if (Debug > 8)
+	    message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
+		    p1->sd, p1->len);
+	if (!(p1->proto & proto_shutdown)) {
+	    FdSet(p1->sd, &win);
+	    set1 = 1;
+	}
+    } else if (!(p1->proto & proto_ohttp_d)) {
+	if (Debug > 8)
+	    message(LOG_DEBUG, "TCP %d: request to read 1st", p2->sd);
+	if (!(p2->proto & proto_eof)) {
+	    FdSet(p2->sd, &rin);
+	    set2 = 1;
+	}
+    }
+    if (!(p2->proto & proto_ohttp_s)) {
+	if (p2->len > 0) {
 	    if (Debug > 8)
 		message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
-			p1->sd, p1->len);
-	    if (!(p1->proto & proto_shutdown)) {
-		FdSet(p1->sd, &win);
-		set1 = 1;
-	    }
-	} else if (!(p1->proto & proto_ohttp_d)) {
-	    if (Debug > 8)
-		message(LOG_DEBUG, "TCP %d: request to read 1st", p2->sd);
-	    if (!(p2->proto & proto_eof)) {
-		FdSet(p2->sd, &rin);
+			p2->sd, p2->len);
+	    if (!(p2->proto & proto_shutdown)) {
+		FdSet(p2->sd, &win);
 		set2 = 1;
 	    }
-	}
-	if (!(p2->proto & proto_ohttp_s)) {
-	    if (p2->len > 0) {
-		if (Debug > 8)
-		    message(LOG_DEBUG, "TCP %d: waiting %d bytes to write",
-			    p2->sd, p2->len);
-		if (!(p2->proto & proto_shutdown)) {
-		    FdSet(p2->sd, &win);
-		    set2 = 1;
-		}
-	    } else {
-		if (Debug > 8)
-		    message(LOG_DEBUG, "TCP %d: request to read", p1->sd);
-		if (!(p1->proto & proto_eof)) {
-		    FdSet(p1->sd, &rin);
-		    set1 = 1;
-		}
+	} else {
+	    if (Debug > 8)
+		message(LOG_DEBUG, "TCP %d: request to read", p1->sd);
+	    if (!(p1->proto & proto_eof)) {
+		FdSet(p1->sd, &rin);
+		set1 = 1;
 	    }
 	}
-	freeMutex(FdWinMutex);
-	freeMutex(FdRinMutex);
-	waitMutex(FdEinMutex);
-	if (set2) FdSet(p2->sd, &ein);
-	if (set1) FdSet(p1->sd, &ein);
-	freeMutex(FdEinMutex);
     }
+    freeMutex(FdWinMutex);
+    freeMutex(FdRinMutex);
+    waitMutex(FdEinMutex);
+    if (set2) FdSet(p2->sd, &ein);
+    if (set1) FdSet(p1->sd, &ein);
+    freeMutex(FdEinMutex);
  finish:
     if (p1) p1->count -= REF_UNIT;	/* no more request to connect */
     conn->pair = NULL;
@@ -2588,10 +2541,12 @@ Pair *doaccept(Stone *stonep) {
 #ifdef USE_SSL
     pair1->ssl = pair2->ssl = NULL;
     pair1->ssl_flag = pair2->ssl_flag = 0;
-    if (stonep->proto & proto_ssl_s) {
-	ret = doSSL_accept(pair1);
-	if (ret < 0) goto error;
-    }
+    if (stonep->proto & proto_ssl_s)
+	if (doSSL_accept(pair1) <= 0) goto error;
+#endif
+    /* now successfully accepted */
+#ifndef WINDOWS
+    fcntl(pair1->sd, F_SETFL, O_NONBLOCK);
 #endif
     pair2->sd = socket(AF_INET, SOCK_STREAM, 0);
     if (InvalidSocket(pair2->sd)) {
@@ -5202,13 +5157,13 @@ unsigned long sslthread_id_callback(void) {
     ret = (unsigned long)pthread_self();
 #endif
 #endif
-    if (Debug > 8) message(LOG_DEBUG, "SSL_thread id=%ld", ret);
+    if (Debug > 10) message(LOG_DEBUG, "SSL_thread id=%ld", ret);
     return ret;
 }
 
 void sslthread_lock_callback(int mode, int n, const char *file, int line) {
     if (mode & CRYPTO_LOCK) {
-	if (Debug > 8)
+	if (Debug > 10)
 	    message(LOG_DEBUG, "SSL_lock mode=%x n=%d file=%s line=%d",
 		    mode, n, file, line);
 #ifdef WINDOWS
@@ -5219,7 +5174,7 @@ void sslthread_lock_callback(int mode, int n, const char *file, int line) {
 #endif
 #endif
     } else {
-	if (Debug > 8)
+	if (Debug > 10)
 	    message(LOG_DEBUG, "SSL_unlock mode=%x n=%d file=%s line=%d",
 		    mode, n, file, line);
 #ifdef WINDOWS
