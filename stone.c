@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.152 2004/08/30 15:20:05 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.153 2004/08/30 16:08:18 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -982,14 +982,30 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
     }
     addr2str(&sinp->sin_addr, addr, STRMAX);
     port2str(sinp->sin_port, proto, proto_dest, port, STRMAX);
+#ifndef WINDOWS
+    fcntl(sd, F_SETFL, O_NONBLOCK);
+#endif
     ret = connect(sd, (struct sockaddr*)sinp, sizeof(*sinp));
     if (ret < 0) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
 #endif
-	message(LOG_ERR, "health check: connect %s:%s err=%d",
-		addr, port, errno);
-	goto fail;
+	if (errno == EINPROGRESS) {
+	    fd_set wout;
+	    struct timeval tv;
+	    do {
+		time(&now);
+		if (now - start >= timeout) goto timeout;
+		tv.tv_sec = 1;
+		tv.tv_usec = 0;
+		FD_ZERO(&wout);
+		FdSet(sd, &wout);
+	    } while (select(FD_SETSIZE, NULL, &wout, NULL, &tv) == 0);
+	} else {
+	    message(LOG_ERR, "health check: connect %s:%s err=%d",
+		    addr, port, errno);
+	    goto fail;
+	}
     }
     time(&now);
     if (now - start >= timeout) goto timeout;
@@ -1045,9 +1061,8 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
     closesocket(sd);
     return 1;	/* healthy ! */
  timeout:
-    if (Debug > 1)
-	message(LOG_DEBUG, "health check timeout: %s",
-		(chat ? chat->send : "(end of chat)"));
+    if (Debug > 8)
+	message(LOG_DEBUG, "health check: %s:%s timeout", addr, port);
  fail:
     shutdown(sd, 2);
     closesocket(sd);
