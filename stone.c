@@ -85,7 +85,7 @@
  * -DWINDOWS	  Windows95/98/NT
  * -DNT_SERVICE	  WindowsNT/2000 native service
  */
-#define VERSION	"2.1t"
+#define VERSION	"2.1u"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2574,7 +2574,7 @@ fd_set *rout, *wout, *eout;
 	for (i=0; i < FD_SETSIZE; i++) {
 	    r = FD_ISSET(i,rout);
 	    w = FD_ISSET(i,wout);
-	    if (eout) e = FD_ISSET(i,eout); else e = 0;
+	    e = FD_ISSET(i,eout);
 	    if (r || w || e)
 		message(LOG_DEBUG,"select %d: %c%c%c",
 			i, (r ? 'r' : ' '), (w ? 'w' : ' '), (e ? 'e' : ' '));
@@ -2585,8 +2585,8 @@ fd_set *rout, *wout, *eout;
 void asyncReadWrite(pair)
 Pair *pair;
 {
-    fd_set ri, wi;
-    fd_set ro, wo;
+    fd_set ri, wi, ei;
+    fd_set ro, wo, eo;
     struct timeval tv;
     int npairs = 1;
     Pair *p[2];
@@ -2597,6 +2597,7 @@ Pair *pair;
     ASYNC_BEGIN;
     FD_ZERO(&ri);
     FD_ZERO(&wi);
+    FD_ZERO(&ei);
     p[0] = pair;
     p[1] = pair->pair;
     if (Debug > 8) message(LOG_DEBUG,"TCP %d, %d: asyncReadWrite ...",
@@ -2612,13 +2613,18 @@ Pair *pair;
 	    FD_SET(p[i]->sd,&wi);
 	    p[i]->proto &= ~proto_select_w;
 	}
+	FD_SET(p[i]->sd,&ei);
     }
     tv.tv_sec = 0;
     tv.tv_usec = TICK_SELECT;
-    if (Debug > 10) select_debug(&ri,&wi,NULL);
-    while (ro=ri, wo=wi, select(FD_SETSIZE,&ro,&wo,NULL,&tv) > 0) {
+    if (Debug > 10) select_debug(&ri,&wi,&ei);
+    while (ro=ri, wo=wi, eo=ei, select(FD_SETSIZE,&ro,&wo,&eo,&tv) > 0) {
 	for (i=0; i < npairs; i++) {
-	    if (p[i] && FD_ISSET(p[i]->sd,&ro)) {	/* read */
+	    if (p[i] && FD_ISSET(p[i]->sd,&eo)) {	/* exception */
+		message(LOG_ERR,"TCP %d: exception",p[i]->sd);
+		message_pair(p[i]);
+		doclose(p[i],1);	/* wait mutex */
+	    } else if (p[i] && FD_ISSET(p[i]->sd,&ro)) {	/* read */
 		rPair = p[i];
 		wPair = p[1-i];
 		rsd = rPair->sd;
@@ -2678,15 +2684,19 @@ Pair *pair;
 		}
 	    }
 	}
+	if (Debug > 10) select_debug(&ri,&wi,&ei);
     }
     waitMutex(FdRinMutex);
     waitMutex(FdWinMutex);
+    waitMutex(FdEinMutex);
     for (i=0; i < npairs; i++) {
 	if (p[i]) {
 	    if (FD_ISSET(p[i]->sd,&ri)) FD_SET(p[i]->sd,&rin);
 	    if (FD_ISSET(p[i]->sd,&wi)) FD_SET(p[i]->sd,&win);
+	    FD_SET(p[i]->sd,&ein);
 	}
     }
+    freeMutex(FdEinMutex);
     freeMutex(FdWinMutex);
     freeMutex(FdRinMutex);
     if (Debug > 8) message(LOG_DEBUG,"TCP %d, %d: asyncReadWrite end",
@@ -2727,6 +2737,7 @@ fd_set *rop, *wop, *eop;
 	    } else {
 		waitMutex(FdRinMutex);
 		waitMutex(FdWinMutex);
+		waitMutex(FdEinMutex);
 		isset = ((FD_ISSET(sd,rop) && FD_ISSET(sd,&rin)) ||
 			 (FD_ISSET(sd,wop) && FD_ISSET(sd,&win)));
 		if (p) {
@@ -2739,13 +2750,12 @@ fd_set *rop, *wop, *eop;
 		    if (FD_ISSET(sd,&rin)) {
 			FD_CLR(sd,&rin);
 			pair->proto |= proto_select_r;
-			message(LOG_DEBUG,"TCP %d: set proto_select_r",sd);
 		    }
 		    if (FD_ISSET(sd,&win)) {
 			FD_CLR(sd,&win);
 			pair->proto |= proto_select_w;
-			message(LOG_DEBUG,"TCP %d: set proto_select_w",sd);
 		    }
+		    FD_CLR(sd,&ein);
 		    if (p) {
 			SOCKET psd = p->sd;
 			p->proto &= ~(proto_select_r | proto_select_w);
@@ -2757,8 +2767,10 @@ fd_set *rop, *wop, *eop;
 			    FD_CLR(psd,&win);
 			    p->proto |= proto_select_w;
 			}
+			FD_CLR(psd,&ein);
 		    }
 		}
+		freeMutex(FdEinMutex);
 		freeMutex(FdWinMutex);
 		freeMutex(FdRinMutex);
 		if (isset) {
