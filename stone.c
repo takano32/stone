@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.46 2003/05/05 17:44:23 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.47 2003/05/05 18:31:14 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1637,7 +1637,24 @@ Pair *doaccept(Stone *stonep) {
     return pair1;
 }
 
-int strnparse(char *buf, int limit, char *p) {
+int strnPeerAddr(char *buf, int limit, SOCKET sd) {
+    int i = 0;
+    struct sockaddr_in name;
+    int len;
+    char str[STRMAX];
+    len = sizeof(name);
+    if (getpeername(sd,(struct sockaddr*)&name,&len) < 0) {
+	strcpy(str, "0.0.0.0");
+    } else {
+	addr2ip(&name.sin_addr, str);
+    }
+    len = strlen(str);
+    if (len > limit) len = limit;
+    strncpy(buf,str,len);
+    return len;
+}
+
+int strnparse(char *buf, int limit, char *p, Pair *pair) {
     int i = 0;
     char c;
     while (i < limit && (c = *p++)) {
@@ -1646,6 +1663,7 @@ int strnparse(char *buf, int limit, char *p) {
 	      case 'n':  c = '\n';  break;
 	      case 'r':  c = '\r';  break;
 	      case 't':  c = '\t';  break;
+	      case 'a':  i += strnPeerAddr(buf+i,limit-i,pair->sd); continue;
 	      case '\0':
 		c = '\\';
 		p--;
@@ -1674,7 +1692,7 @@ void asyncAccept(Stone *stone) {
 	p2->start = strlen(p2->buf);
     }
     if (p2->proto & proto_ohttp_d) {
-	int i = strnparse(p2->buf, p2->bufmax - 5, stone->p);
+	int i = strnparse(p2->buf, p2->bufmax - 5, stone->p, p1);
 	p2->buf[i++] = '\r';
 	p2->buf[i++] = '\n';
 	p2->buf[i++] = '\r';
@@ -2390,7 +2408,8 @@ int insheader(Pair *pair) {	/* insert header */
     i++;
     len -= i;
     if (len > 0) bcopy(&pair->buf[i], buf, len);	/* save rest header */
-    i += strnparse(&pair->buf[i], pair->bufmax - i, pair->stone->p);
+    i += strnparse(&pair->buf[i], pair->bufmax - i,
+		   pair->stone->p, pair->pair);
     pair->buf[i++] = '\r';
     pair->buf[i++] = '\n';
     if (len > 0) bcopy(buf, &pair->buf[i], len);	/* restore */
