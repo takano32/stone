@@ -21,7 +21,7 @@ CFLAGS=		# -g
 
 SSL=		/usr/local/ssl
 SSL_FLAGS=	-DUSE_SSL -I$(SSL)/include
-SSL_LIBS=	-ldl -L$(SSL)/lib -lssl -lcrypto
+SSL_LIBS=	-L$(SSL)/lib -lssl -lcrypto
 
 POP_FLAGS=	-DUSE_POP
 POP_LIBS=	md5c.o
@@ -57,7 +57,7 @@ pop_stone: $(POP_LIBS)
 	$(MAKE) FLAGS="$(POP_FLAGS)" LIBS="$(POP_LIBS)" $(TARGET)
 
 ssl_stone:
-	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(SSL_LIBS)" $(TARGET)
+	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(LIBS) $(SSL_LIBS)" $(TARGET)
 
 logmsg.rc: logmsg.mc
 	mc $?
@@ -85,7 +85,7 @@ linux-pop:
 	$(MAKE) TARGET=linux pop_stone
 
 linux-ssl:
-	$(MAKE) TARGET=linux ssl_stone
+	$(MAKE) TARGET=linux ssl_stone LIBS="-ldl"
 
 zaurus:
 	$(MAKE) CC="arm-linux-gcc" FLAGS="-DPTHREAD -DUNIX_DAEMON $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
