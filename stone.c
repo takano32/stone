@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.209 2004/10/26 15:34:03 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.210 2004/10/26 23:20:52 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -183,6 +183,7 @@ typedef void *(*aync_start_routine) (void *);
 #include <netdb.h>
 #ifdef DJBDNS
 #include <stralloc.h>
+#include <alloc.h>
 #include <dns.h>
 #endif
 #include <unistd.h>
@@ -948,14 +949,14 @@ int isdigitaddr(char *name) {
 
 #ifdef DJBDNS
 int host2addr(char *name, struct in_addr *addrp, short *familyp) {
-    stralloc temp = {0};
+    char addr_buf[STRMAX];
+    stralloc temp;
     stralloc fqdn = {0};
-    stralloc addr = {0};
+    stralloc addr = {addr_buf, 0, BUFMAX};
     int ret = 0;
-    if (!stralloc_copys(&temp, name)) {
-	message(LOG_ERR, "Out of memory in host2addr");
-	goto exit;
-    }
+    temp.s = name;
+    temp.len = strlen(name);
+    temp.a = temp.len + 1;
     if (dns_ip4_qualify(&addr, &fqdn, &temp) == -1) {
 	message(LOG_ERR, "Unknown host: %s", name);
 	goto exit;
@@ -968,9 +969,7 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     }
     message(LOG_ERR, "No IP address for %s", name);
  exit:
-    if (temp.s) free(temp.s);
-    if (fqdn.s) free(fqdn.s);
-    if (addr.s) free(addr.s);
+    alloc_free(fqdn);
     return ret;
 }
 #else
