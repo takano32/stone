@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.141 2004/08/13 07:51:00 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.142 2004/08/14 06:01:15 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -446,6 +446,7 @@ const proto_select_w =	   0x80000;	  /* select to write */
 const proto_shutdown =	  0x100000;	  /* sent shutdown */
 const proto_close =	  0x200000;	  /* request to close */
 const proto_eof =	  0x400000;	  /* EOF */
+const proto_error =	  0x800000;	  /* error reported */
 const proto_ohttp_s =	 0x4000000;	/* over http source */
 const proto_ohttp_d =	 0x8000000;	/*           destination */
 const proto_base_s =	0x10000000;	/* base64 source */
@@ -651,6 +652,15 @@ TimeLog *message_time(int pri, char *fmt, ...) {
 	strcpy(log->str, str);
     }
     return log;
+}
+
+int priority(Pair *pair) {
+    int pri = LOG_ERR;
+    if (pair) {
+	if (pair->proto & proto_error) pri = LOG_DEBUG;
+	else pair->proto |= proto_error;
+    }
+    return pri;
 }
 
 char *addr2ip(struct in_addr *addr, char *str) {
@@ -1551,18 +1561,15 @@ int trySSL_accept(Pair *pair) {
 #ifdef WINDOWS
 		errno = WSAGetLastError();
 #endif
-		message(LOG_ERR,
-			"TCP %d: SSL_accept I/O error err=%d errno=%d",
-			pair->sd, ERR_get_error(), errno);
+		message(priority(pair), "TCP %d: SSL_accept I/O error err=%d",
+			pair->sd, errno);
 	    } else if (err == SSL_ERROR_SSL) {
-		message(LOG_ERR, "TCP %d: SSL_accept protocol error err=%d",
-			pair->sd, ERR_get_error());
+		message(priority(pair), "TCP %d: SSL_accept %s",
+			pair->sd, ERR_error_string(ERR_get_error(), NULL));
 	    } else {
-		message(LOG_ERR, "TCP %d: SSL_accept error err=%d",
-			pair->sd, err);
-		if (pair->stone->ssl_server->verbose)
-		    message(LOG_INFO, "TCP %d: %s",
-			    pair->sd, ERR_error_string(err, NULL));
+		message(priority(pair), "TCP %d: SSL_accept err=%d %s",
+			pair->sd, err,
+			ERR_error_string(ERR_get_error(), NULL));
 	    }
 	    message_pair(pair);
 	    SSL_free(ssl);
@@ -1617,11 +1624,9 @@ int doSSL_connect(Pair *pair) {
 	} else if (err) {
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
-	    message(LOG_ERR, "TCP %d: SSL_connect error err=%d",
-		    pair->sd, err);
-	    if (pair->stone->ssl_client->verbose)
-		message(LOG_INFO, "TCP %d: %s",
-			pair->sd, ERR_error_string(err, NULL));
+	    message(priority(pair), "TCP %d: SSL_connect err=%d %s",
+		    pair->sd, err,
+		    ERR_error_string(ERR_get_error(), NULL));
 	    message_pair(pair);
 	    SSL_free(ssl);
 	    return -1;
@@ -1693,7 +1698,7 @@ int doshutdown(Pair *pair, int how) {
 	ret = SSL_smart_shutdown(pair->ssl);
 	if (ret < 0) {
 	    err = SSL_get_error(pair->ssl, ret);
-	    message(LOG_ERR, "TCP %d: SSL_shutdown err=%d",
+	    message(priority(pair), "TCP %d: SSL_shutdown err=%d",
 		    pair->sd, err);
 	}
     }
@@ -1701,7 +1706,8 @@ int doshutdown(Pair *pair, int how) {
     err = shutdown(pair->sd, how);
     if (err < 0) {
 	ret = err;
-	message(LOG_ERR, "TCP %d: shutdown %d err=%d", pair->sd, how, errno);
+	message(priority(pair), "TCP %d: shutdown %d err=%d",
+		pair->sd, how, errno);
     }
     if (pair->proto & proto_eof) {
 	pair->proto |= proto_close;
@@ -1768,7 +1774,8 @@ int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
 		    message_pair(pair);
 		}
 	    } else {
-		message(LOG_ERR, "TCP %d: can't connect err=%d: to %s:%s",
+		message(priority(pair),
+			"TCP %d: can't connect err=%d: to %s:%s",
 			pair->sd,
 			errno,
 			addr2str(&sinp->sin_addr),
@@ -1918,10 +1925,10 @@ void asyncConn(Conn *conn) {
 	}
 #ifdef USE_SSL
 	if (p2->ssl_flag & sf_intr)
-	    message(LOG_ERR, "TCP %d: SSL_accept timeout", p2->sd);
+	    message(priority(p2), "TCP %d: SSL_accept timeout", p2->sd);
 	else
 #endif
-	message(LOG_ERR, "TCP %d: connect timeout to %s:%s",
+	message(priority(p2), "TCP %d: connect timeout to %s:%s",
 		p2->sd,
 		addr2str(&conn->sin.sin_addr),
 		port2str(conn->sin.sin_port, p1->proto, proto_all));
@@ -2231,7 +2238,7 @@ Pair *doaccept(Stone *stonep) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
 #endif
-	message(LOG_ERR, "TCP %d: can't create socket err=%d.",
+	message(priority(pair1), "TCP %d: can't create socket err=%d.",
 		pair1->sd, errno);
       error:
 	freePair(pair1);
@@ -2528,7 +2535,8 @@ int dowrite(Pair *pair) {	/* write from buf from pair->start */
 		return 0;	/* EINTR */
 	    }
 	    if (err != SSL_ERROR_ZERO_RETURN) {
-		message(LOG_ERR, "TCP %d: SSL_write error err=%d, closing",
+		message(priority(pair),
+			"TCP %d: SSL_write error err=%d, closing",
 			sd, err);
 		message_pair(pair);
 		return len;	/* error */
@@ -2547,7 +2555,8 @@ int dowrite(Pair *pair) {	/* write from buf from pair->start */
 		    message(LOG_DEBUG, "TCP %d: write interrupted", sd);
 		return 0;
 	    }
-	    message(LOG_ERR, "TCP %d: write error err=%d, closing", sd, errno);
+	    message(priority(pair), "TCP %d: write error err=%d, closing",
+		    sd, errno);
 	    message_pair(pair);
 	    return len;	/* error */
 	}
@@ -2679,7 +2688,7 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 	if (Debug > 4) message(LOG_DEBUG, "TCP %d: read %d bytes", sd, len);
 	if (len == 0) return -1;	/* EOF w/o pair */
 	if (len > 0) {
-	    message(LOG_ERR, "TCP %d: no pair, closing", sd);
+	    message(priority(pair), "TCP %d: no pair, closing", sd);
 	    message_pair(pair);
 	    len = -1;
 	}
@@ -2722,16 +2731,17 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 		return 0;	/* EINTR */
 	    }
 	    if (err == SSL_ERROR_SYSCALL) {
-		err = ERR_get_error();
-		if (err) {
-		    message(LOG_ERR,
-			    "TCP %d: SSL_read I/O error err=%d, closing",
-			    sd, err);
-		    message_pair(pair);
-		    return -1;	/* error */
-		}
+#ifdef WINDOWS
+		errno = WSAGetLastError();
+#endif
+		message(priority(pair),
+			"TCP %d: SSL_read I/O error err=%d, closing",
+			sd, errno);
+		message_pair(pair);
+		return -1;	/* error */
 	    } else if (err != SSL_ERROR_ZERO_RETURN) {
-		message(LOG_ERR, "TCP %d: SSL_read error err=%d, closing",
+		message(priority(pair),
+			"TCP %d: SSL_read error err=%d, closing",
 			sd, err);
 		message_pair(pair);
 		return -1;	/* error */
@@ -2750,7 +2760,8 @@ int doread(Pair *pair) {	/* read into buf from pair->pair->start */
 		    message(LOG_DEBUG, "TCP %d: read interrupted", sd);
 		return 0;	/* EINTR */
 	    }
-	    message(LOG_ERR, "TCP %d: read error err=%d, closing", sd, errno);
+	    message(priority(pair), "TCP %d: read error err=%d, closing",
+		    sd, errno);
 	    message_pair(pair);
 	    return len;	/* error */
 	}
@@ -3408,7 +3419,7 @@ void asyncReadWrite(Pair *pair) {
 	    sd = p[i]->sd;
 	    if (InvalidSocket(sd)) continue;
 	    if (FD_ISSET(sd, &eo)) {	/* exception */
-		message(LOG_ERR, "TCP %d: exception", sd);
+		message(priority(p[i]), "TCP %d: exception", sd);
 		message_pair(p[i]);
 		FD_CLR(sd, &ri);
 		FD_CLR(sd, &wi);
@@ -3601,7 +3612,7 @@ int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 	    freeMutex(FdEinMutex);
 	    if (isset) {
 		idle = 0;
-		message(LOG_ERR, "TCP %d: exception", sd);
+		message(priority(pair), "TCP %d: exception", sd);
 		message_pair(pair);
 		doclose(pair);
 	    } else {
