@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.194 2004/10/03 03:58:15 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.195 2004/10/21 03:49:21 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2156,6 +2156,7 @@ void freePair(Pair *pair) {
 	    message(LOG_ERR, "TCP %d: SSL close notify was not sent", sd);
 	    SSL_set_shutdown(ssl, (state | SSL_SENT_SHUTDOWN));
 	}
+	CRYPTO_free_ex_data(PairIndex, ssl, &ssl->ex_data);
 	SSL_free(ssl);
     }
 #endif
