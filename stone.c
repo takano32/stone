@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2a"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.112 2003/12/13 08:20:15 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.113 2003/12/14 15:54:34 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -286,6 +286,14 @@ typedef struct {
 SSLOpts ServerOpts;
 SSLOpts ClientOpts;
 int PairIndex;
+#ifdef WINDOWS
+HANDLE *SSLMutex = NULL;
+#else
+#ifdef PTHREAD
+pthread_mutex_t *SSLMutex = NULL;
+#endif
+#endif
+int NSSLMutexs = 0;
 
 #include <openssl/md5.h>
 #define MD5Init		MD5_Init
@@ -4300,6 +4308,51 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
     }
     return i;
 }
+
+/* SSL callback */
+unsigned long sslthread_id_callback(void) {
+    return (unsigned long)pthread_self();
+}
+
+void sslthread_lock_callback(int mode, int n, const char *file, int line) {
+    if (mode & CRYPTO_LOCK) {
+#ifdef WINDOWS
+	WaitForSingleObject(SSLMutex[n]);
+#else
+#ifdef PTHREAD
+	pthread_mutex_lock(&SSLMutex[n]);
+#endif
+#endif
+    } else {
+#ifdef WINDOWS
+	ReleaseMutex(SSLMutex[n]);
+#else
+#ifdef PTHREAD
+	pthread_mutex_unlock(&SSLMutex[n]);
+#endif
+#endif
+    }
+}
+
+int sslthread_initialize(void) {
+    int i;
+    NSSLMutexs = CRYPTO_num_locks();
+    SSLMutex = malloc(NSSLMutexs * sizeof(*SSLMutex));
+    if (!SSLMutex) return -1;
+    for (i=0; i < NSSLMutexs; i++) {
+#ifdef WINDOWS
+	SSLMutex[i] = CreateMutex(NULL, FALSE, NULL);
+	if (!SSLMutex[i]) return -1;
+#else
+#ifdef PTHREAD
+	pthread_mutex_init(&SSLMutex[i], NULL);
+#endif
+#endif
+    }
+    CRYPTO_set_id_callback(sslthread_id_callback);
+    CRYPTO_set_locking_callback(sslthread_lock_callback);
+    return 1;
+}
 #endif
 
 int dohyphen(char opt, int argc, char *argv[], int argi) {
@@ -4745,6 +4798,9 @@ void initialize(int argc, char *argv[]) {
     PairIndex = SSL_get_ex_new_index(0, "Pair index", NULL, NULL, NULL);
     sslopts_default(&ServerOpts, 1);
     sslopts_default(&ClientOpts, 0);
+    if (sslthread_initialize() < 0) {
+	message(LOG_ERR, "Fail to initialize SSL callback");
+    }
 #endif
     i = doopts(argc, argv);
     if (ConfigFile) {
