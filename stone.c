@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.120 2004/03/04 07:48:08 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.121 2004/03/07 07:36:52 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -800,13 +800,17 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
 /* *addrp is permitted to connect to *stonep ? */
 int checkXhost(Stone *stonep, struct in_addr *addrp) {
     int i;
+    int match = 1;
     if (!stonep->nhosts) return 1; /* any hosts can access */
     for (i=0; i < stonep->nhosts; i++) {
-	if ((addrp->s_addr & stonep->xhosts[i].mask.s_addr)
+	if ((stonep->xhosts[i].addr.s_addr == (u_long)~0)
+	    && ! stonep->xhosts[i].mask.s_addr)
+	    match = !match;
+	else if ((addrp->s_addr & stonep->xhosts[i].mask.s_addr)
 	    == (stonep->xhosts[i].addr.s_addr & stonep->xhosts[i].mask.s_addr))
-	    return 1;
+	    return match;
     }
-    return 0;
+    return !match;
 }
 
 #ifdef WINDOWS
@@ -3691,6 +3695,7 @@ Stone *mkstone(
     struct sockaddr_in sin;
     char xhost[256], *p;
     short family;
+    int allow;
     int i;
     stonep = calloc(1, sizeof(Stone)+sizeof(XHost)*nhosts);
     if (!stonep) {
@@ -3800,7 +3805,14 @@ Stone *mkstone(
 	stonep->ssl_client = NULL;
     }
 #endif
+    allow = 1;
     for (i=0; i < nhosts; i++) {
+	if (!strcmp(hosts[i], "!")) {
+	    stonep->xhosts[i].addr.s_addr = (u_long)~0;
+	    stonep->xhosts[i].mask.s_addr = 0;
+	    allow = !allow;
+	    continue;
+	}
 	strcpy(xhost, hosts[i]);
 	p = strchr(xhost, '/');
 	if (p != NULL) {
@@ -3828,14 +3840,16 @@ Stone *mkstone(
 	    strcpy(xhost, addr2str(&stonep->xhosts[i].addr));
 	    if ((proto & proto_command) == command_proxy) {
 		message(LOG_DEBUG,
-			"stone %d: permit %s (mask %x) to connecting to proxy",
+			"stone %d: %s %s (mask %x) to connecting to proxy",
 			stonep->sd,
+			(allow ? "permit" : "deny"),
 			xhost,
 			ntohl((unsigned long)stonep->xhosts[i].mask.s_addr));
 	    } else {
 		message(LOG_DEBUG,
-			"stone %d: permit %s (mask %x) to connecting to %s:%s",
+			"stone %d: %s %s (mask %x) to connecting to %s:%s",
 			stonep->sd,
+			(allow ? "permit" : "deny"),
 			xhost,
 			ntohl((unsigned long)stonep->xhosts[i].mask.s_addr),
 			addr2str(&stonep->sins->sin_addr),
