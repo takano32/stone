@@ -40,6 +40,7 @@ all:
 	@echo "irix      ; for IRIX"
 	@echo "win       ; for Windows 95/NT with VC++"
 	@echo "mingw     ; for Windows 95/NT with MinGW"
+	@echo "mingw-svc ; for Windows NT service with MinGW"
 	@echo "emx       ; for OS/2 with EMX"
 	@echo "using POP -> APOP conv., add '-pop' (example: linux-pop)"
 	@echo "using above conv. and OpenSSL, add '-ssl' (example: linux-ssl)"
