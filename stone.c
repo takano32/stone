@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.66 2003/08/06 01:24:27 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.67 2003/08/06 02:51:19 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3997,7 +3997,7 @@ void checkFdSetBug(void) {
     FD_CLR(0, &set);
     if (FD_ISSET(0, &set)) {
 	if (Debug > 0)
-	    message("FD_SET bug detected");
+	    message(LOG_DEBUG, "FD_SET bug detected");
 	FdSetBug = 1;
     }
 }
@@ -4010,7 +4010,7 @@ static void handler(int sig) {
     int i;
     switch(sig) {
       case SIGHUP:
-	if (Debug > 4) message(LOG_DEBUG,"SIGHUP.");
+	if (Debug > 4) message(LOG_DEBUG, "SIGHUP.");
 #ifndef NO_FORK
 	if (NForks) {	/* mother process */
 	    if (ConfigFile && !oldstones) {
