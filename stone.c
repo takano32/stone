@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.157 2004/09/04 01:42:35 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.158 2004/09/10 02:08:58 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -291,6 +291,7 @@ SSLOpts ServerOpts;
 SSLOpts ClientOpts;
 int PairIndex;
 int MatchIndex;
+int NewMatchCount = 0;
 #ifdef WINDOWS
 HANDLE *SSLMutex = NULL;
 #else
@@ -487,9 +488,8 @@ const sf_rb_on_w =	0x00008;	/* SSL_read blocked on write */
 
 int BacklogMax = BACKLOG_MAX;
 int XferBufMax = 1000;	/* TCP packet buffer initial size (must < 1024 ?) */
-char *pkt_buf;		/* UDP packet buffer */
-int pkt_len_max;	/* size of pkt_buf */
-#define PKT_LEN_INI	2048	/* initial size */
+#define PKT_LEN_INI		2048	/* initial size */
+int pkt_len_max = PKT_LEN_INI;	/* size of UDP packet buffer */
 int AddrFlag = 0;
 #ifndef NO_SYSLOG
 int Syslog = 0;
@@ -673,6 +673,45 @@ int priority(Pair *pair) {
 	else pair->proto |= proto_error;
     }
     return pri;
+}
+
+void packet_dump(char *head, char *buf, int len) {
+    char line[BUFMAX];
+    int i, j, k, l;
+    k = 0;
+    for (i=0; i < len; i += j) {
+	l = 0;
+	line[l++] = ' ';
+	for (j=0; k <= j/10 && i+j < len && l < BUFMAX-10; j++) {
+	    if (' ' <= buf[i+j] && buf[i+j] <= '~')
+		line[l++] = buf[i+j];
+	    else {
+		sprintf(&line[l], "<%02x>", buf[i+j]);
+		l += strlen(&line[l]);
+		if (buf[i+j] == '\n') {
+		    k = 0;
+		    j++;
+		    break;
+		}
+		if (buf[i+j] != '\t' && buf[i+j] != '\r' && buf[i+j] != '\033')
+		    k++;
+	    }
+	}
+	if (k > j/10) {
+	    j = l = 0;
+	    for (j=0; j < 16 && i+j < len; j++) {
+		if (' ' <= buf[i+j] && buf[i+j] <= '~')
+		    sprintf(&line[l], " %c ", buf[i+j]);
+		else {
+		    sprintf(&line[l], " %02x", (unsigned char)buf[i+j]);
+		    if (buf[i+j] == '\n') k = 0; else k++;
+		}
+		l += strlen(&line[l]);
+	    }
+	}
+	line[l] = '\0';
+	message(LOG_DEBUG, "%s%s", head, line);
+    }
 }
 
 char *addr2ip(struct in_addr *addr, char *str, int len) {
@@ -980,7 +1019,7 @@ int healthCheck(struct sockaddr_in *sinp, int proto, int timeout, Chat *chat) {
 	errno = WSAGetLastError();
 #endif
 	message(LOG_ERR, "health check: can't create socket err=%d.",
-		sd, errno);
+		errno);
 	return 1;	/* I can't tell the master is healthy or not */
     }
     addr2str(&sinp->sin_addr, addr, STRMAX);
@@ -1405,21 +1444,7 @@ void message_origin(Origin *origin) {
     message(LOG_INFO, "UDP%3d:%3d %s%s:%s", origin->sd, sd, str, addr, port);
 }
 
-/* enlarge packet buffer */
-static void enlarge_buf(SOCKET sd) {
-    char *buf;
-    buf = malloc(pkt_len_max << 1);
-    if (buf) {
-	char *old = pkt_buf;
-	pkt_buf = buf;
-	pkt_len_max = (pkt_len_max << 1);
-	free(old);
-	message(LOG_INFO, "UDP %d: Packet buffer is enlarged: %d bytes",
-		sd, pkt_len_max);
-    }
-}
-
-static int recvUDP(SOCKET sd, struct sockaddr_in *from) {
+static int recvUDP(SOCKET sd, struct sockaddr_in *from, char *pkt_buf) {
     struct sockaddr_in sin;
     int len, pkt_len;
     char addr[STRMAX];
@@ -1440,18 +1465,19 @@ static int recvUDP(SOCKET sd, struct sockaddr_in *from) {
     if (Debug > 4)
 	message(LOG_DEBUG, "UDP %d: %d bytes received from %s:%s",
 		sd, pkt_len, addr, port);
-    if (pkt_len > pkt_len_max) {
+    if (pkt_len >= pkt_len_max) {
 	addr2str(&from->sin_addr, addr, STRMAX);
 	port2str(from->sin_port, proto_udp, 0, port, STRMAX);
 	message(LOG_NOTICE, "UDP %d: recvfrom failed: larger packet "
 		"(%d bytes) arrived from %s:%s", sd, pkt_len, addr, port);
-	enlarge_buf(sd);
+	pkt_len_max <<= 1;
 	pkt_len = 0;		/* drop */
     }
     return pkt_len;
-}   
+}
 
-static int sendUDP(SOCKET sd, struct sockaddr_in *sinp, int len) {
+static int sendUDP(SOCKET sd, struct sockaddr_in *sinp,
+		   int len, char *pkt_buf) {
     char addr[STRMAX];
     char port[STRMAX];
     addr2str(&sinp->sin_addr, addr, STRMAX);
@@ -1469,21 +1495,48 @@ static int sendUDP(SOCKET sd, struct sockaddr_in *sinp, int len) {
     if (Debug > 4)
 	message(LOG_DEBUG, "UDP %d: %d bytes sent to %s:%s",
 		sd, len, addr, port);
+    if (PacketDump > 0) {
+	char head[STRMAX];
+	snprintf(head, STRMAX-1, "UDP %d:", sd);
+	packet_dump(head, pkt_buf, len);
+    }
     return len;
 }
 
-static Origin *getOrigins(struct in_addr *addr,
-			  int port) {	/* network byte order */
+static Origin *getOrigins(struct sockaddr_in *from, Stone *stonep) {
     Origin *origin;
+    SOCKET sd;
     for (origin=origins.next; origin != NULL; origin=origin->next) {
 	if (InvalidSocket(origin->sd)) continue;
-	if (origin->sin.sin_addr.s_addr == addr->s_addr
-	    && origin->sin.sin_port == port) {
+	if (origin->sin.sin_addr.s_addr == from->sin_addr.s_addr
+	    && origin->sin.sin_port == from->sin_port) {
 	    origin->lock = 1;	/* lock origin */
 	    return origin;
 	}
     }
-    return NULL;
+    /* can't find origin, so create */
+    sd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (InvalidSocket(sd)) {
+#ifdef WINDOWS
+	errno = WSAGetLastError();
+#endif
+	message(LOG_ERR, "UDP: can't create datagram socket err=%d.", errno);
+	return NULL;
+    }
+    origin = malloc(sizeof(Origin));
+    if (!origin) {
+	message(LOG_ERR, "UDP %d: Out of memory, closing socket", sd);
+	return NULL;
+    }
+    origin->sd = sd;
+    origin->stone = stonep;
+    bcopy(from, &origin->sin, sizeof(origin->sin));
+    origin->lock = 0;
+    waitMutex(OrigMutex);
+    origin->next = origins.next;	/* insert origin */
+    origins.next = origin;
+    freeMutex(OrigMutex);
+    return origin;
 }
 
 void docloseUDP(Origin *origin, int wait) {
@@ -1503,29 +1556,37 @@ void docloseUDP(Origin *origin, int wait) {
 
 void asyncOrg(Origin *origin) {
     int len;
+    SOCKET sd;
     Stone *stone = origin->stone;
+    char *pkt_buf;
     ASYNC_BEGIN;
     if (Debug > 8) message(LOG_DEBUG, "asyncOrg...");
-    len = recvUDP(origin->sd, NULL);
-    if (Debug > 4) {
-	SOCKET sd;
-	if (stone) sd = stone->sd;
-	else sd = INVALID_SOCKET;
-	message(LOG_DEBUG, "UDP %d: send %d bytes to %d",
-		origin->sd, len, origin->stone->sd);
+    if (stone) sd = stone->sd;
+    else goto end;
+    pkt_buf = malloc(pkt_len_max);
+    if (!pkt_buf) {
+	message(LOG_ERR, "UDP %d: Out of memory to allocate %d bytes",
+		sd, pkt_len_max);
+	goto end;
     }
-    if (len > 0 && stone) sendUDP(stone->sd, &origin->sin, len);
-    time(&origin->clock);
-    if (len > 0) {
+    len = recvUDP(origin->sd, NULL, pkt_buf);
+    if (Debug > 4)
+	message(LOG_DEBUG, "UDP %d: send %d bytes to %d",
+		origin->sd, len, sd);
+    if (len > 0
+	&& sendUDP(stone->sd, &origin->sin, len, pkt_buf) > 0) {
+	time(&origin->clock);
 	waitMutex(FdRinMutex);
 	waitMutex(FdEinMutex);
 	FdSet(origin->sd, &ein);
 	FdSet(origin->sd, &rin);
 	freeMutex(FdEinMutex);
 	freeMutex(FdRinMutex);
-    } else if (len < 0) {
+    } else {
 	docloseUDP(origin, 1);	/* wait mutex */
     }
+ end:
+    if (pkt_buf) free(pkt_buf);
     ASYNC_END;
 }
 
@@ -1600,81 +1661,51 @@ int scanUDP(fd_set *rop, fd_set *eop) {
 }
 
 /* *stonep repeat UDP connection */
-Origin *doUDP(Stone *stonep) {
+void asyncUDP(Stone *stonep) {
     struct sockaddr_in from;
     SOCKET dsd;
     int len;
     Origin *origin;
     char addr[STRMAX];
     char port[STRMAX];
-    len = recvUDP(stonep->sd, &from);
+    char *pkt_buf;
+    ASYNC_BEGIN;
+    if (Debug > 8) message(LOG_DEBUG, "asyncUDP...");
+    pkt_buf = malloc(pkt_len_max);
+    if (!pkt_buf) {
+	message(LOG_ERR, "UDP %d: Out of memory to allocate %d bytes",
+		stonep->sd, pkt_len_max);
+	goto end;
+    }
+    len = recvUDP(stonep->sd, &from, pkt_buf);
     waitMutex(FdRinMutex);
     FdSet(stonep->sd, &rin);
     freeMutex(FdRinMutex);
-    if (len <= 0) return NULL;	/* drop */
+    if (len <= 0) goto end;	/* drop */
     if (!checkXhost(stonep, &from.sin_addr, NULL)) {
 	addr2str(&from.sin_addr, addr, STRMAX);
 	port2str(from.sin_port, stonep->proto, proto_src, port, STRMAX);
 	message(LOG_WARNING, "stone %d: recv UDP denied: from %s:%s",
 		stonep->sd, addr, port);
-	return NULL;
+	goto end;
     }
-    origin = getOrigins(&from.sin_addr, from.sin_port);
-    if (origin) {
-	dsd = origin->sd;
-	if (Debug > 5)
-	    message(LOG_DEBUG, "UDP %d: reuse %d to send", stonep->sd, dsd);
-    } else if (InvalidSocket(dsd=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP))) {
-#ifdef WINDOWS
-	errno = WSAGetLastError();
-#endif
-	message(LOG_ERR, "UDP: can't create datagram socket err=%d.",
-		errno);
-	return NULL;
-    }
+    origin = getOrigins(&from, stonep);
+    if (!origin) goto end;
+    dsd = origin->sd;
+    time(&origin->clock);
+    waitMutex(FdRinMutex);
+    waitMutex(FdEinMutex);
+    FdSet(origin->sd, &rin);
+    FdSet(origin->sd, &ein);
+    freeMutex(FdEinMutex);
+    freeMutex(FdRinMutex);
     if (Debug > 4)
 	message(LOG_DEBUG, "UDP %d: send %d bytes to %d",
 		stonep->sd, len, dsd);
-    if (sendUDP(dsd, stonep->sins, len) <= 0) {
-	if (origin) {
-	    docloseUDP(origin, 1);	/* wait mutex */
-	} else {
-	    closesocket(dsd);
-	}
-	return NULL;
-    }
-    if (!origin) {
-	origin = malloc(sizeof(Origin));
-	if (!origin) {
-	    message(LOG_ERR, "UDP %d: Out of memory, closing socket", dsd);
-	    return NULL;
-	}
-	origin->sd = dsd;
-	origin->stone = stonep;
-	bcopy(&from, &origin->sin, sizeof(origin->sin));
-	origin->lock = 0;
-	waitMutex(OrigMutex);
-	origin->next = origins.next;	/* insert origin */
-	origins.next = origin;
-	freeMutex(OrigMutex);
-    }
-    return origin;
-}
-
-void asyncUDP(Stone *stone) {
-    Origin *origin;
-    ASYNC_BEGIN;
-    if (Debug > 8) message(LOG_DEBUG, "asyncUDP...");
-    origin = doUDP(stone);
-    if (origin) {
-	time(&origin->clock);
-	waitMutex(FdRinMutex);
-	waitMutex(FdEinMutex);
-	FdSet(origin->sd, &rin);
-	FdSet(origin->sd, &ein);
-	freeMutex(FdEinMutex);
-	freeMutex(FdRinMutex);
-    }
+    if (sendUDP(dsd, stonep->sins, len, pkt_buf) <= 0)
+	docloseUDP(origin, 1);	/* wait mutex */
+ end:
+    if (pkt_buf) free(pkt_buf);
     ASYNC_END;
 }
 
@@ -1814,12 +1845,20 @@ int trySSL_accept(Pair *pair) {
     }
  finished:
     if (pair->stone->ssl_server->verbose) printSSLinfo(pair->ssl);
+    if (Debug > 3) {
+	SSL_CTX *ctx = pair->stone->ssl_server->ctx;
+	message(LOG_DEBUG,
+		"TCP %d: SSL_accept succeeded sess=%ld accept=%ld hits=%ld",
+		pair->sd, SSL_CTX_sess_number(ctx), SSL_CTX_sess_accept(ctx),
+		SSL_CTX_sess_hits(ctx));
+    }
     pair->ssl_flag &= ~sf_intr;
     return 1;
 }
 
 int doSSL_accept(Pair *pair) {
     int ret;
+    if (pair->ssl) SSL_free(pair->ssl);
     pair->ssl = SSL_new(pair->stone->ssl_server->ctx);
     SSL_set_ex_data(pair->ssl, PairIndex, pair);
     SSL_set_fd(pair->ssl, pair->sd);
@@ -1830,6 +1869,7 @@ int doSSL_accept(Pair *pair) {
 int doSSL_connect(Pair *pair) {
     int err, ret;
     if (!(pair->ssl_flag & sf_intr)) {
+	if (pair->ssl) SSL_free(pair->ssl);
 	pair->ssl = SSL_new(pair->stone->ssl_client->ctx);
 	SSL_set_ex_data(pair->ssl, PairIndex, pair);
 	SSL_set_fd(pair->ssl, pair->sd);
@@ -1862,7 +1902,11 @@ int doSSL_connect(Pair *pair) {
     if (pair->stone->ssl_client->verbose) printSSLinfo(pair->ssl);
     pair->ssl_flag &= ~sf_intr;
     if (Debug > 3) {
-	message(LOG_DEBUG, "TCP %d: SSL_connect succeeded", pair->sd);
+	SSL_CTX *ctx = pair->stone->ssl_client->ctx;
+	message(LOG_DEBUG,
+		"TCP %d: SSL_connect succeeded sess=%ld connect=%ld hits=%ld",
+		pair->sd, SSL_CTX_sess_number(ctx), SSL_CTX_sess_connect(ctx),
+		SSL_CTX_sess_hits(ctx));
 	message_pair(pair);
     }
     return 1;
@@ -2726,52 +2770,16 @@ int scanClose(void) {	/* scan close request */
 
 void message_buf(Pair *pair, int len, char *str) {	/* dump for debug */
     int i, j, k, l;
-    char buf[BUFMAX];
+    char head[STRMAX];
     Pair *p = pair->pair;
     if (p == NULL) return;
-    k = 0;
-    for (i=pair->start; i < pair->start+len; i += j) {
-	l = 0;
-	buf[l++] = ' ';
-	for (j=0; k <= j/10 && i+j < pair->start+len && l < BUFMAX-10;
-	     j++) {
-	    if (' ' <= pair->buf[i+j]
-		&& pair->buf[i+j] <= '~')
-		buf[l++] = pair->buf[i+j];
-	    else {
-		sprintf(&buf[l], "<%02x>", pair->buf[i+j]);
-		l += strlen(&buf[l]);
-		if (pair->buf[i+j] == '\n') {
-		    k = 0;
-		    j++;
-		    break;
-		}
-		if (pair->buf[i+j] != '\t' && pair->buf[i+j] != '\r' &&
-		    pair->buf[i+j] != '\033')
-		    k++;
-	    }
-	}
-	if (k > j/10) {
-	    j = l = 0;
-	    for (j=0; j < 16 && i+j < pair->start+len; j++) {
-		if (' ' <= pair->buf[i+j]
-		    && pair->buf[i+j] <= '~')
-		    sprintf(&buf[l], " %c ", pair->buf[i+j]);
-		else {
-		    sprintf(&buf[l], " %02x",
-			    (unsigned char)pair->buf[i+j]);
-		    if (pair->buf[i+j] == '\n') k = 0; else k++;
-		}
-		l += strlen(&buf[l]);
-	    }
-	}
-	buf[l] = '\0';
-	if (pair->proto & proto_source) {
-	    message(LOG_DEBUG, "%s%d<%d%s", str, pair->sd, p->sd, buf);
-	} else {
-	    message(LOG_DEBUG, "%s%d>%d%s", str, p->sd, pair->sd, buf);
-	}
+    head[STRMAX-1] = '\0';
+    if (pair->proto & proto_source) {
+	snprintf(head, STRMAX-1, "%s%d<%d", str, pair->sd, p->sd);
+    } else {
+	snprintf(head, STRMAX-1, "%s%d>%d", str, p->sd, pair->sd);
     }
+    packet_dump(head, pair->buf + pair->start, len);
 }
 
 void message_pairs(void) {	/* dump for debug */
@@ -4012,6 +4020,8 @@ static int newMatch(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
     if (match) {
 	int i;
 	for (i=0; i <= NMATCH_MAX; i++) match[i] = NULL;
+	if (Debug > 4) message(LOG_DEBUG, "newMatch %d: %lx",
+			       NewMatchCount++, match);
 	return CRYPTO_set_ex_data(ad, idx, match);
     }
     return 0;
@@ -4024,6 +4034,8 @@ static void freeMatch(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
     for (i=0; i <= NMATCH_MAX; i++) {
 	if (match[i]) free(match[i]);
     }
+    if (Debug > 4) message(LOG_DEBUG, "freeMatch %d: %lx",
+			   --NewMatchCount, match);
     free(match);
 }
 
@@ -5682,10 +5694,6 @@ void initialize(int argc, char *argv[]) {
 	doargs(ConfigArgc, j, ConfigArgv);
     } else {
 	doargs(argc, i, argv);
-    }
-    if (!(pkt_buf=malloc(pkt_len_max=PKT_LEN_INI))) {
-	message(LOG_ERR, "Out of memory.");
-	exit(1);
     }
 #ifndef WINDOWS
     signal(SIGHUP, handler);
