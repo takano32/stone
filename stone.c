@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.49 2003/05/07 16:36:31 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.50 2003/05/09 09:59:58 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1678,6 +1678,7 @@ int strnparse(char *buf, int limit, char *p, Pair *pair) {
     while (i < limit && (c = *p++)) {
 	if (c == '\\') {
 	    c = *p++;
+#ifdef USE_SSL
 	    if ('1' <= c && c <= '9') {
 		if (pair->match) {
 		    char **match = pair->match;
@@ -1691,6 +1692,7 @@ int strnparse(char *buf, int limit, char *p, Pair *pair) {
 		}
 		continue;
 	    }
+#endif
 	    switch(c) {
 	    case 'n':  c = '\n';  break;
 	    case 'r':  c = '\r';  break;
@@ -3260,12 +3262,12 @@ void help(char *com) {
 #ifndef NO_CHROOT
 	    "      -t <dir>          ; chroot to <dir>\n"
 #endif
+#ifdef UNIX_DAEMON
+	    "      -D                ; become UNIX Daemon\n"
+#endif
 #ifdef USE_SSL
 	    "      -q <SSL>          ; SSL client option\n"
 	    "      -z <SSL>          ; SSL server option\n"
-#endif
-#ifdef UNIX_DAEMON
-	    "      -D                ; become UNIX Daemon\n"
 #endif
 	    "stone: <display> [<xhost>...]\n"
 	    "       <host>:<port> <sport> [<xhost>...]\n"
