@@ -85,7 +85,8 @@
  * -DNT_SERVICE	  WindowsNT/2000 native service
  */
 #define VERSION	"2.1w"
-static char *id = "@(#) $Id: stone.c,v 1.25 2002/10/05 16:27:10 hiroaki_sengoku Exp $";
+static char *CVS_ID =
+"@(#) $Id: stone.c,v 1.26 2002/10/05 16:35:00 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
