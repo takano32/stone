@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.129 2004/07/01 04:42:43 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.130 2004/07/11 03:42:55 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2067,6 +2067,7 @@ int getident(char *str, struct sockaddr_in *sinp, int cport) {
 	    str[i] = '\0';
 	}
     }
+    closesocket(sd);
     return 1;
 }
 
