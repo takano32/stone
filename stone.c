@@ -362,7 +362,7 @@ const proto_base_d =	0x20000000;	/*        destination */
 			 proto_command)
 #define proto_all	(proto_src|proto_dest)
 
-int XferBufMax = (4*1024);	/* TCP packet buffer initial size */
+int XferBufMax = 1000;	/* TCP packet buffer initial size (must < 1024 ?) */
 char *pkt_buf;		/* UDP packet buffer */
 int pkt_len_max;	/* size of pkt_buf */
 #define PKT_LEN_INI	2048	/* initial size */
@@ -1594,10 +1594,12 @@ Stone *stonep;
 	pair2 = malloc(sizeof(Pair) + XferBufMax - BUFMAX);
     } while (!pair2 && XferBufMax > BUFMAX && (XferBufMax /= 2));
     if (pair2) pair2->bufmax = XferBufMax;
+#ifdef ENLARGE
     if (XferBufMax < prevXferBufMax) {
 	message(LOG_NOTICE,"stone %d TCP %d: XferBufMax becomes %d byte",
 		stonep->sd,nsd,XferBufMax);
     }
+#endif
     if (!pair1 || !pair2) {
 	message(LOG_ERR,"stone %d: out of memory, closing TCP %d",
 		stonep->sd,nsd);
@@ -2069,11 +2071,13 @@ Pair *pair;		/* read into buf from pair->pair->start */
 	if (Debug > 2) message(LOG_DEBUG,"TCP %d: EOF",sd);
 	return -1;	/* EOF */
     }
+#ifdef ENLARGE
     if (len > pair->bufmax - 10
 	&& XferBufMax < pair->bufmax * 2) {
 	XferBufMax = pair->bufmax * 2;
 	message(LOG_NOTICE,"TCP %d: XferBufMax becomes %d byte",sd,XferBufMax);
     }
+#endif
     p->len = start + len - p->start;
     if (Debug > 4) {
 	SOCKET psd = p->sd;
@@ -3041,7 +3045,7 @@ char *com;
 #endif
 	    "      -L <file>         ; write log to <file>\n"
 	    "      -a <file>         ; write accounting to <file>\n"
-	    "      -X <n>            ; size [kB] of Xfer buffer\n"
+	    "      -X <n>            ; size [byte] of Xfer buffer\n"
 	    "      -T <n>            ; timeout [sec] of TCP sessions\n"
 #ifndef NO_SETUID
 	    "      -o <n>            ; set uid to <n>\n"
@@ -3466,7 +3470,7 @@ char *argv[];
 		OriginMax = atoi(argv[++i]);
 		break;
 	    case 'X':
-		XferBufMax = atoi(argv[++i]) * 1024;
+		XferBufMax = atoi(argv[++i]);
 		break;
 	    case 'T':
 		PairTimeOut = atoi(argv[++i]);
