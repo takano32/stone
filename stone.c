@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2b"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.116 2003/12/27 10:53:18 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.117 2004/01/15 07:16:38 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1601,6 +1601,24 @@ int SSL_smart_shutdown(SSL *ssl) {
 }
 #endif	/* USE_SSL */
 
+void freePair(Pair *pair) {
+    SOCKET sd;
+#ifdef USE_SSL
+    SSL *ssl;
+#endif
+    if (!pair) return;
+    sd = pair->sd;
+    pair->sd = INVALID_SOCKET;
+    if (ValidSocket(sd)) closesocket(sd);
+#ifdef USE_SSL
+    ssl = pair->ssl;
+    pair->ssl = NULL;
+    if (ssl) SSL_free(ssl);
+    rmMatch(pair);
+#endif
+    free(pair);
+}
+
 void message_time_log(Pair *pair) {
     TimeLog *log = pair->log;
     if (log && log->clock) {
@@ -2033,27 +2051,30 @@ Pair *doaccept(Stone *stonep) {
     if (!pair1 || !pair2) {
 	message(LOG_ERR, "stone %d: out of memory, closing TCP %d",
 		stonep->sd, nsd);
-      error:
 	closesocket(nsd);
 	if (pair1) free(pair1);
 	if (pair2) free(pair2);
 	return NULL;
     }
-    pair1->stone = stonep;
+    pair1->stone = pair2->stone = stonep;
     pair1->sd = nsd;
+    pair2->sd = INVALID_SOCKET;
     pair1->proto = ((stonep->proto & proto_src) |
 		    proto_first_r | proto_first_w | proto_source |
 		    proto_connect);	/* src & pair1 is connected */
-    pair1->count = 0;
-    pair1->start = 0;
-    pair1->len = 0;
-    pair1->p = NULL;
-    pair1->log = NULL;
-    pair1->tx = 0;
-    pair1->rx = 0;
+    pair2->proto = ((stonep->proto & proto_dest) |
+		    proto_first_r | proto_first_w);
+    pair1->count = pair2->count = 0;
+    pair1->start = pair2->start = 0;
+    pair1->len = pair2->len = 0;
+    pair1->p = pair2->p = NULL;
+    pair1->log = pair2->log = NULL;
+    pair1->tx = pair2->tx = 0;
+    pair1->rx = pair2->rx = 0;
     time(&pair1->clock);
-    pair1->timeout = stonep->timeout;
-    pair1->pair = NULL;
+    time(&pair2->clock);
+    pair1->timeout = pair2->timeout = stonep->timeout;
+    pair1->pair = pair2->pair = NULL;
 #ifdef USE_SSL
     pair1->ssl = pair2->ssl = NULL;
     pair1->match = pair2->match = NULL;
@@ -2062,7 +2083,6 @@ Pair *doaccept(Stone *stonep) {
 	if (ret < 0) goto error;
     }
 #endif
-    pair2->stone = stonep;
     pair2->sd = socket(AF_INET, SOCK_STREAM, 0);
     if (InvalidSocket(pair2->sd)) {
 #ifdef WINDOWS
@@ -2070,19 +2090,11 @@ Pair *doaccept(Stone *stonep) {
 #endif
 	message(LOG_ERR, "TCP %d: can't create socket err=%d.",
 		pair1->sd, errno);
-	goto error;
+      error:
+	freePair(pair1);
+	freePair(pair2);
+	return NULL;
     }
-    pair2->proto = ((stonep->proto & proto_dest) |
-		    proto_first_r | proto_first_w);
-    pair2->count = 0;
-    pair2->start = 0;
-    pair2->len = 0;
-    pair2->p = NULL;
-    pair2->log = NULL;
-    pair2->tx = 0;
-    pair2->rx = 0;
-    time(&pair2->clock);
-    pair2->timeout = stonep->timeout;
     pair2->pair = pair1;
     pair1->pair = pair2;
     return pair1;
@@ -2177,13 +2189,8 @@ void asyncAccept(Stone *stone) {
 	p2->len = i;
     }
     if (reqconn(p2, NULL, &stone->sins[p1->clock % stone->nsins]) < 0) {
-	if (ValidSocket(p2->sd)) closesocket(p2->sd);
-	if (ValidSocket(p1->sd)) closesocket(p1->sd);
-	p1->pair = p2->pair = NULL;
-	doclose(p2);
-	doclose(p1);
-	free(p2);
-	free(p1);
+	freePair(p2);
+	freePair(p1);
 	ASYNC_END;
 	return;
     }
@@ -2217,7 +2224,7 @@ int scanClose(void) {	/* scan close request */
 	    p2->log = NULL;
 	    free(log);
 	}
-	free(p2);
+	freePair(p2);
     }
     p1 = pairs.next;
     while (p1 != NULL) {
@@ -2247,18 +2254,21 @@ int scanClose(void) {	/* scan close request */
 		if (!FD_ISSET(p2->sd, &rin) &&
 		    !FD_ISSET(p2->sd, &win) &&
 		    !FD_ISSET(p2->sd, &ein)) {
+		    SOCKET sd;
 #ifdef USE_SSL
-		    if (p2->ssl) {
-			SSL *ssl = p2->ssl;
-			p2->ssl = NULL;
-			SSL_free(ssl);
-			rmMatch(p2);
-		    }
+		    SSL *ssl;
 #endif
-		    if (Debug > 3)
-			message(LOG_DEBUG, "TCP %d: closesocket", p2->sd);
-		    closesocket(p2->sd);
+		    sd = p2->sd;
 		    p2->sd = INVALID_SOCKET;
+		    if (ValidSocket(sd)) closesocket(sd);
+		    if (Debug > 3)
+			message(LOG_DEBUG, "TCP %d: closesocket", sd);
+#ifdef USE_SSL
+		    ssl = p2->ssl;
+		    p2->ssl = NULL;
+		    if (ssl) SSL_free(ssl);
+		    rmMatch(p2);
+#endif
 		} else {
 		    FD_CLR(p2->sd, &rin);
 		    FD_CLR(p2->sd, &win);
