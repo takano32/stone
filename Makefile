@@ -153,13 +153,16 @@ irix-ssl:
 	$(MAKE) TARGET=irix ssl_stone
 
 win:
-	$(MAKE) FLAGS="-DWINDOWS $(FLAGS)" LIBS="/MT wsock32.lib $(LIBS) /link /NODEFAULTLIB:LIBC" stone.exe
+	$(MAKE) FLAGS="/Zi /DWINDOWS /DNO_SNPRINTF /DNO_VSNPRINTF /DNO_PID_T $(FLAGS)" LIBS="/MT wsock32.lib $(LIBS) /link /NODEFAULTLIB:LIBC" stone.exe
 
 win-pop:
 	$(MAKE) TARGET=win pop_stone.exe
 
 win-ssl:
 	$(MAKE) TARGET=win ssl_stone.exe
+
+win-svc:
+	$(MAKE) FLAGS="/DNT_SERVICE $(FLAGS)" TARGET=win svc_stone.exe
 
 mingw.exe: stone.c
 	$(CC) $(FLAGS) -o stone.exe $? $(LIBS)
