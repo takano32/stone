@@ -11,7 +11,7 @@
  * Version 1.8	Oct 18, 1997	pseudo parallel using SIGALRM
  * Version 2.0	Nov  3, 1997	http proxy & over http
  * Version 2.1	Nov 14, 1998	respawn & pop
- * Version 2.2			Posix Thread, XferBufMax, no ALRM
+ * Version 2.2			Posix Thread, XferBufMax, no ALRM, SSL verify
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.43 2003/05/04 14:24:54 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.44 2003/05/05 06:54:57 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -239,9 +239,12 @@ typedef int SOCKET;
 #include <openssl/err.h>
 #include <regex.h>
 
+#define DEPTH_MAX 10
+
 typedef struct {
+    int verbose;
     SSL_CTX *ctx;
-    regex_t *re;
+    regex_t *re[DEPTH_MAX];
 } StoneSSL;
 
 typedef struct {
@@ -254,7 +257,7 @@ typedef struct {
     char *caFile;
     char *caPath;
     char *cipherList;
-    char *regexp;
+    char *regexp[DEPTH_MAX];
 } SSLOpts;
 
 SSLOpts ServerOpts;
@@ -456,10 +459,7 @@ HMTX FdRinMutex, FdWinMutex, FdEinMutex;
 #endif
 
 #ifdef NO_BCOPY
-void bcopy(b1,b2,len)
-char *b1, *b2;
-int len;
-{
+void bcopy(char *b1, char *b2, int len) {
     if (b1 < b2 && b2 < b1 + len) {	/* overlapping */
 	char *p;
 	b2 = b2 + len - 1;
@@ -470,11 +470,7 @@ int len;
 }
 #endif
 
-char *strntime(str,len,clock)
-char *str;
-int len;
-time_t *clock;
-{
+char *strntime(char *str, int len, time_t *clock) {
     char *p, *q;
     int i;
     p = ctime(clock);
@@ -548,10 +544,7 @@ TimeLog *message_time(int pri, char *fmt, ...) {
     return log;
 }
 
-char *addr2ip(addr,str)
-struct in_addr *addr;
-char *str;
-{
+char *addr2ip(struct in_addr *addr, char *str) {
     union {
 	u_long	l;
 	unsigned char	c[4];
@@ -561,9 +554,7 @@ char *str;
     return str;
 }
 
-char *addr2str(addr)
-struct in_addr *addr;
-{
+char *addr2str(struct in_addr *addr) {
     static char str[STRMAX];
     struct hostent *ent;
     int ntry = NTRY_MAX;
@@ -582,11 +573,7 @@ struct in_addr *addr;
     return str;
 }
 
-char *port2str(port,flag,mask)
-int port;	/* network byte order */
-int flag;
-int mask;
-{
+char *port2str(int port, int flag, int mask) {	/* network byte order */
     static char str[STRMAX];
     char *proto;
     struct servent *ent;
@@ -622,9 +609,7 @@ int mask;
     return str;
 }
 
-int isdigitstr(str)
-char *str;
-{
+int isdigitstr(char *str) {
     while (*str && !isspace(*str)) {
 	if (!isdigit(*str)) return 0;
 	str++;
@@ -632,10 +617,7 @@ char *str;
     return 1;
 }
 
-int str2port(str,flag)	/* host byte order */
-char *str;
-int flag;
-{
+int str2port(char *str, int flag) {	/* host byte order */
     struct servent *ent;
     char *proto;
     if (flag & proto_udp) {
@@ -653,9 +635,7 @@ int flag;
     }
 }
 
-int isdigitaddr(name)
-char *name;
-{
+int isdigitaddr(char *name) {
     while(*name) {
 	if (*name != '.' && !isdigit(*name)) return 0;	/* not digit */
 	name++;
@@ -664,9 +644,7 @@ char *name;
 }
 
 #ifdef INET_ADDR
-unsigned long inet_addr(name)	/* inet_addr(3) is too tolerant */
-char *name;
-{
+unsigned long inet_addr(char *name) {	/* inet_addr(3) is too tolerant */
     unsigned long ret;
     int d[4];
     int i;
@@ -683,11 +661,7 @@ char *name;
 }
 #endif
 
-int host2addr(name,addrp,familyp)
-char *name;
-struct in_addr *addrp;
-short *familyp;
-{
+int host2addr(char *name, struct in_addr *addrp, short *familyp) {
     struct hostent *hp;
     int ntry = NTRY_MAX;
     if (isdigitaddr(name)) {
@@ -713,10 +687,7 @@ short *familyp;
 }
 
 /* *addrp is permitted to connect to *stonep ? */
-int checkXhost(stonep,addrp)
-Stone *stonep;
-struct in_addr *addrp;
-{
+int checkXhost(Stone *stonep, struct in_addr *addrp) {
     int i;
     if (!stonep->nhosts) return 1; /* any hosts can access */
     for (i=0; i < stonep->nhosts; i++) {
@@ -728,9 +699,7 @@ struct in_addr *addrp;
 }
 
 #ifdef WINDOWS
-void waitMutex(h)
-HANDLE h;
-{
+void waitMutex(HANDLE h) {
     DWORD ret;
     if (h) {
 	ret = WaitForSingleObject(h,500);	/* 0.5 sec */
@@ -742,9 +711,7 @@ HANDLE h;
     }
 }
 
-void freeMutex(h)
-HANDLE h;
-{
+void freeMutex(HANDLE h) {
     if (h) {
 	if (!ReleaseMutex(h)) {
 	    message(LOG_ERR,"Fail to release mutex err=%d",GetLastError());
@@ -753,9 +720,7 @@ HANDLE h;
 }
 #else	/* ! WINDOWS */
 #ifdef OS2
-void waitMutex(h)
-HMTX h;
-{
+void waitMutex(HMTX h) {
     APIRET ret;
     if (h) {
 	ret = DosRequestMutexSem(h,500);	/* 0.5 sec */
@@ -767,9 +732,7 @@ HMTX h;
     }
 }
 
-void freeMutex(h)
-HMTX h;
-{
+void freeMutex(HMTX h) {
     APIRET ret;
     if (h) {
 	ret = DosReleaseMutexSem(h);
@@ -780,9 +743,7 @@ HMTX h;
 }
 #else	/* ! OS2 & ! WINDOWS */
 #ifdef PTHREAD
-void waitMutex(h)
-int h;
-{
+void waitMutex(int h) {
     int err;
     for (;;) {
 	if (err=pthread_mutex_lock(&FastMutex)) {
@@ -800,9 +761,7 @@ int h;
     }
 }
 
-void freeMutex(h)
-int h;
-{
+void freeMutex(int h) {
     int err;
     if (err=pthread_mutex_lock(&FastMutex)) {
 	message(LOG_ERR,"Mutex %d err=%d.",h,err);
@@ -826,9 +785,7 @@ int h;
 
 /* relay UDP */
 
-void message_origin(origin)
-Origin *origin;
-{
+void message_origin(Origin *origin) {
     struct sockaddr_in name;
     SOCKET sd;
     Stone *stone;
@@ -859,13 +816,11 @@ Origin *origin;
     message(LOG_INFO,"UDP%3d:%3d %s%s:%s",
 	    origin->sd,sd,str,
 	    addr2str(&origin->sin.sin_addr),
-	    port2str(&origin->sin.sin_port,proto_udp,proto_all));
+	    port2str(origin->sin.sin_port,proto_udp,proto_all));
 }
 
 /* enlarge packet buffer */
-static void enlarge_buf(sd)
-SOCKET sd;
-{
+static void enlarge_buf(SOCKET sd) {
     char *buf;
     buf = malloc(pkt_len_max << 1);
     if (buf) {
@@ -878,10 +833,7 @@ SOCKET sd;
     }
 }
 
-static int recvUDP(sd,from)
-SOCKET sd;
-struct sockaddr_in *from;
-{
+static int recvUDP(SOCKET sd, struct sockaddr_in *from) {
     struct sockaddr_in sin;
     int len, pkt_len;
     if (!from) from = &sin;
@@ -904,11 +856,7 @@ struct sockaddr_in *from;
     return pkt_len;
 }   
 
-static int sendUDP(sd,sinp,len)
-SOCKET sd;
-struct sockaddr_in *sinp;
-int len;
-{
+static int sendUDP(SOCKET sd, struct sockaddr_in *sinp, int len) {
     if (sendto(sd,pkt_buf,len,0,
 	       (struct sockaddr*)sinp,sizeof(*sinp))
 	!= len) {
@@ -929,10 +877,8 @@ int len;
     return len;
 }
 
-static Origin *getOrigins(addr,port)
-struct in_addr *addr;
-int port;	/* network byte order */
-{
+static Origin *getOrigins(struct in_addr *addr,
+			  int port) {	/* network byte order */
     Origin *origin;
     for (origin=origins.next; origin != NULL; origin=origin->next) {
 	if (InvalidSocket(origin->sd)) continue;
@@ -945,10 +891,7 @@ int port;	/* network byte order */
     return NULL;
 }
 
-void docloseUDP(origin,wait)
-Origin *origin;
-int wait;
-{
+void docloseUDP(Origin *origin, int wait) {
     if (Debug > 2) message(LOG_DEBUG,"UDP %d: close",origin->sd);
     if (wait) {
 	waitMutex(FdRinMutex);
@@ -963,9 +906,7 @@ int wait;
     origin->lock = -1;	/* request to close */
 }
 
-void asyncOrg(origin)
-Origin *origin;
-{
+void asyncOrg(Origin *origin) {
     int len;
     Stone *stone = origin->stone;
     ASYNC_BEGIN;
@@ -993,9 +934,7 @@ Origin *origin;
     ASYNC_END;
 }
 
-int scanUDP(rop,eop)
-fd_set *rop, *eop;
-{
+int scanUDP(fd_set *rop, fd_set *eop) {
 #ifdef PTHREAD
     pthread_t thread;
     int err;
@@ -1066,9 +1005,7 @@ fd_set *rop, *eop;
 }
 
 /* *stonep repeat UDP connection */
-Origin *doUDP(stonep)
-Stone *stonep;
-{
+Origin *doUDP(Stone *stonep) {
     struct sockaddr_in from;
     SOCKET dsd;
     int len;
@@ -1126,9 +1063,7 @@ Stone *stonep;
     return origin;
 }
 
-void asyncUDP(stone)
-Stone *stone;
-{
+void asyncUDP(Stone *stone) {
     Origin *origin;
     ASYNC_BEGIN;
     if (Debug > 8) message(LOG_DEBUG,"asyncUDP...");
@@ -1147,9 +1082,7 @@ Stone *stone;
 
 /* relay TCP */
 
-void message_pair(pair)
-Pair *pair;
-{
+void message_pair(Pair *pair) {
     struct sockaddr_in name;
     SOCKET sd, psd;
     Pair *p;
@@ -1204,9 +1137,7 @@ Pair *pair;
 }
 
 #ifdef USE_SSL
-static void printSSLinfo(ssl)
-SSL *ssl;
-{
+static void printSSLinfo(SSL *ssl) {
     X509 *peer;
     char *p = (char *)SSL_get_cipher(ssl);
     if (p == NULL) p = "<NULL>";
@@ -1223,9 +1154,7 @@ SSL *ssl;
     }
 }
 
-int trySSL_accept(pair)
-Pair *pair;
-{
+int trySSL_accept(Pair *pair) {
     int ret;
     unsigned long err;
     if (pair->proto & proto_ssl_intr) {
@@ -1254,7 +1183,7 @@ Pair *pair;
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
 	    message(LOG_ERR,"TCP %d: SSL_accept error err=%d",pair->sd,err);
-	    if (ServerOpts.verbose)
+	    if (pair->stone->ssl_server->verbose)
 		message(LOG_INFO,"TCP %d: %s",
 			pair->sd,ERR_error_string(err,NULL));
 	    message_pair(pair);
@@ -1265,7 +1194,7 @@ Pair *pair;
     if (SSL_in_accept_init(pair->ssl)) {
 	SSL *ssl = pair->ssl;
 	pair->ssl = NULL;
-	if (ServerOpts.verbose) {
+	if (pair->stone->ssl_server->verbose) {
 	    message(LOG_NOTICE,"TCP %d: SSL_accept unexpected EOF",pair->sd);
 	    message_pair(pair);
 	}
@@ -1273,7 +1202,7 @@ Pair *pair;
 	return -1;	/* unexpected EOF */
     }
  finished:
-    if (ServerOpts.verbose) printSSLinfo(pair->ssl);
+    if (pair->stone->ssl_server->verbose) printSSLinfo(pair->ssl);
     pair->proto &= ~proto_ssl_intr;
     return 1;
 }
@@ -1287,9 +1216,7 @@ int doSSL_accept(Pair *pair) {
     return ret;
 }
 
-int doSSL_connect(pair)
-Pair *pair;
-{
+int doSSL_connect(Pair *pair) {
     int err, ret;
     if (!(pair->proto & proto_ssl_intr)) {
 	pair->ssl = SSL_new(pair->stone->ssl_client->ctx);
@@ -1313,7 +1240,7 @@ Pair *pair;
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
 	    message(LOG_ERR,"TCP %d: SSL_connect error err=%d",pair->sd,err);
-	    if (ClientOpts.verbose)
+	    if (pair->stone->ssl_client->verbose)
 		message(LOG_INFO,"TCP %d: %s",
 			pair->sd,ERR_error_string(err,NULL));
 	    message_pair(pair);
@@ -1322,7 +1249,7 @@ Pair *pair;
 	}
     }
  finished:
-    if (ClientOpts.verbose) printSSLinfo(pair->ssl);
+    if (pair->stone->ssl_client->verbose) printSSLinfo(pair->ssl);
     pair->proto &= ~proto_ssl_intr;
     if (Debug > 3) {
 	message(LOG_DEBUG,"TCP %d: SSL_connect succeeded",pair->sd);
@@ -1332,10 +1259,7 @@ Pair *pair;
 }
 #endif	/* USE_SSL */
 
-
-void doclose(pair)		/* close pair */
-Pair *pair;
-{
+void doclose(Pair *pair) {	/* close pair */
     Pair *p = pair->pair;
     SOCKET sd = pair->sd;
     TimeLog *log = pair->log;
@@ -1366,10 +1290,7 @@ Pair *pair;
 }
 
 /* pair connect to destination */
-int doconnect(pair,sinp)
-Pair *pair;
-struct sockaddr_in *sinp;	/* connect to */
-{
+int doconnect(Pair *pair, struct sockaddr_in *sinp) {	/* connect to */
     int ret;
     Pair *p = pair->pair;
     if (!(pair->proto & proto_ssl_intr)) {
@@ -1417,9 +1338,7 @@ struct sockaddr_in *sinp;	/* connect to */
     return ret;
 }
 
-void message_conn(conn)
-Conn *conn;
-{
+void message_conn(Conn *conn) {
     SOCKET sd = INVALID_SOCKET;
     Pair *p1, *p2;
     int proto = 0;
@@ -1478,9 +1397,7 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
     return 0;
 }
 
-void asyncConn(conn)
-Conn *conn;
-{
+void asyncConn(Conn *conn) {
     int ret;
     Pair *p1, *p2;
     time_t clock;
@@ -1555,7 +1472,7 @@ Conn *conn;
 }
 
 /* scan conn request */
-int scanConns() {
+int scanConns(void) {
 #ifdef PTHREAD
     pthread_t thread;
     int err;
@@ -1588,9 +1505,7 @@ int scanConns() {
 }
 
 /* *stonep accept connection */
-Pair *doaccept(stonep)
-Stone *stonep;
-{
+Pair *doaccept(Stone *stonep) {
     struct sockaddr_in from;
     SOCKET nsd;
     int len;
@@ -1721,9 +1636,7 @@ Stone *stonep;
     return pair1;
 }
 
-void asyncAccept(stone)
-Stone *stone;
-{
+void asyncAccept(Stone *stone) {
     Pair *p1, *p2;
     ASYNC_BEGIN;
     if (Debug > 8) message(LOG_DEBUG,"asyncAccept...");
@@ -1770,7 +1683,7 @@ Stone *stone;
     ASYNC_END;
 }
 
-int scanClose() {	/* scan close request */
+int scanClose(void) {	/* scan close request */
     Pair *p1, *p2, *t;
     p1 = trash;
     trash = NULL;
@@ -1838,11 +1751,7 @@ int scanClose() {	/* scan close request */
     return 1;
 }
 
-void message_buf(pair,len,str)	/* dump for debug */
-Pair *pair;
-int len;
-char *str;
-{
+void message_buf(Pair *pair, int len, char *str) {	/* dump for debug */
     int i, j, k, l;
     char buf[BUFMAX];
     Pair *p = pair->pair;
@@ -1896,9 +1805,7 @@ char *str;
 /* read write thread */
 /* no Mutex are needed because in the single thread */
 
-int dowrite(pair)	/* write from buf from pair->start */
-Pair *pair;
-{
+int dowrite(Pair *pair) {	/* write from buf from pair->start */
     SOCKET sd = pair->sd;
     Pair *p;
     int len;
@@ -1969,10 +1876,7 @@ Pair *pair;
 static unsigned char basis_64[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-int baseEncode(buf,len,max)
-unsigned char *buf;
-int len, max;
-{
+int baseEncode(unsigned char *buf, int len, int max) {
     unsigned char *org = buf + max - len;
     unsigned char c1, c2, c3;
     int blen = 0;
@@ -2028,11 +1932,7 @@ static unsigned char index_64[256] = {
     XX,XX,XX,XX, XX,XX,XX,XX, XX,XX,XX,XX, XX,XX,XX,XX,
 };
 
-int baseDecode(buf,len,rest)
-unsigned char *buf;
-int len;
-char *rest;
-{
+int baseDecode(unsigned char *buf, int len, char *rest) {
     int blen = 0;
     unsigned char c[4], o[4];
     int i, j;
@@ -2056,9 +1956,7 @@ char *rest;
     return blen;
 }
 
-int doread(pair)
-Pair *pair;		/* read into buf from pair->pair->start */
-{
+int doread(Pair *pair) {	/* read into buf from pair->pair->start */
     SOCKET sd = pair->sd;
     Pair *p;
     int len, i;
@@ -2174,7 +2072,8 @@ Pair *pair;		/* read into buf from pair->pair->start */
     time(&pair->clock);
     p->clock = pair->clock;
     if (p->proto & proto_base) {
-	p->len = baseEncode(&p->buf[p->start],p->len,p->bufmax);
+	p->len = baseEncode(&p->buf[p->start], p->len,
+			    p->bufmax - p->start);
     } else if (pair->proto & proto_base) {
 	p->len = baseDecode(&p->buf[p->start],p->len,p->buf+p->bufmax-1);
 	len = *(p->buf+p->bufmax-1);
@@ -2205,7 +2104,8 @@ int commOutput(Pair *pair, fd_set *winp, char *fmt, ...) {
     va_start(ap,fmt);
     vsnprintf(str,BUFMAX - (p->start + p->len), fmt, ap);
     va_end(ap);
-    if (p->proto & proto_base) p->len += baseEncode(str,strlen(str));
+    if (p->proto & proto_base)
+	p->len += baseEncode(str, strlen(str), BUFMAX - (p->start + p->len));
     else p->len += strlen(str);
     FD_SET(psd,winp);		/* need to write */
     return p->len;
@@ -2408,10 +2308,7 @@ Comm popComm[] = {
 };
 #endif
 
-static char *comm_match(buf,str)
-char *buf;
-char *str;
-{
+static char *comm_match(char *buf, char *str) {
     while (*str) {
 	if (toupper(*buf++) != *str++) return NULL;	/* unmatch */
     }
@@ -2423,11 +2320,7 @@ char *str;
     return buf;
 }
 
-int docomm(pair,rinp,winp,comm)
-Pair *pair;
-fd_set *rinp, *winp;
-Comm *comm;
-{
+int docomm(Pair *pair, fd_set *rinp, fd_set *winp, Comm *comm) {
     char buf[BUFMAX];
     char *p;
     char *q = &pair->buf[pair->start + pair->len];
@@ -2464,9 +2357,7 @@ Comm *comm;
     return (*comm->func)(pair,rinp,winp,buf,start);
 }
 
-int insheader(pair)	/* insert header */
-Pair *pair;
-{
+int insheader(Pair *pair) {	/* insert header */
     char buf[BUFMAX];
     int i;
     for (i=0; i < pair->len; i++) {
@@ -2482,9 +2373,7 @@ Pair *pair;
     return pair->len;
 }
 
-int rmheader(pair)	/* remove header */
-Pair *pair;
-{
+int rmheader(Pair *pair) {	/* remove header */
     char *p;
     char *q = &pair->buf[pair->start+pair->len];
     int state = (pair->proto & state_mask);
@@ -2512,10 +2401,7 @@ Pair *pair;
     return pair->len;
 }
 
-int first_read(pair,rinp,winp)
-Pair *pair;
-fd_set *rinp, *winp;
-{
+int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
     SOCKET sd = pair->sd;
     SOCKET psd;
     Pair *p = pair->pair;
@@ -2589,10 +2475,7 @@ fd_set *rinp, *winp;
     return len;
 }
 
-static void select_debug(msg, rout, wout, eout)
-char *msg;
-fd_set *rout, *wout, *eout;
-{
+static void select_debug(char *msg, fd_set *rout, fd_set *wout, fd_set *eout) {
     int i, r, w, e;
     if (Debug > 11) {
 	for (i=0; i < FD_SETSIZE; i++) {
@@ -2608,9 +2491,7 @@ fd_set *rout, *wout, *eout;
 
 /* main event loop */
 
-void asyncReadWrite(pair)
-Pair *pair;
-{
+void asyncReadWrite(Pair *pair) {
     fd_set ri, wi, ei;
     fd_set ro, wo, eo;
     struct timeval tv;
@@ -2755,9 +2636,7 @@ Pair *pair;
     ASYNC_END;
 }
 
-int scanPairs(rop,wop,eop)
-fd_set *rop, *wop, *eop;
-{
+int scanPairs(fd_set *rop, fd_set *wop, fd_set *eop) {
 #ifdef PTHREAD
     pthread_t thread;
     int err;
@@ -2851,9 +2730,9 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
     int err, depth;
     SSL *ssl;
     Pair *pair;
+    StoneSSL *ss;
     char buf[BUFMAX];
     char *p;
-    regex_t *re;
     err_cert = X509_STORE_CTX_get_current_cert(ctx);
     err = X509_STORE_CTX_get_error(ctx);
     depth = X509_STORE_CTX_get_error_depth(ctx);
@@ -2864,33 +2743,37 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 	message(LOG_ERR,"SSL callback don't have ex_data, verify fails...");
 	return 0;	/* always fail */
     }
-    p = X509_NAME_oneline(X509_get_subject_name(err_cert), buf, BUFMAX-1);
-    if (Debug > 3) {
+    if (pair->proto & proto_source) {
+	ss = pair->stone->ssl_server;
+    } else {
+	ss = pair->stone->ssl_client;
+    }
+    if (Debug > 3)
 	message(LOG_DEBUG,"TCP %d: callback: err=%d, depth=%d, preverify=%d",
 		pair->sd, err, depth, preverify_ok);
-	if (p) message(LOG_DEBUG,"[err_cert=%s]",p);
-    }
+    p = X509_NAME_oneline(X509_get_subject_name(err_cert), buf, BUFMAX-1);
+    if (ss->verbose && p) message(LOG_DEBUG,"[depth%d=%s]",depth,p);
     if (!preverify_ok) return 0;
-    if (pair->proto & proto_source) {
-	re = pair->stone->ssl_server->re;
-    } else {
-	re = pair->stone->ssl_client->re;
+    if (depth < DEPTH_MAX && ss->re[depth]) {
+	err = regexec(ss->re[depth], p, (size_t)0, 0, 0);
+	if (Debug > 3) message(LOG_DEBUG,"TCP %d: regexec%d=%d",
+			       pair->sd,depth,err);
+	return !err;
     }
-    if (depth > 0) return 1;
-    err = regexec(re, p, (size_t)0, 0, 0);
-    if (Debug > 2) message(LOG_DEBUG,"TCP %d: regexec=%d",pair->sd,err);
-    return !err;
+    return 1;	/* if re is null, always succeed */
 }
 
 StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
     StoneSSL *ss;
     int err;
+    int i;
     ss = malloc(sizeof(StoneSSL));
     if (!ss) {
     memerr:
 	message(LOG_ERR,"Out of memory.");
 	exit(1);
     }
+    ss->verbose = opts->verbose;
     if (isserver) {
 	ss->ctx = SSL_CTX_new(SSLv23_server_method());
     } else {
@@ -2927,13 +2810,20 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 	message(LOG_ERR,"SSL_CTX_set_cipher_list(%s) error",opts->cipherList);
 	goto error;
     }
-    if (opts->regexp) {
-	ss->re = malloc(sizeof(regex_t));
-	if (!ss->re) goto memerr;
-	err = regcomp(ss->re, opts->regexp, REG_EXTENDED|REG_ICASE);
-	if (err) {
-	    message(LOG_ERR,"RegEx compiling error %d",err);
-	    goto error;
+    for (i=0; i < DEPTH_MAX; i++) {
+	if (i < opts->depth && opts->regexp[i]) {
+	    ss->re[i] = malloc(sizeof(regex_t));
+	    if (!ss->re) goto memerr;
+	    err = regcomp(ss->re[i], opts->regexp[i], REG_EXTENDED|REG_ICASE);
+	    if (err) {
+		message(LOG_ERR,"RegEx compiling error %d",err);
+		goto error;
+	    }
+	    if (Debug > 5) {
+		message(LOG_DEBUG,"regexp[%d]=%s",i,opts->regexp[i]);
+	    }
+	} else {
+	    ss->re[i] = NULL;
 	}
     }
     return ss;
@@ -2944,16 +2834,19 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 }
 
 void rmStoneSSL(StoneSSL *ss) {
+    int i;
     SSL_CTX_free(ss->ctx);
-    regfree(ss->re);
-    free(ss->re);
+    for (i=0; i < DEPTH_MAX; i++) {
+	if (ss->re[i]) {
+	    regfree(ss->re[i]);
+	    free(ss->re[i]);
+	}
+    }
     free(ss);
 }
 #endif
 
-int scanStones(rop,eop)
-fd_set *rop, *eop;
-{
+int scanStones(fd_set *rop, fd_set *eop) {
 #ifdef PTHREAD
     pthread_t thread;
     int err;
@@ -2984,7 +2877,7 @@ fd_set *rop, *eop;
     return 1;
 }
 
-void rmoldstone() {
+void rmoldstone(void) {
     Stone *stone, *next;
     stone = oldstones;
     oldstones = NULL;
@@ -3007,7 +2900,7 @@ void rmoldstone() {
     }
 }
 
-void rmoldconfig() {
+void rmoldconfig(void) {
     int i;
     for (i=0; i < OldConfigArgc; i++) {
 	free(OldConfigArgv[i]);
@@ -3017,7 +2910,7 @@ void rmoldconfig() {
     OldConfigArgv = NULL;
 }
 
-void repeater() {
+void repeater(void) {
     int ret;
     fd_set rout, wout, eout;
     struct timeval tv, *timeout;
@@ -3061,9 +2954,7 @@ void repeater() {
     if (OldConfigArgc) rmoldconfig();
 }
 
-int reusestone(stone)
-Stone *stone;
-{
+int reusestone(Stone *stone) {
     Stone *s;
     if (!oldstones) return 0;
     for (s=oldstones; s != NULL; s=s->next) {
@@ -3079,15 +2970,14 @@ Stone *stone;
 }
 
 /* make stone */
-Stone *mkstone(dhost,dport,host,port,nhosts,hosts,proto)
-char *dhost;	/* destination hostname */
-int dport;	/* destination port (host byte order) */
-char *host;	/* listening host */
-int port;	/* listening port (host byte order) */
-int nhosts;	/* # of hosts to permit */
-char *hosts[];	/* hosts to permit */
-int proto;	/* UDP/TCP/SSL */
-{
+Stone *mkstone(
+    char *dhost,	/* destination hostname */
+    int dport,		/* destination port (host byte order) */
+    char *host,		/* listening host */
+    int port,		/* listening port (host byte order) */
+    int nhosts,		/* # of hosts to permit */
+    char *hosts[],	/* hosts to permit */
+    int proto) {	/* UDP/TCP/SSL */
     Stone *stonep;
     struct sockaddr_in sin;
     char xhost[256], *p;
@@ -3228,12 +3118,10 @@ int proto;	/* UDP/TCP/SSL */
 
 /* main */
 
-void help(com)
-char *com;
-{
+void help(char *com) {
     message(LOG_INFO,"stone %s  http://www.gcd.org/sengoku/stone/",VERSION);
     message(LOG_INFO,"%s",
-	    "Copyright(C)2001 by Hiroaki Sengoku <sengoku@gcd.org>");
+	    "Copyright(C)2003 by Hiroaki Sengoku <sengoku@gcd.org>");
 #ifdef USE_SSL
     message(LOG_INFO,"%s",
 	    "using " OPENSSL_VERSION_TEXT "  http://www.openssl.org/");
@@ -3269,7 +3157,8 @@ char *com;
 	    "      -t <dir>          ; chroot to <dir>\n"
 #endif
 #ifdef USE_SSL
-	    "      -z <SSL>          ; OpenSSL option\n"
+	    "      -q <SSL>          ; SSL client option\n"
+	    "      -z <SSL>          ; SSL server option\n"
 #endif
 #ifdef UNIX_DAEMON
 	    "      -D                ; become UNIX Daemon\n"
@@ -3292,26 +3181,32 @@ char *com;
 	    " | /ssl"
 #endif
 	    " | /http | /base]\n"
-	    "xhost: <host>[/<mask>]\n",
-	    com);
+	    "xhost: <host>[/<mask>]\n"
+#ifdef USE_SSL
+	    "SSL:   default          ; reset to default\n"
+	    "       verbose          ; verbose mode\n"
+	    "       verify           ; require peer's certificate\n"
+	    "       re<n>=<regex>    ; verify depth <n> with <regex>\n"
+	    "       depth=<n>        ; set verification depth to <n>\n"
+	    "       key=<file>       ; key file\n"
+	    "       cert=<file>      ; certificate file\n"
+	    "       CAfile=<file>    ; certificate file of CA\n"
+	    "       CApath=<dir>     ; dir of CAs\n"
+	    "       cipher=<ciphers> ; list of ciphers\n"
+#endif
+	    , com);
 #endif
     exit(1);
 }
 
-static void skipcomment(fp)
-FILE *fp;
-{
+static void skipcomment(FILE *fp) {
     int c;
     while ((c=getc(fp)) != EOF && c != '\r' && c != '\n')	;
     while ((c=getc(fp)) != EOF && (c == '\r' || c == '\n'))	;
     if (c != EOF) ungetc(c,fp);
 }
 
-static int getvar(fp,buf,bufmax)
-FILE *fp;
-char *buf;
-int bufmax;
-{
+static int getvar(FILE *fp, char *buf, int bufmax) {
     char var[STRMAX];
     char *val;
     int i = 0;
@@ -3344,10 +3239,7 @@ int bufmax;
     return i;
 }
 
-static int gettoken(fp,buf)
-FILE *fp;
-char *buf;
-{
+static int gettoken(FILE *fp, char *buf) {
     int i = 0;
     int quote = 0;
     int c;
@@ -3396,7 +3288,7 @@ char *buf;
     return i;
 }
 
-FILE *openconfig() {
+FILE *openconfig(void) {
     int pfd[2];
     char host[MAXHOSTNAMELEN];
 #ifdef CPP
@@ -3468,7 +3360,7 @@ FILE *openconfig() {
 	return fopen(ConfigFile,"r");
 }
 
-void getconfig() {
+void getconfig(void) {
     FILE *fp;
     int nptr = 0;
     char **new;
@@ -3507,11 +3399,10 @@ void getconfig() {
     fclose(fp);
 }
 
-int getdist(p,portp,protop)
-char *p;
-int *portp;	/* host byte order */
-int *protop;
-{
+int getdist(
+    char *p,
+    int *portp,	/* host byte order */
+    int *protop) {
     char *port_str, *proto_str, *top;
     top = p;
     port_str = proto_str = NULL;
@@ -3569,9 +3460,7 @@ int *protop;
     }
 }
 
-char *argstr(p)
-char *p;
-{
+char *argstr(char *p) {
     char *ret = malloc(strlen(p)+1);
     char c, *q;
     if (ret == NULL) {
@@ -3598,9 +3487,10 @@ char *p;
 
 #ifdef USE_SSL
 void sslopts_default(SSLOpts *opts, int isserver) {
+    int i;
     opts->verbose = 0;
     opts->mode = SSL_VERIFY_NONE;
-    opts->depth = 9;
+    opts->depth = DEPTH_MAX - 1;
     opts->callback = verify_callback;
     if (isserver) {
 	char path[BUFMAX];
@@ -3611,7 +3501,7 @@ void sslopts_default(SSLOpts *opts, int isserver) {
     }
     opts->caFile = opts->caPath = NULL;
     opts->cipherList = getenv("SSL_CIPHER");
-    opts->regexp = NULL;
+    for (i=0; i < DEPTH_MAX; i++) opts->regexp[i] = NULL;
 }
 
 int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
@@ -3620,13 +3510,24 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	sslopts_default(opts,isserver);
     } else if (!strcmp(argv[i],"verbose")) {
 	opts->verbose++;
-    } else if (!strncmp(argv[i],"verify=",7)) {
+    } else if (!strcmp(argv[i],"verify")) {
 	if (isserver) {
 	    opts->mode = (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT);
 	} else {
 	    opts->mode = SSL_VERIFY_PEER;
 	}
-	opts->regexp = strdup(argv[i]+7);
+    } else if (!strncmp(argv[i],"re",2) && isdigit(argv[i][2])
+	       && argv[i][3] == '=') {
+	int depth = atoi(argv[i]+2);
+	if (0 <= depth && depth < DEPTH_MAX) {
+	    opts->regexp[depth] = strdup(argv[i]+4);
+	} else {
+	    goto error;
+	}
+    } else if (!strncmp(argv[i],"depth=",6)) {
+	opts->depth = atoi(argv[i]+6);
+	if (opts->depth >= DEPTH_MAX) opts->depth = DEPTH_MAX - 1;
+	else if (opts->depth < 0) opts->depth = 0;
     } else if (!strncmp(argv[i],"key=",4)) {
 	opts->keyFile = strdup(argv[i]+4);
     } else if (!strncmp(argv[i],"cert=",5)) {
@@ -3638,6 +3539,7 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
     } else if (!strncmp(argv[i],"cipher=",7)) {
 	opts->cipherList = strdup(argv[i]+7);
     } else {
+    error:
 	message(LOG_ERR,"Invalid SSL Option: %s",argv[i]);
 	help(argv[0]);
     }
@@ -3645,10 +3547,7 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 }
 #endif
 
-int doopts(argc,argv)
-int argc;
-char *argv[];
-{
+int doopts(int argc, char *argv[]) {
     int i;
     char *p;
     FILE *fp;
@@ -3776,11 +3675,7 @@ char *argv[];
     return i;
 }
 
-void doargs(argc,i,argv)
-int argc;
-int i;
-char *argv[];
-{
+void doargs(int argc, int i, char *argv[]) {
     Stone *stone;
     char *host, *shost;
     int port, sport;
@@ -3876,27 +3771,25 @@ char *argv[];
     }
 }
 
-void message_pairs() {	/* dump for debug */
+void message_pairs(void) {	/* dump for debug */
     Pair *pair;
     for (pair=pairs.next; pair != NULL; pair=pair->next) message_pair(pair);
 }
 
-void message_origins() {	/* dump for debug */
+void message_origins(void) {	/* dump for debug */
     Origin *origin;
     for (origin=origins.next; origin != NULL; origin=origin->next)
 	message_origin(origin);
 }
 
-void message_conns() {	/* dump for debug */
+void message_conns(void) {	/* dump for debug */
     Conn *conn;
     for (conn=conns.next; conn != NULL; conn=conn->next)
 	message_conn(conn);
 }
 
 #ifndef WINDOWS
-static void handler(sig,code)
-int sig, code;
-{
+static void handler(int sig) {
     static unsigned int g = 0;
     static int cnt = 0;
     int i;
@@ -3988,8 +3881,7 @@ int sig, code;
 #endif
 
 #ifdef UNIX_DAEMON
-void daemonize()
-{
+void daemonize(void) {
     pid_t pid;
     pid = fork();
     if (pid < 0) {
@@ -4011,10 +3903,7 @@ void daemonize()
 }
 #endif
 
-void initialize(argc,argv)
-int argc;
-char *argv[];
-{
+void initialize(int argc, char *argv[]) {
     int i, j;
     char display[256], *p;
     int proto;
@@ -4246,19 +4135,13 @@ long svc_main(HANDLE hStopEvent) {	/* Entry point for the service call */
     return hThread != NULL;
 }
 #else
-static void clear_args(argc,argv)
-int argc;
-char *argv[];
-{
+static void clear_args(int argc, char *argv[]) {
     char *argend = argv[argc-1] + strlen(argv[argc-1]);
     char *p;
     for (p=argv[1]; p < argend; p++) *p = '\0';	/* clear args */
 }
 
-int main(argc,argv)
-int argc;
-char *argv[];
-{
+int main(int argc, char *argv[]) {
     initialize(argc,argv);
     clear_args(argc,argv);
     for (;;) repeater();
