@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.38 2003/05/02 16:43:56 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.39 2003/05/03 03:47:25 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -275,7 +275,6 @@ typedef struct _Stone {
     SSL *ssl;			/* SSL handle */
     char *keyfile;
     char *certfile;
-    char *CAfile;
 #endif
     int nhosts;			/* # of hosts */
     XHost xhosts[0];		/* hosts permitted to connect */
@@ -1264,20 +1263,10 @@ Pair *pair;
     return 1;
 }
 
-int doSSL_accept(pair,key,cert,ca)
-Pair *pair;
-char *key;
-char *cert;
-char *ca;
-{
+int doSSL_accept(Pair *pair, char *key, char *cert) {
     int ret;
     pair->ssl = SSL_new(ssl_ctx_server);
     SSL_set_fd(pair->ssl,pair->sd);
-    if (ca && !SSL_CTX_load_verify_locations(ssl_ctx_server,ca,NULL)) {
-	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s) error",ca);
-	if (ssl_verbose_flag)
-	    message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
-    }
     if (!SSL_use_RSAPrivateKey_file(pair->ssl,key,X509_FILETYPE_PEM)) {
 	SSL *ssl = pair->ssl;
 	pair->ssl = NULL;
@@ -1711,8 +1700,7 @@ Stone *stonep;
 #ifdef USE_SSL
     pair1->ssl = pair2->ssl = NULL;
     if (stonep->proto & proto_ssl_s) {
-	ret = doSSL_accept(pair1,stonep->keyfile,stonep->certfile,
-			   stonep->CAfile);
+	ret = doSSL_accept(pair1,stonep->keyfile,stonep->certfile);
 	if (ret < 0) goto error;
     }
 #endif
@@ -3021,7 +3009,6 @@ int proto;	/* UDP/TCP/SSL */
 #ifdef USE_SSL
     stonep->keyfile = keyfile;
     stonep->certfile = certfile;
-    stonep->CAfile = CAfile;
 #endif
     stonep->timeout = PairTimeOut;
     bzero((char *)&sin,sizeof(sin)); /* clear sin struct */
@@ -3528,11 +3515,7 @@ char *argv[];
     } else if (!strcmp(argv[i],"verbose")) {
 	ssl_verbose_flag++;
     } else if (!strncmp(argv[i],"CAfile=",7)) {
-	if (argv[i+7]) {
-	    CAfile = strdup(argv[i]+7);
-	} else {
-	    CAfile = NULL;
-	}
+	CAfile = strdup(argv[i]+7);
     } else {
 	message(LOG_ERR,"Invalid SSL Option: %s",argv[i]);
 	help(argv[0]);
@@ -3982,6 +3965,11 @@ char *argv[];
     SSL_CTX_set_mode(ssl_ctx_server,SSL_MODE_ENABLE_PARTIAL_WRITE);
     SSL_CTX_set_mode(ssl_ctx_client,SSL_MODE_ENABLE_PARTIAL_WRITE);
     if (!cipher_list) cipher_list = getenv("SSL_CIPHER");
+    if (CAfile && !SSL_CTX_load_verify_locations(ssl_ctx_server,CAfile,NULL)) {
+	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s) error",CAfile);
+	if (ssl_verbose_flag)
+	    message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
+    }
 #endif
     pairs.next = NULL;
     conns.next = NULL;
