@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.138 2004/08/09 03:56:33 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.139 2004/08/09 15:30:37 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1547,7 +1547,7 @@ int trySSL_accept(Pair *pair) {
 		SSL_in_accept_init(pair->ssl));
     if (ret < 0) {
 	err = SSL_get_error(pair->ssl, ret);
-	if (err== SSL_ERROR_NONE
+	if (err == SSL_ERROR_NONE
 		|| err == SSL_ERROR_WANT_READ
 		|| err == SSL_ERROR_WANT_WRITE) {
 	    if (Debug > 4)
@@ -1558,10 +1558,20 @@ int trySSL_accept(Pair *pair) {
 	} else if (err) {
 	    SSL *ssl = pair->ssl;
 	    pair->ssl = NULL;
-	    message(LOG_ERR, "TCP %d: SSL_accept error err=%d", pair->sd, err);
-	    if (pair->stone->ssl_server->verbose)
-		message(LOG_INFO, "TCP %d: %s",
-			pair->sd, ERR_error_string(err, NULL));
+	    if (err == SSL_ERROR_SYSCALL) {
+#ifdef WINDOWS
+		errno = WSAGetLastError();
+#endif
+		message(LOG_ERR,
+			"TCP %d: SSL_accept I/O error err=%d errno=%d",
+			pair->sd, ERR_get_error(), errno);
+	    } else {
+		message(LOG_ERR, "TCP %d: SSL_accept error err=%d",
+			pair->sd, err);
+		if (pair->stone->ssl_server->verbose)
+		    message(LOG_INFO, "TCP %d: %s",
+			    pair->sd, ERR_error_string(err, NULL));
+	    }
 	    message_pair(pair);
 	    SSL_free(ssl);
 	    rmMatch(pair);
@@ -3827,15 +3837,7 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
 	    ss->re[i] = NULL;
 	}
     }
-    if (isserver) {
-	char str[SSL_MAX_SSL_SESSION_ID_LENGTH+1];
-	snprintf(str, SSL_MAX_SSL_SESSION_ID_LENGTH, "%lx",
-		 (long)ss->ctx ^ (long)&stones ^ MyPid);	/* randomize */
-	SSL_CTX_set_session_id_context(ss->ctx, str, strlen(str));
-	if (Debug > 1) {
-	    message(LOG_DEBUG, "SSL session ID: %s", str);
-	}
-    }
+    SSL_CTX_set_session_cache_mode(ss->ctx, SSL_SESS_CACHE_OFF);
     return ss;
  error:
     if (opts->verbose)
