@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.37 2003/05/02 13:29:25 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.38 2003/05/02 16:43:56 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1702,11 +1702,20 @@ Stone *stonep;
 		    proto_first_r | proto_first_w | proto_source);
     pair1->count = 0;
     pair1->start = 0;
+    pair1->len = 0;
     pair1->p = NULL;
     pair1->log = NULL;
     time(&pair1->clock);
     pair1->timeout = stonep->timeout;
-    pair1->pair = pair2;
+    pair1->pair = NULL;
+#ifdef USE_SSL
+    pair1->ssl = pair2->ssl = NULL;
+    if (stonep->proto & proto_ssl_s) {
+	ret = doSSL_accept(pair1,stonep->keyfile,stonep->certfile,
+			   stonep->CAfile);
+	if (ret < 0) goto error;
+    }
+#endif
     pair2->sd = socket(AF_INET,SOCK_STREAM,0);
     if (InvalidSocket(pair2->sd)) {
 #ifdef WINDOWS
@@ -1719,27 +1728,14 @@ Stone *stonep;
 		    proto_first_r | proto_first_w);
     pair2->count = 0;
     pair2->start = 0;
+    pair2->len = 0;
     pair2->p = NULL;
     pair2->log = NULL;
     time(&pair2->clock);
     pair2->timeout = stonep->timeout;
     pair2->pair = pair1;
-    pair1->len = pair2->len = 0;
-    ret = 1;
-#ifdef USE_SSL
-    pair1->ssl = pair2->ssl = NULL;
-    if (stonep->proto & proto_ssl_s) {
-	ret = doSSL_accept(pair1,stonep->keyfile,stonep->certfile,
-			   stonep->CAfile);
-	if (ret < 0) {
-	    closesocket(nsd);
-	    free(pair1);
-	    free(pair2);
-	    return NULL;
-	}
-    }
-#endif
-    if (ret > 0) pair1->proto |= proto_connect;
+    pair1->pair = pair2;
+    pair1->proto |= proto_connect;
     return pair1;
 }
 
