@@ -11,10 +11,12 @@ shift
 stone=stone22
 stones=stone22s
 stonent=stone22nt
+stonez=stone22z
 if [ -n "$1" ]
 then	stamp=$1
 fi
-rm -rf stone-$ver stone-$ver.lzh stones-$ver.lzh stonent-$ver.lzh
+rm -rf stone-$ver stone-$ver.lzh stones-$ver.lzh stonent-$ver.lzh \
+	stone_${ver}_arm stone_${ver}_arm.ipk
 
 nkf_s() {
 	nkf -sc $1 > $2/$1
@@ -54,8 +56,26 @@ nkf_s	svcbody.h	$stonent
 mkdir stone-$ver
 cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt logmsg.mc service.c service.h svcbody.c svcbody.h stone-$ver/.
 sed -e "s/^Version: .*/Version: $ver/" stone.spec > stone-$ver/stone.spec
+
+mkdir -p stone_${ver}_arm/CONTROL
+cat > stone_${ver}_arm/CONTROL/control <<EOF
+Package: stone
+Version: $ver
+Architecture: arm
+Section: net
+Priority: optional
+Depends: openssl (>=0.9.7)
+Maintainer: Hiroaki Sengoku <sengoku@gcd.org>
+Description: TCP/UDP repeater
+	Stone is a TCP/IP packet repeater in the application layer.
+	It repeats TCP and UDP packets from inside to outside of a firewall,
+	or from outside to inside.  Refer http://www.gcd.org/sengoku/stone/
+EOF
+mkdir -p stone_${ver}_arm/usr/local/bin
+cp -p $stonez/stone stone_${ver}_arm/usr/local/bin/stone
+
 if [ -n "$stamp" ]
-then	touch -t $stamp $stone $stones $stonent stone-$ver  \
+then	touch -t $stamp  \
 		$stone/README.*  $stones/README.*  $stonent/README.*  \
 		$stone/stone.c   $stones/stone.c   $stonent/stone.c   \
 		$stone/stone.exe $stones/stone.exe $stonent/stone.exe \
@@ -70,11 +90,17 @@ then	touch -t $stamp $stone $stones $stonent stone-$ver  \
 		stone-$ver/logmsg.mc \
 		stone-$ver/service.c stone-$ver/service.h \
 		stone-$ver/svcbody.c stone-$ver/svcbody.h \
-		README.* stone.c Makefile
+		README.* stone.c Makefile \
+		stone_${ver}_arm/CONTROL/control \
+		stone_${ver}_arm/usr/local/bin/stone
+	find $stone $stones $stonent stone-$ver stone_${ver}_arm -type d \
+		| xargs touch -t $stamp
 	tar czf stone-$ver.tar.gz stone-$ver
 	lha u stone-$ver.lzh $stone
 	lha u stones-$ver.lzh $stones
 	lha u stonent-$ver.lzh $stonent
+	ipkg-build stone_${ver}_arm
 	touch -t $stamp stone-$ver.tar.gz \
-		stone-$ver.lzh stones-$ver.lzh stonent-$ver.lzh
+		stone-$ver.lzh stones-$ver.lzh stonent-$ver.lzh \
+		stone_${ver}_arm.ipk
 fi
