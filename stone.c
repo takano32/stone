@@ -2603,7 +2603,7 @@ Pair *pair;
     if (Debug > 10) select_debug("selectReadWrite1",&ri,&wi,&ei);
     while (ro=ri, wo=wi, eo=ei, select(FD_SETSIZE,&ro,&wo,&eo,&tv) > 0) {
 	for (i=0; i < npairs; i++) {
-	    if (!p[i]) continue;
+	    if (!p[i] || (p[i]->proto & proto_close)) continue;
 	    sd = p[i]->sd;
 	    if (InvalidSocket(sd)) continue;
 	    if (FD_ISSET(sd,&eo)) {	/* exception */
