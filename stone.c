@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.72 2003/09/11 09:00:34 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.73 2003/09/17 05:57:56 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -4028,6 +4028,7 @@ void doargs(int argc, int i, char *argv[]) {
 	}
 	stone->next = stones;
 	stones = stone;
+	proto = sproto = dproto = proto_tcp;	/* default: TCP */
     }
     for (stone=stones; stone != NULL; stone=stone->next) {
 	FdSet(stone->sd,&rin);
