@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.151 2004/08/30 11:24:54 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.152 2004/08/30 15:20:05 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2056,10 +2056,12 @@ void asyncConn(Conn *conn) {
     if (p2 == NULL) goto finish;
     time(&clock);
     if (Debug > 8) message(LOG_DEBUG, "asyncConn...");
-    if (p1->stone->backups) {
-	int ofs = p1->clock % p1->stone->nsins;	/* round robin */
+    if (p1->stone->backups) {	/* round robin */
+	int ofs = (p1->stone->proto & state_mask) % p1->stone->nsins;
 	conn->sin = p1->stone->sins[ofs];
 	backup = p1->stone->backups[ofs];
+	p1->stone->proto = ((p1->stone->proto & ~state_mask)
+			    | ((ofs+1) & state_mask));
     }
 #ifdef USE_SSL
     if (p2->ssl_flag & sf_intr)
