@@ -1326,7 +1326,9 @@ struct sockaddr_in *sinp;	/* connect to */
     Pair *p = pair->pair;
     if (!(pair->proto & proto_ssl_intr)) {
 	ret = connect(pair->sd,(struct sockaddr*)sinp,sizeof(*sinp));
+#ifndef WINDOWS
 	fcntl(pair->sd,F_SETFL,O_NONBLOCK);
+#endif
 	if (pair->proto & proto_close) return -1;
 	if (ret < 0) {
 #ifdef WINDOWS
@@ -1539,7 +1541,9 @@ Stone *stonep;
     pair1 = pair2 = NULL;
     len = sizeof(from);
     nsd = accept(stonep->sd,(struct sockaddr*)&from,&len);
+#ifndef WINDOWS
     fcntl(nsd,F_SETFL,O_NONBLOCK);
+#endif
     waitMutex(FdRinMutex);
     FD_SET(stonep->sd,&rin);
     freeMutex(FdRinMutex);
