@@ -159,7 +159,7 @@ mingw-pop:
 	$(MAKE) CC=gcc TARGET=mingw pop_stone
 
 mingw-ssl:
-	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="-LC:/mingw/lib/openssl -lssl32 -leay32" mingw
+	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="-LC:/mingw/lib/openssl -lssl32 -leay32 -lregex" mingw
 
 emx:
 	$(MAKE) CC=gcc FLAGS="-DOS2 -Zmts -Zsysv-signals $(FLAGS)" LIBS="$(LIBS) -lsocket" stone.exe
