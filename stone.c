@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.1x"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.42 2003/05/04 09:59:48 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.43 2003/05/04 14:24:54 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -237,6 +237,12 @@ typedef int SOCKET;
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
+#include <regex.h>
+
+typedef struct {
+    SSL_CTX *ctx;
+    regex_t *re;
+} StoneSSL;
 
 typedef struct {
     int verbose;
@@ -248,10 +254,12 @@ typedef struct {
     char *caFile;
     char *caPath;
     char *cipherList;
+    char *regexp;
 } SSLOpts;
 
 SSLOpts ServerOpts;
 SSLOpts ClientOpts;
+int PairIndex;
 
 #include <openssl/md5.h>
 #define MD5Init		MD5_Init
@@ -282,8 +290,8 @@ typedef struct _Stone {
     int timeout;
     struct _Stone *next;
 #ifdef USE_SSL
-    SSL_CTX *ssl_ctx_server;
-    SSL_CTX *ssl_ctx_client;
+    StoneSSL *ssl_server;
+    StoneSSL *ssl_client;
 #endif
     int nhosts;			/* # of hosts */
     XHost xhosts[0];		/* hosts permitted to connect */
@@ -1272,7 +1280,8 @@ Pair *pair;
 
 int doSSL_accept(Pair *pair) {
     int ret;
-    pair->ssl = SSL_new(pair->stone->ssl_ctx_server);
+    pair->ssl = SSL_new(pair->stone->ssl_server->ctx);
+    SSL_set_ex_data(pair->ssl, PairIndex, pair);
     SSL_set_fd(pair->ssl,pair->sd);
     ret = trySSL_accept(pair);
     return ret;
@@ -1283,7 +1292,8 @@ Pair *pair;
 {
     int err, ret;
     if (!(pair->proto & proto_ssl_intr)) {
-	pair->ssl = SSL_new(pair->stone->ssl_ctx_client);
+	pair->ssl = SSL_new(pair->stone->ssl_client->ctx);
+	SSL_set_ex_data(pair->ssl, PairIndex, pair);
 	SSL_set_fd(pair->ssl,pair->sd);
     } else {
 	if (SSL_want_nothing(pair->ssl)) goto finished;
@@ -2836,51 +2846,108 @@ fd_set *rop, *wop, *eop;
 /* stone */
 
 #ifdef USE_SSL
-SSL_CTX *mkSSL_CTX(SSLOpts *opts, int isserver) {
-    SSL_CTX *ctx;
-    if (isserver) {
-	ctx = SSL_CTX_new(SSLv23_server_method());
-    } else {
-	ctx = SSL_CTX_new(SSLv23_client_method());
+static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
+    X509 *err_cert;
+    int err, depth;
+    SSL *ssl;
+    Pair *pair;
+    char buf[BUFMAX];
+    char *p;
+    regex_t *re;
+    err_cert = X509_STORE_CTX_get_current_cert(ctx);
+    err = X509_STORE_CTX_get_error(ctx);
+    depth = X509_STORE_CTX_get_error_depth(ctx);
+    ssl = X509_STORE_CTX_get_ex_data
+		(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+    pair = SSL_get_ex_data(ssl, PairIndex);
+    if (!pair) {
+	message(LOG_ERR,"SSL callback don't have ex_data, verify fails...");
+	return 0;	/* always fail */
     }
-    if (!ctx) {
+    p = X509_NAME_oneline(X509_get_subject_name(err_cert), buf, BUFMAX-1);
+    if (Debug > 3) {
+	message(LOG_DEBUG,"TCP %d: callback: err=%d, depth=%d, preverify=%d",
+		pair->sd, err, depth, preverify_ok);
+	if (p) message(LOG_DEBUG,"[err_cert=%s]",p);
+    }
+    if (!preverify_ok) return 0;
+    if (pair->proto & proto_source) {
+	re = pair->stone->ssl_server->re;
+    } else {
+	re = pair->stone->ssl_client->re;
+    }
+    if (depth > 0) return 1;
+    err = regexec(re, p, (size_t)0, 0, 0);
+    if (Debug > 2) message(LOG_DEBUG,"TCP %d: regexec=%d",pair->sd,err);
+    return !err;
+}
+
+StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
+    StoneSSL *ss;
+    int err;
+    ss = malloc(sizeof(StoneSSL));
+    if (!ss) {
+    memerr:
+	message(LOG_ERR,"Out of memory.");
+	exit(1);
+    }
+    if (isserver) {
+	ss->ctx = SSL_CTX_new(SSLv23_server_method());
+    } else {
+	ss->ctx = SSL_CTX_new(SSLv23_client_method());
+    }
+    if (!ss->ctx) {
 	message(LOG_ERR,"SSL_CTX_new error");
 	goto error;
     }
-    SSL_CTX_set_mode(ctx,SSL_MODE_ENABLE_PARTIAL_WRITE);
-    SSL_CTX_set_verify(ctx,opts->mode,opts->callback);
-    SSL_CTX_set_verify_depth(ctx,opts->depth);
+    SSL_CTX_set_mode(ss->ctx,SSL_MODE_ENABLE_PARTIAL_WRITE);
+    SSL_CTX_set_verify(ss->ctx,opts->mode,opts->callback);
+    SSL_CTX_set_verify_depth(ss->ctx,opts->depth);
     if ((opts->caFile || opts->caPath)
-	&& !SSL_CTX_load_verify_locations(ctx,opts->caFile,opts->caPath)) {
+	&& !SSL_CTX_load_verify_locations(ss->ctx,opts->caFile,opts->caPath)) {
 	message(LOG_ERR,"SSL_CTX_load_verify_locations(%s,%s) error",
 		opts->caFile,opts->caPath);
 	goto error;
     }
     if (opts->keyFile
-	&& !SSL_CTX_use_PrivateKey_file(ctx,opts->keyFile,X509_FILETYPE_PEM)) {
+	&& !SSL_CTX_use_PrivateKey_file
+		(ss->ctx,opts->keyFile,X509_FILETYPE_PEM)) {
 	message(LOG_ERR,"SSL_CTX_use_PrivateKey_file(%s) error",opts->keyFile);
 	goto error;
     }
     if (opts->certFile
-	&& !SSL_CTX_use_certificate_file(ctx,opts->certFile,
+	&& !SSL_CTX_use_certificate_file(ss->ctx,opts->certFile,
 					 X509_FILETYPE_PEM)) {
 	message(LOG_ERR,"SSL_CTX_use_certificate_file(%s) error",
 		opts->certFile);
 	goto error;
     }
     if (opts->cipherList
-	&& !SSL_CTX_set_cipher_list(ctx,opts->cipherList)) {
+	&& !SSL_CTX_set_cipher_list(ss->ctx,opts->cipherList)) {
 	message(LOG_ERR,"SSL_CTX_set_cipher_list(%s) error",opts->cipherList);
 	goto error;
     }
-    return ctx;
+    if (opts->regexp) {
+	ss->re = malloc(sizeof(regex_t));
+	if (!ss->re) goto memerr;
+	err = regcomp(ss->re, opts->regexp, REG_EXTENDED|REG_ICASE);
+	if (err) {
+	    message(LOG_ERR,"RegEx compiling error %d",err);
+	    goto error;
+	}
+    }
+    return ss;
  error:
     if (opts->verbose)
 	message(LOG_INFO,"%s",ERR_error_string(ERR_get_error(),NULL));
-    if (ctx) {
-	SSL_CTX_free(ctx);
-    }
     exit(1);
+}
+
+void rmStoneSSL(StoneSSL *ss) {
+    SSL_CTX_free(ss->ctx);
+    regfree(ss->re);
+    free(ss->re);
+    free(ss);
 }
 #endif
 
@@ -2933,8 +3000,8 @@ void rmoldstone() {
 	    closesocket(stone->sd);
 	}
 #ifdef USE_SSL
-	if (stone->ssl_ctx_server) SSL_CTX_free(stone->ssl_ctx_server);
-	if (stone->ssl_ctx_client) SSL_CTX_free(stone->ssl_ctx_client);
+	if (stone->ssl_server) rmStoneSSL(stone->ssl_server);
+	if (stone->ssl_client) rmStoneSSL(stone->ssl_client);
 #endif
 	free(stone);
     }
@@ -3093,14 +3160,14 @@ int proto;	/* UDP/TCP/SSL */
     }
 #ifdef USE_SSL
     if (proto & proto_ssl_s) {	/* server side SSL */
-	stonep->ssl_ctx_server = mkSSL_CTX(&ServerOpts,1);
+	stonep->ssl_server = mkStoneSSL(&ServerOpts,1);
     } else {
-	stonep->ssl_ctx_server = NULL;
+	stonep->ssl_server = NULL;
     }
     if (proto & proto_ssl_d) {	/* client side SSL */
-	stonep->ssl_ctx_client = mkSSL_CTX(&ClientOpts,0);
+	stonep->ssl_client = mkStoneSSL(&ClientOpts,0);
     } else {
-	stonep->ssl_ctx_client = NULL;
+	stonep->ssl_client = NULL;
     }
 #endif
     for (i=0; i < nhosts; i++) {
@@ -3534,7 +3601,7 @@ void sslopts_default(SSLOpts *opts, int isserver) {
     opts->verbose = 0;
     opts->mode = SSL_VERIFY_NONE;
     opts->depth = 9;
-    opts->callback = NULL;
+    opts->callback = verify_callback;
     if (isserver) {
 	char path[BUFMAX];
 	snprintf(path,BUFMAX-1,"%s/stone.pem",X509_get_default_cert_dir());
@@ -3544,6 +3611,7 @@ void sslopts_default(SSLOpts *opts, int isserver) {
     }
     opts->caFile = opts->caPath = NULL;
     opts->cipherList = getenv("SSL_CIPHER");
+    opts->regexp = NULL;
 }
 
 int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
@@ -3552,12 +3620,13 @@ int sslopts(int argc, int i, char *argv[], SSLOpts *opts, int isserver) {
 	sslopts_default(opts,isserver);
     } else if (!strcmp(argv[i],"verbose")) {
 	opts->verbose++;
-    } else if (!strncmp(argv[i],"verify",6)) {
+    } else if (!strncmp(argv[i],"verify=",7)) {
 	if (isserver) {
-	    opts->mode = (SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE);
+	    opts->mode = (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT);
 	} else {
 	    opts->mode = SSL_VERIFY_PEER;
 	}
+	opts->regexp = strdup(argv[i]+7);
     } else if (!strncmp(argv[i],"key=",4)) {
 	opts->keyFile = strdup(argv[i]+4);
     } else if (!strncmp(argv[i],"cert=",5)) {
@@ -3980,6 +4049,7 @@ char *argv[];
 #ifdef USE_SSL
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
+    PairIndex = SSL_get_ex_new_index(0, "Pair index", NULL, NULL, NULL);
     sslopts_default(&ServerOpts,1);
     sslopts_default(&ClientOpts,0);
 #endif
