@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.192 2004/09/28 13:50:58 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.193 2004/10/03 03:22:29 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -664,9 +664,14 @@ void message(int pri, char *fmt, ...) {
 #endif
 }
 
-TimeLog *message_time(int pri, char *fmt, ...) {
+void message_time(Pair *pair, int pri, char *fmt, ...) {
     char str[BUFMAX];
     TimeLog *log;
+    log = pair->log;
+    if (log) {
+	pair->log = NULL;
+	free(log);
+    }
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(str, BUFMAX-1, fmt, ap);
@@ -676,8 +681,8 @@ TimeLog *message_time(int pri, char *fmt, ...) {
 	time(&log->clock);
 	log->pri = pri;
 	strcpy(log->str, str);
+	pair->log = log;
     }
-    return log;
 }
 
 int priority(Pair *pair) {
@@ -2466,11 +2471,16 @@ int getident(char *str, struct sockaddr *sa, socklen_t salen, int cport) {
     SOCKET sd;
     struct sockaddr_storage sas;
     int sport;
-    char addr[STRMAX];
     char buf[BUFMAX];
     char c;
     int len;
     int ret;
+    char addr[STRMAX];
+#ifdef WINDOWS
+    u_long param;
+#endif
+    time_t start, now;
+    time(&start);
     bcopy(sa, &sas, salen);
     if (str) {
 	str[0] = '\0';
@@ -2487,8 +2497,9 @@ int getident(char *str, struct sockaddr *sa, socklen_t salen, int cport) {
     }
     switch (sa->sa_family) {
     case AF_INET:
-	sport = ((struct sockaddr_in*)sa)->sin_port;
-	((struct sockaddr_in*)sa)->sin_port = htons(113); /* ident protocol */
+	sport = ntohs(((struct sockaddr_in*)sa)->sin_port);
+	((struct sockaddr_in*)&sas)->sin_port
+	    = htons(113); /* ident protocol */
 	break;
     default:
 	message(LOG_DEBUG, "ident: unknown family=%d", sa->sa_family);
@@ -2496,15 +2507,41 @@ int getident(char *str, struct sockaddr *sa, socklen_t salen, int cport) {
 	return 0;
     }
     addr2str(sa, salen, addr, STRMAX, 0);
-    if (connect(sd, (struct sockaddr*)&sas, salen) < 0) {
+#ifdef WINDOWS
+    param = 1;
+    ioctlsocket(sd, FIONBIO, &param);
+#else
+    fcntl(sd, F_SETFL, O_NONBLOCK);
+#endif
+    ret = connect(sd, (struct sockaddr*)&sas, salen);
+    if (ret < 0) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
 #endif
-	if (Debug > 0)
-	    message(LOG_DEBUG, "ident: can't connect to %s, err=%d",
-		    addr, errno);
-	closesocket(sd);
-	return 0;
+	if (errno == EINPROGRESS) {
+	    fd_set wout;
+	    struct timeval tv;
+	    do {
+		time(&now);
+		if (now - start >= CONN_TIMEOUT) {
+		    if (Debug > 0)
+			message(LOG_DEBUG, "ident: connect to %s, timeout",
+				addr);
+		    goto error;
+		}
+		tv.tv_sec = 1;
+		tv.tv_usec = 0;
+		FD_ZERO(&wout);
+		FdSet(sd, &wout);
+	    } while (select(FD_SETSIZE, NULL, &wout, NULL, &tv) == 0);
+	} else {
+	    if (Debug > 0)
+		message(LOG_DEBUG, "ident: can't connect to %s, err=%d",
+			addr, errno);
+	error:
+	    closesocket(sd);
+	    return 0;
+	}
     }
     snprintf(buf, BUFMAX-1, "%d, %d%c%c", sport, cport, '\r', '\n');
     len = strlen(buf);
@@ -3361,7 +3398,7 @@ int proxyCONNECT(Pair *pair, char *parm, int start) {
     int port = 443;	/* host byte order */
     char *r = parm;
     Pair *p;
-    pair->log = message_time(LOG_INFO, "CONNECT %s", parm);
+    message_time(pair, LOG_INFO, "CONNECT %s", parm);
     while (*r) {
 	if (isspace(*r)) {
 	    *r = '\0';
@@ -3427,12 +3464,12 @@ int proxyCommon(Pair *pair, char *parm, int start) {
 }
 
 int proxyGET(Pair *pair, char *parm, int start) {
-    pair->log = message_time(LOG_INFO, "GET %s", parm);
+    message_time(pair, LOG_INFO, "GET %s", parm);
     return proxyCommon(pair, parm, start);
 }
 
 int proxyPOST(Pair *pair, char *parm, int start) {
-    pair->log = message_time(LOG_INFO, "POST %s", parm);
+    message_time(pair, LOG_INFO, "POST %s", parm);
     return proxyCommon(pair, parm, start);
 }
 
@@ -3499,7 +3536,7 @@ int popPASS(Pair *pair, char *parm, int start) {
     for (i=0; i < DIGEST_LEN; i++) {
 	sprintf(pair->buf + ulen + i*2, "%02x", digest[i]);
     }
-    pair->log = message_time(LOG_INFO, "POP -> %s", pair->buf);
+    message_time(pair, LOG_INFO, "POP -> %s", pair->buf);
     strcat(pair->buf, "\r\n");
     pair->start = 0;
     pair->len = strlen(pair->buf);
@@ -3519,7 +3556,7 @@ int popCAPA(Pair *pair, char *parm, int start) {
 }
 
 int popAPOP(Pair *pair, char *parm, int start) {
-    pair->log = message_time(LOG_INFO, "APOP %s", parm);
+    message_time(pair, LOG_INFO, "APOP %s", parm);
     pair->len += pair->start - start;
     pair->start = start;
     return 0;
@@ -3826,7 +3863,8 @@ int first_read(Pair *pair) {
 	}
     }
 #ifdef USE_POP
-    if ((pair->proto & proto_command) == command_pop) {	/* apop */
+    if ((pair->proto & proto_command) == command_pop	/* apop */
+	&& pair->p == NULL) {
 	int i;
 	char *q;
 	for (i=p->start; i < p->start + p->len; i++) {
