@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.119 2004/02/13 14:27:36 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.120 2004/03/04 07:48:08 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -737,11 +737,21 @@ int str2port(char *str, int flag) {	/* host byte order */
 }
 
 int isdigitaddr(char *name) {
+    int ndigits = 0;
+    int isdot = 1;
     while(*name) {
-	if (*name != '.' && !isdigit(*name)) return 0;	/* not digit */
+	if (*name == '.') {
+	    if (isdot) return 0;	/* `.' appears twice */
+	    isdot = 1;
+	} else if (isdigit(*name)) {
+	    if (isdot) ndigits++;
+	    isdot = 0;
+	} else {
+	    return 0;	/* not digit nor dot */
+	}
 	name++;
     }
-    return 1;
+    return ndigits;
 }
 
 #ifdef INET_ADDR
@@ -3794,8 +3804,18 @@ Stone *mkstone(
 	strcpy(xhost, hosts[i]);
 	p = strchr(xhost, '/');
 	if (p != NULL) {
+	    int ndigits;
 	    *p++ = '\0';
-	    if (!host2addr(p, &stonep->xhosts[i].mask, NULL)) {
+	    ndigits = isdigitaddr(p);
+	    if (ndigits == 1) {
+		int nbits = atoi(p);
+		if (nbits <= 0 || 32 < nbits) {
+		    message(LOG_ERR, "Illegal netmask: %s", p);
+		    exit(1);
+		}
+		stonep->xhosts[i].mask.s_addr
+		    = htonl((u_long)~0 << (32 - nbits));
+	    } else if (!host2addr(p, &stonep->xhosts[i].mask, NULL)) {
 		exit(1);
 	    }
 	} else {
