@@ -1576,7 +1576,7 @@ Stone *stonep;
 	    return NULL;
 	}
 #ifndef NO_FORK
-	else if (errno == EBADF && NForks > 0 && Debug <= 0) {
+	else if (errno == EBADF && NForks > 0 && Debug < 5) {
 	    return NULL;
 	}
 #endif
@@ -2622,6 +2622,7 @@ Pair *pair;
 			first_flag = (rPair->proto & proto_first_r);
 			if (first_flag) len = first_read(rPair,&ri,&wi);
 			if (len > 0 && ValidSocket(wsd)
+			    && (wPair->proto & proto_connect)
 			    && !(wPair->proto & proto_close)
 			    && !(rPair->proto & proto_close)) {
 			    FD_SET(wsd,&wi);
@@ -2657,6 +2658,7 @@ Pair *pair;
 			if (wPair->proto & proto_first_w)
 			    wPair->proto &= ~proto_first_w;
 			if (rPair && ValidSocket(rsd)
+			    && (rPair->proto & proto_connect)
 			    && !(rPair->proto & proto_close)
 			    && !(wPair->proto & proto_close)) {
 			    FD_SET(rsd,&ri);
