@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.185 2004/09/23 07:21:26 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.186 2004/09/23 08:14:30 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -464,9 +464,10 @@ const int proto_select_r =	   0x40000;	  /* select to read */
 const int proto_select_w =	   0x80000;	  /* select to write */
 const int proto_shutdown =	  0x100000;	  /* sent shutdown */
 const int proto_close =	  	  0x200000;	  /* request to close */
-const int proto_eof =		  0x400000;	  /* EOF */
+const int proto_eof =		  0x400000;	  /* EOF was received */
 const int proto_error =		  0x800000;	  /* error reported */
 const int proto_thread =	 0x1000000;	  /* on thread */
+const int proto_conninprog =	 0x2000000;	  /* connect in progress */
 const int proto_ohttp_s =	 0x4000000;	/* over http source */
 const int proto_ohttp_d =	 0x8000000;	/*           destination */
 const int proto_base_s =	0x10000000;	/* base64 source */
@@ -2156,9 +2157,6 @@ void connected(Pair *pair) {
 		p->sd, pair->sd);
     time(&lastEstablished);
     /* now successfully connected */
-#ifndef WINDOWS
-    fcntl(pair->sd, F_SETFL, O_NONBLOCK);
-#endif
 #ifdef USE_SSL
     if (pair->stone->proto & proto_ssl_d) {
 	if (doSSL_connect(pair) < 0) {
@@ -2335,6 +2333,9 @@ void asyncConn(Conn *conn) {
     /*
       now destination is determined, engage
     */
+#ifndef WINDOWS
+    fcntl(p1->sd, F_SETFL, O_NONBLOCK);
+#endif
     addrport2str(&conn->sin, sizeof(conn->sin),
 		 p1->proto, proto_all, addrport, STRMAX);
     if (Debug > 2)
@@ -2345,7 +2346,12 @@ void asyncConn(Conn *conn) {
 #ifdef WINDOWS
 	errno = WSAGetLastError();
 #endif
-	if (errno == EINTR) {
+	if (errno == EINPROGRESS) {
+	    p1->proto |= proto_conninprog;
+	    if (Debug > 3)
+		message(LOG_DEBUG, "TCP %d: connection in progress", p1->sd);
+	    goto finish;
+	} else if (errno == EINTR) {
 	    if (Debug > 4)
 		message(LOG_DEBUG, "TCP %d: connect interrupted", p1->sd);
 	    if (clock - p1->clock < CONN_TIMEOUT) {
@@ -3831,8 +3837,10 @@ void proto2fdset(Pair *pair, int isthread,
     sd = pair->sd;
     if (InvalidSocket(sd)) return;
     if (!isthread && (pair->proto & proto_thread)) return;
+    if (pair->proto & proto_conninprog) {
+	FdSet(sd, woutp);
 #ifdef USE_SSL
-    if (pair->ssl_flag & (sf_sb_on_r | sf_sb_on_w)) {
+    } else if (pair->ssl_flag & (sf_sb_on_r | sf_sb_on_w)) {
 	FD_CLR(sd, routp);
 	FD_CLR(sd, woutp);
 	if (pair->ssl_flag & sf_sb_on_r) FdSet(sd, routp);
@@ -3860,22 +3868,21 @@ void proto2fdset(Pair *pair, int isthread,
 	FD_CLR(sd, woutp);
 	if (pair->ssl_flag & (sf_cb_on_r)) FdSet(sd, routp);
 	if (pair->ssl_flag & (sf_cb_on_w)) FdSet(sd, woutp);
-    } else
 #endif
-	if ((pair->proto & proto_connect) && !(pair->proto & proto_close)) {
-	    int isset = 0;
-	    if (!(pair->proto & proto_eof)
-		&& (pair->proto & proto_select_r)) {
-		FdSet(sd, routp);
-		isset = 1;
-	    }
-	    if (!(pair->proto & proto_shutdown)
-		&& (pair->proto & proto_select_w)) {
-		FdSet(sd, woutp);
-		isset = 1;
-	    }
-	    if (isset) FdSet(sd, eoutp);
+    } else if ((pair->proto & proto_connect) && !(pair->proto & proto_close)) {
+	int isset = 0;
+	if (!(pair->proto & proto_eof)
+	    && (pair->proto & proto_select_r)) {
+	    FdSet(sd, routp);
+	    isset = 1;
 	}
+	if (!(pair->proto & proto_shutdown)
+	    && (pair->proto & proto_select_w)) {
+	    FdSet(sd, woutp);
+	    isset = 1;
+	}
+	if (isset) FdSet(sd, eoutp);
+    }
 }
 
 void asyncReadWrite(Pair *pair) {	/* pair must be source side */
@@ -3921,6 +3928,9 @@ void asyncReadWrite(Pair *pair) {	/* pair must be source side */
 		shutdown(sd, 2);
 		setclose(p[i], proto_shutdown);
 		goto leave;
+	    } else if ((p[i]->proto & proto_conninprog) && FD_ISSET(sd, &wo)) {
+		p[i]->proto &= ~proto_conninprog;
+		connected(p[i]);
 #ifdef USE_SSL
 	    } else if (((p[i]->ssl_flag & sf_sb_on_r) && FD_ISSET(sd, &ro))
 		       || ((p[i]->ssl_flag & sf_sb_on_w) && FD_ISSET(sd, &wo))
