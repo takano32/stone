@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.163 2004/09/13 02:15:19 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.164 2004/09/13 02:54:14 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1228,7 +1228,7 @@ int mkBackup(int argc, int argi, char *argv[]) {
     if (b) {
 	b->interval = atoi(argv[argi]);
     } else {
-	message(LOG_ERR, "Out of memory, no backup for %s", argv[argi+1]);
+	message(LOG_CRIT, "Out of memory, no backup for %s", argv[argi+1]);
 	return argi+2;
     }
     if (MinInterval > 0) {
@@ -1307,7 +1307,7 @@ char *str2bin(char *p, int *lenp) {
     }
     p = malloc(i);
     if (!p) {
-	message(LOG_ERR, "Out of memory, can't make str");
+	message(LOG_CRIT, "Out of memory, can't make str");
 	exit(1);
     }
     bcopy(buf, p, i);
@@ -1326,7 +1326,7 @@ int mkChat(int argc, int i, char *argv[]) {
 	cur = malloc(sizeof(Chat));
 	if (!cur) {
 	memerr:
-	    message(LOG_ERR, "Out of memory, can't make Chat");
+	    message(LOG_CRIT, "Out of memory, can't make Chat");
 	    exit(1);
 	}
 	cur->send = str2bin(argv[i], &cur->len);
@@ -1401,7 +1401,7 @@ int lbsopts(int argc, int i, char *argv[]) {
 	for (j=0; j < nsins; j++) lbs->sins[j] = sins[j];
 	lbsets = lbs;
     } else {
-	message(LOG_ERR, "Out of memory, can't make LB set");
+	message(LOG_CRIT, "Out of memory, can't make LB set");
 	exit(1);
     }
     return i;
@@ -1525,7 +1525,7 @@ static Origin *getOrigins(struct sockaddr_in *from, Stone *stonep) {
     }
     origin = malloc(sizeof(Origin));
     if (!origin) {
-	message(LOG_ERR, "UDP %d: Out of memory, closing socket", sd);
+	message(LOG_CRIT, "UDP %d: Out of memory, closing socket", sd);
 	return NULL;
     }
     origin->sd = sd;
@@ -1565,7 +1565,7 @@ void asyncOrg(Origin *origin) {
     else goto end;
     pkt_buf = malloc(pkt_len_max);
     if (!pkt_buf) {
-	message(LOG_ERR, "UDP %d: Out of memory to allocate %d bytes",
+	message(LOG_CRIT, "UDP %d: Out of memory to allocate %d bytes",
 		sd, pkt_len_max);
 	goto end;
     }
@@ -1673,7 +1673,7 @@ void asyncUDP(Stone *stonep) {
     if (Debug > 8) message(LOG_DEBUG, "asyncUDP...");
     pkt_buf = malloc(pkt_len_max);
     if (!pkt_buf) {
-	message(LOG_ERR, "UDP %d: Out of memory to allocate %d bytes",
+	message(LOG_CRIT, "UDP %d: Out of memory to allocate %d bytes",
 		stonep->sd, pkt_len_max);
 	goto end;
     }
@@ -2132,7 +2132,7 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
     }
     conn = malloc(sizeof(Conn));
     if (!conn) {
-	message(LOG_ERR, "TCP %d: out of memory", (p ? p->sd : -1));
+	message(LOG_CRIT, "TCP %d: out of memory", (p ? p->sd : -1));
 	return -1;
     }
     time(&pair->clock);
@@ -2522,7 +2522,7 @@ Pair *doaccept(Stone *stonep) {
     }
 #endif
     if (!pair1 || !pair2) {
-	message(LOG_ERR, "stone %d: out of memory, closing TCP %d",
+	message(LOG_CRIT, "stone %d: out of memory, closing TCP %d",
 		stonep->sd, nsd);
 	closesocket(nsd);
 	if (pair1) free(pair1);
@@ -3519,6 +3519,16 @@ Comm healthComm[] = {
     { NULL, healthErr },
 };
 
+int memCheck(void) {
+    char *buf = malloc(BUFMAX * 10);
+    if (buf) {
+	free(buf);
+	return 1;
+    }
+    message(LOG_CRIT, "memCheck: out of memory");
+    return 0;
+}
+
 int docomm(Pair *pair, fd_set *rinp, fd_set *winp, Comm *comm) {
     char buf[BUFMAX];
     char *p;
@@ -3635,7 +3645,8 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
 	    break;
 #endif
 	case command_health:
-	    len = docomm(p, rinp, winp, healthComm);
+	    if (memCheck()) len = -1;
+	    else len = docomm(p, rinp, winp, healthComm);
 	    break;
 	default:
 	    ;
@@ -3675,7 +3686,7 @@ int first_read(Pair *pair, fd_set *rinp, fd_set *winp) {
 	    if (p->buf[i] == '<') {	/* time stamp of APOP banner */
 		q = pair->p = malloc(BUFMAX);
 		if (!q) {
-		    message(LOG_ERR, "TCP %d: out of memory", sd);
+		    message(LOG_CRIT, "TCP %d: out of memory", sd);
 		    break;
 		}
 		for (; i < p->start + p->len; i++) {
@@ -4159,7 +4170,7 @@ StoneSSL *mkStoneSSL(SSLOpts *opts, int isserver) {
     ss = malloc(sizeof(StoneSSL));
     if (!ss) {
     memerr:
-	message(LOG_ERR, "Out of memory.");
+	message(LOG_CRIT, "Out of memory.");
 	exit(1);
     }
     ss->verbose = opts->verbose;
@@ -4413,7 +4424,7 @@ Stone *mkstone(
     int i;
     stonep = calloc(1, sizeof(Stone)+sizeof(XHost)*nhosts);
     if (!stonep) {
-	message(LOG_ERR, "Out of memory.");
+	message(LOG_CRIT, "Out of memory.");
 	exit(1);
     }
     stonep->p = NULL;
@@ -4449,7 +4460,7 @@ Stone *mkstone(
 	    stonep->nsins = 1;
 	    stonep->sins = malloc(sizeof(dsin));
 	    if (!stonep->sins) {
-		message(LOG_ERR, "Out of memory");
+		message(LOG_CRIT, "Out of memory");
 		exit(1);
 	    }
 	    bcopy(&dsin, stonep->sins, sizeof(dsin));
@@ -4933,7 +4944,7 @@ void getconfig(void) {
 	if (ConfigArgc >= nptr) {	/* allocate new ptrs */
 	    new = malloc((nptr+BUFMAX)*sizeof(*ConfigArgv));
 	    if (new == NULL) {
-		message(LOG_ERR, "Out of memory.");
+		message(LOG_CRIT, "Out of memory.");
 		exit(1);
 	    }
 	    if (ConfigArgv) {
@@ -5358,7 +5369,7 @@ int doopts(int argc, char *argv[]) {
 			i++;
 			ConfigFile = malloc(strlen(argv[i]) + 1);
 			if (ConfigFile == NULL) {
-			    message(LOG_ERR, "Out of memory.");
+			    message(LOG_CRIT, "Out of memory.");
 			    exit(1);
 			}
 			strcpy(ConfigFile, argv[i]);
@@ -5726,7 +5737,7 @@ void initialize(int argc, char *argv[]) {
     if (!DryRun && NForks) {
 	Pid = malloc(sizeof(pid_t) * NForks);
 	if (!Pid) {
-	    message(LOG_ERR, "Out of memory.");
+	    message(LOG_CRIT, "Out of memory.");
 	    exit(1);
 	}
 	for (i=0; i < NForks; i++) {
