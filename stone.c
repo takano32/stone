@@ -79,6 +79,7 @@
  * -DNO_SNPRINTF  without snprintf(3)
  * -DNO_SYSLOG	  without syslog(2)
  * -DNO_THREAD	  without thread
+ * -DNO_PID_T	  without pid_t
  * -DPTHREAD      use Posix Thread
  * -DOS2	  OS/2 with EMX
  * -DWINDOWS	  Windows95/98/NT
@@ -88,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.132 2004/08/05 05:24:52 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.133 2004/08/05 10:08:41 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -496,6 +497,9 @@ unsigned long SetUID = 0;
 unsigned long SetGID = 0;
 #endif
 char *CoreDumpDir = NULL;
+#ifdef NO_PID_T
+typedef int pid_t;
+#endif
 pid_t MyPid;
 #ifndef NO_FORK
 int NForks = 0;
