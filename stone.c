@@ -1272,10 +1272,8 @@ char *key;
 char *cert;
 {
     int ret;
-    BIO *rbio = BIO_new_fd(pair->sd,BIO_CLOSE);
-    BIO *wbio = BIO_new_fd(pair->sd,BIO_CLOSE);
     pair->ssl = SSL_new(ssl_ctx_server);
-    SSL_set_bio(pair->ssl,rbio,wbio);
+    SSL_set_fd(pair->ssl,pair->sd);
     if (!SSL_use_RSAPrivateKey_file(pair->ssl,key,X509_FILETYPE_PEM)) {
 	SSL *ssl = pair->ssl;
 	pair->ssl = NULL;
@@ -1305,10 +1303,8 @@ Pair *pair;
 {
     int err, ret;
     if (!(pair->proto & proto_ssl_intr)) {
-	BIO *rbio = BIO_new_fd(pair->sd,BIO_CLOSE);
-	BIO *wbio = BIO_new_fd(pair->sd,BIO_CLOSE);
 	pair->ssl = SSL_new(ssl_ctx_client);
-	SSL_set_bio(pair->ssl,rbio,wbio);
+	SSL_set_fd(pair->ssl,pair->sd);
 	if (cipher_list) SSL_set_cipher_list(pair->ssl,cipher_list);	    
 	SSL_set_verify(pair->ssl,ssl_verify_flag,NULL);
     } else {
@@ -1887,17 +1883,7 @@ Pair *pair;
     if (InvalidSocket(sd)) return -1;
 #ifdef USE_SSL
     if (pair->ssl) {
-	if (pair->len > 0) {
-	    len = SSL_write(pair->ssl,&pair->buf[pair->start],pair->len);
-	} else {	/* flush BIO buffer */
-	    BIO *bio = SSL_get_wbio(pair->ssl);
-	    if (bio) {
-		BIO_flush(bio);
-		if (Debug > 8)
-		    message(LOG_DEBUG,"TCP %d: SSL buffer flushed",sd);
-	    }
-	    return 0;
-	}
+	len = SSL_write(pair->ssl,&pair->buf[pair->start],pair->len);
 	if (pair->proto & proto_close) return -1;
 	if (len <= 0) {
 	    int err;
@@ -2619,7 +2605,6 @@ int write_flag;
     Pair *rPair, *wPair;
     SOCKET rsd, wsd;
     int len;
-    int written = 0;	/* whether all data are written or not */
     ASYNC_BEGIN;
     if (write_flag) {
 	wPair = pair;
@@ -2686,9 +2671,6 @@ int write_flag;
 	doclose(wPair,1);
     } else {
 	if (wPair->len <= 0) {	/* all written */
-#ifdef USE_SSL
-	    if (len > 0 && wPair->ssl) written = 1;
-#endif
 	    if (wPair->proto & proto_first_w) wPair->proto &= ~proto_first_w;
 	    rsd = rPair->sd;
 	    if (rPair && ValidSocket(rsd)
@@ -2708,23 +2690,12 @@ int write_flag;
 		freeMutex(FdRinMutex);
 	    }
 	} else {		/* EINTR */
-	    written = 0;
 	    waitMutex(FdWinMutex);
 	    FD_SET(wsd,&win);
 	    freeMutex(FdWinMutex);
 	}
     }
  end:
-#ifdef USE_SSL
-    if (written) {
-	if (Debug > 8)
-	    message(LOG_DEBUG,"TCP %d: flush SSL buffer... status=%d",
-		    wPair->sd,SSL_want(wPair->ssl));
-	waitMutex(FdWinMutex);
-	FD_SET(wPair->sd,&win);
-	freeMutex(FdWinMutex);
-    }
-#endif
     ASYNC_END;
 }
 
