@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.93 2003/10/27 18:15:27 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.94 2003/10/28 16:26:48 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -232,6 +232,7 @@ int FdSetBug = 0;
 #define STRMAX		30	/* > 16 */
 #define NTRY_MAX	10
 #define CONN_TIMEOUT	60	/* 1 min */
+#define	LB_MAX		100
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN	255
@@ -312,10 +313,18 @@ typedef struct _Backup {
     time_t last;	/* last health check */
 } Backup;
 
+typedef struct _LBSet {
+    struct _LBSet *next;
+    int proto;
+    short nsins;
+    struct sockaddr_in sins[0];
+} LBSet;
+
 typedef struct _Stone {
     SOCKET sd;			/* socket descriptor to listen */
-    int port;
-    struct sockaddr_in sin;	/* destination */
+    short port;
+    short nsins;		/* # of destinations */
+    struct sockaddr_in *sins;	/* destinations */
     int proto;
     Backup **backups;
     char *p;
@@ -382,6 +391,7 @@ Stone *stones = NULL;
 Stone *oldstones = NULL;
 int ReuseAddr = 0;
 Backup *backups = NULL;
+LBSet *lbsets = NULL;
 int MinInterval = 0;
 time_t lastScanBackups = 0;
 Pair pairs;
@@ -919,7 +929,7 @@ void asyncScanBackups(Backup *backup) {
     ASYNC_END;
 }
 
-int hostPort(char *str, struct sockaddr_in *sinp) {
+int hostPort(char *str, struct sockaddr_in *sinp, int proto) {
     char host[STRMAX];
     int i;
     for (i=0; i < STRMAX-1; i++) {
@@ -931,7 +941,7 @@ int hostPort(char *str, struct sockaddr_in *sinp) {
 		return 0;	/* unknown host */
 	    }
 	    sinp->sin_family = family;
-	    sinp->sin_port = htons(atoi(&str[++i]));
+	    sinp->sin_port = htons(str2port(&str[++i], proto));
 	    return 1;	/* success */
 	}
 	host[i] = str[i];
@@ -989,12 +999,12 @@ void mkBackup(int interval, char *master, char *backup) {
     } else {
 	MinInterval = interval;
     }
-    if (!hostPort(master, &b->master)) {
+    if (!hostPort(master, &b->master, b->proto)) {
 	message(LOG_ERR, "Illegal master: %s", master);
 	free(b);
 	return;
     }
-    if (!hostPort(backup, &b->backup)) {
+    if (!hostPort(backup, &b->backup, b->proto)) {
 	message(LOG_ERR, "Illegal backup: %s", backup);
 	free(b);
 	return;
@@ -1004,6 +1014,66 @@ void mkBackup(int interval, char *master, char *backup) {
     b->used = 0;
     b->next = backups;
     backups = b;
+}
+
+LBSet *findLBSet(struct sockaddr_in *sinp, int proto) {
+    LBSet *s;
+    for (s=lbsets; s != NULL; s=s->next) {
+	if (s->sins[0].sin_addr.s_addr == sinp->sin_addr.s_addr
+	    && s->sins[0].sin_port == sinp->sin_port
+	    && (s->proto & proto)) {	/* found */
+	    if (Debug > 1) {
+		char buf[BUFMAX];
+		int len;
+		int i;
+		strcpy(buf, "LB set:");
+		len = strlen(buf);
+		for (i=0; i < s->nsins; i++) {
+		    snprintf(buf+len, BUFMAX-1-len, " %s:%s",
+			     addr2str(&s->sins[i].sin_addr),
+			     port2str(s->sins[i].sin_port,
+				      s->proto, proto_dest));
+		    len += strlen(buf+len);
+		}
+		message(LOG_DEBUG, "%s", buf);
+	    }
+	    return s;
+	}
+    }
+    return NULL;
+}
+
+int lbsopts(int argc, int i, char *argv[]) {
+    struct sockaddr_in sins[LB_MAX];
+    LBSet *lbs;
+    int proto = proto_tcp;
+    int nsins = 0;
+    i++;
+    for ( ; i < argc; i++) {
+	if (argv[i][0] == '-' && argv[i][1] == '-') break;
+	if (nsins >= LB_MAX) {
+	    message(LOG_ERR, "Too many load balancing hosts");
+	    exit(1);
+	}
+	if (!hostPort(argv[i], &sins[nsins], proto)) {
+	    message(LOG_ERR, "Illegal load balancing host: %s", argv[i]);
+	    exit(1);
+	}
+	nsins++;
+    }
+    lbs = malloc(sizeof(LBSet) + sizeof(struct sockaddr_in) * nsins);
+    if (lbs) {
+	int j;
+	lbs->next = lbsets;
+	lbs->proto = proto;
+	lbs->nsins = nsins;
+	for (j=0; j < nsins; j++) lbs->sins[j] = sins[j];
+	lbsets = lbs;
+    } else {
+	message(LOG_ERR, "Out of memory, can't make LB set");
+	exit(1);
+    }
+    return i;
 }
 
 /* relay UDP */
@@ -1133,26 +1203,26 @@ void asyncOrg(Origin *origin) {
     int len;
     Stone *stone = origin->stone;
     ASYNC_BEGIN;
-    if (Debug > 8) message(LOG_DEBUG,"asyncOrg...");
-    len = recvUDP(origin->sd,NULL);
+    if (Debug > 8) message(LOG_DEBUG, "asyncOrg...");
+    len = recvUDP(origin->sd, NULL);
     if (Debug > 4) {
 	SOCKET sd;
 	if (stone) sd = stone->sd;
 	else sd = INVALID_SOCKET;
-	message(LOG_DEBUG,"UDP %d: send %d bytes to %d",
-		origin->sd,len,origin->stone->sd);
+	message(LOG_DEBUG, "UDP %d: send %d bytes to %d",
+		origin->sd, len, origin->stone->sd);
     }
-    if (len > 0 && stone) sendUDP(stone->sd,&origin->sin,len);
+    if (len > 0 && stone) sendUDP(stone->sd, &origin->sin, len);
     time(&origin->clock);
     if (len > 0) {
 	waitMutex(FdRinMutex);
 	waitMutex(FdEinMutex);
-	FdSet(origin->sd,&ein);
-	FdSet(origin->sd,&rin);
+	FdSet(origin->sd, &ein);
+	FdSet(origin->sd, &rin);
 	freeMutex(FdEinMutex);
 	freeMutex(FdRinMutex);
     } else if (len < 0) {
-	docloseUDP(origin,1);	/* wait mutex */
+	docloseUDP(origin, 1);	/* wait mutex */
     }
     ASYNC_END;
 }
@@ -1260,7 +1330,7 @@ Origin *doUDP(Stone *stonep) {
     }
     if (Debug > 4)
 	message(LOG_DEBUG,"UDP %d: send %d bytes to %d",stonep->sd,len,dsd);
-    if (sendUDP(dsd,&stonep->sin,len) <= 0) {
+    if (sendUDP(dsd, stonep->sins, len) <= 0) {
 	if (origin) {
 	    docloseUDP(origin,1);	/* wait mutex */
 	} else {
@@ -1677,8 +1747,7 @@ void asyncConn(Conn *conn) {
 		if (Debug > 2)
 		    message(LOG_DEBUG, "TCP %d: pair %d lb%d=%d",
 			    p1->sd, p2->sd, lbparm, ofs);
-		conn->sin.sin_addr.s_addr
-		    = htonl(ntohl(conn->sin.sin_addr.s_addr) + ofs);
+		conn->sin = p1->stone->sins[ofs];
 		if (p1->stone->backups) {
 		    backup = p1->stone->backups[ofs];
 		}
@@ -2005,7 +2074,7 @@ void asyncAccept(Stone *stone) {
 	p2->buf[i++] = '\n';
 	p2->len = i;
     }
-    if (reqconn(p2,NULL,&stone->sin) < 0) {
+    if (reqconn(p2, NULL, &stone->sins[p1->clock % stone->nsins]) < 0) {
 	if (ValidSocket(p2->sd)) closesocket(p2->sd);
 	if (ValidSocket(p1->sd)) closesocket(p1->sd);
 	p1->pair = p2->pair = NULL;
@@ -3434,7 +3503,6 @@ Stone *mkstone(
     struct sockaddr_in sin;
     char xhost[256], *p;
     short family;
-    int ndest = 0;	/* # of destinations */
     int i;
     stonep = calloc(1,sizeof(Stone)+sizeof(XHost)*nhosts);
     if (!stonep) {
@@ -3455,12 +3523,26 @@ Stone *mkstone(
 	sin.sin_family = family;
     }
     if ((proto & proto_command) != command_proxy) {
-	if (!host2addr(dhost,&stonep->sin.sin_addr,&family)) {
+	struct sockaddr_in dsin;
+	LBSet *lbset;
+	if (!host2addr(dhost, &dsin.sin_addr, &family)) {
 	    exit(1);
 	}
-	stonep->sin.sin_family = family;
-	stonep->sin.sin_port = htons((u_short)dport);
-	ndest = 1;
+	dsin.sin_family = family;
+	dsin.sin_port = htons((u_short)dport);
+	lbset = findLBSet(&dsin, proto);
+	if (lbset) {
+	    stonep->sins = lbset->sins;
+	    stonep->nsins = lbset->nsins;
+	} else {
+	    stonep->sins = malloc(sizeof(dsin));
+	    if (!stonep->sins) {
+		message(LOG_ERR, "Out of memory");
+		exit(1);
+	    }
+	    bcopy(&dsin, stonep->sins, sizeof(dsin));
+	    stonep->nsins = 1;
+	}
     }
     stonep->proto = proto;
     if (!reusestone(stonep)) {	/* recycle stone */
@@ -3511,7 +3593,13 @@ Stone *mkstone(
 #ifdef USE_SSL
     if (proto & proto_ssl_s) {	/* server side SSL */
 	stonep->ssl_server = mkStoneSSL(&ServerOpts,1);
-	if (stonep->ssl_server->lbmod) ndest = stonep->ssl_server->lbmod;
+	if (stonep->ssl_server->lbmod) {
+	    if (stonep->ssl_server->lbmod > stonep->nsins) {
+		message(LOG_WARNING, "LB set (%d) < lbmod (%d)",
+			stonep->nsins, stonep->ssl_server->lbmod);
+		stonep->ssl_server->lbmod = stonep->nsins;
+	    }
+	}
     } else {
 	stonep->ssl_server = NULL;
     }
@@ -3549,8 +3637,8 @@ Stone *mkstone(
 			stonep->sd,
 			xhost,
 			ntohl((unsigned long)stonep->xhosts[i].mask.s_addr),
-			addr2str(&stonep->sin.sin_addr),
-			port2str(stonep->sin.sin_port,
+			addr2str(&stonep->sins->sin_addr),
+			port2str(stonep->sins->sin_port,
 				 stonep->proto,proto_dest));
 	    }
 	}
@@ -3570,20 +3658,17 @@ Stone *mkstone(
     } else {
 	message(LOG_INFO, "stone %d: %s:%s <- %s",
 		stonep->sd,
-		addr2str(&stonep->sin.sin_addr),
-		port2str(stonep->sin.sin_port, stonep->proto, proto_dest),
+		addr2str(&stonep->sins->sin_addr),
+		port2str(stonep->sins->sin_port, stonep->proto, proto_dest),
 		xhost);
     }
-    if (ndest) {
-	stonep->backups = malloc(sizeof(Backup*) * ndest);
+    if (stonep->nsins) {
+	stonep->backups = malloc(sizeof(Backup*) * stonep->nsins);
 	if (stonep->backups) {
 	    int i;
-	    for (i=0; i < ndest; i++) {
-		struct sockaddr_in s;
-		s = stonep->sin;
-		if (i > 0) s.sin_addr.s_addr
-			       = htonl(ntohl(s.sin_addr.s_addr) + i);
-		stonep->backups[i] = findBackup(&s, stonep->proto);
+	    for (i=0; i < stonep->nsins; i++) {
+		stonep->backups[i]
+		    = findBackup(&stonep->sins[i], stonep->proto);
 		if (stonep->backups[i]) stonep->backups[i]->used = 1;
 	    }
 	}
@@ -3630,6 +3715,7 @@ void help(char *com) {
 	    "      -r                ; reuse socket\n"
 	    "      -b <n> <master>:<port> <backup>:<port>\n"
 	    "                        ; backup host:port for master\n"
+	    "      -B <host>:<port>..; load balancing hosts\n"
 #ifndef NO_SETUID
 	    "      -o <n>            ; set uid to <n>\n"
 	    "      -g <n>            ; set gid to <n>\n"
@@ -4139,6 +4225,9 @@ int dohyphen(char opt, int argc, char *argv[], int argi) {
     case 'b':
 	mkBackup(atoi(argv[argi+1]), argv[argi+2], argv[argi+3]);
 	argi += 3;
+	break;
+    case 'B':
+	argi = lbsopts(argc, argi, argv);
 	break;
 #ifdef USE_SSL
     case 'q':
