@@ -1,6 +1,6 @@
 /*
  * stone.c	simple repeater
- * Copyright(c)1995-2003 by Hiroaki Sengoku <sengoku@gcd.org>
+ * Copyright(c)1995-2004 by Hiroaki Sengoku <sengoku@gcd.org>
  * Version 1.0	Jan 28, 1995
  * Version 1.1	Jun  7, 1995
  * Version 1.2	Aug 20, 1995
@@ -86,9 +86,9 @@
  * -DUNIX_DAEMON  fork into background and become a UNIX Daemon
  * -DPRCTL	  with prctl(2) - operations on a process
  */
-#define VERSION	"2.2b"
+#define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.118 2004/01/18 05:32:16 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.119 2004/02/13 14:27:36 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
