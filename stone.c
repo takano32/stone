@@ -90,7 +90,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.153 2004/08/30 16:08:18 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.154 2004/08/31 02:31:11 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2062,6 +2062,7 @@ int reqconn(Pair *pair,		/* request pair to connect to destination */
 void asyncConn(Conn *conn) {
     int ret;
     Pair *p1, *p2;
+    int ofs;
     Backup *backup = NULL;
     time_t clock;
     ASYNC_BEGIN;
@@ -2071,13 +2072,25 @@ void asyncConn(Conn *conn) {
     if (p2 == NULL) goto finish;
     time(&clock);
     if (Debug > 8) message(LOG_DEBUG, "asyncConn...");
-    if (p1->stone->backups) {	/* round robin */
-	int ofs = (p1->stone->proto & state_mask) % p1->stone->nsins;
-	conn->sin = p1->stone->sins[ofs];
+    ofs = (p1->stone->proto & state_mask) % p1->stone->nsins;
+    if (p1->stone->backups) {
+	int i;
+	int n = p1->stone->nsins;
+	for (i=0; i < n; i++) {
+	    Backup *b = p1->stone->backups[(ofs+i) % n];
+	    if (!b || b->bn == 0) {	/* no backup or healthy, use it */
+		ofs = (ofs+i) % n;
+		break;
+	    }
+	    if (Debug > 8)
+		message(LOG_DEBUG, "TCP %d: ofs=%d is unhealthy, skipped",
+			p1->sd, (ofs+i) % n);
+	}
 	backup = p1->stone->backups[ofs];
-	p1->stone->proto = ((p1->stone->proto & ~state_mask)
-			    | ((ofs+1) & state_mask));
     }
+    conn->sin = p1->stone->sins[ofs];	/* round robin */
+    p1->stone->proto = ((p1->stone->proto & ~state_mask)
+			| ((ofs+1) & state_mask));
 #ifdef USE_SSL
     if (p2->ssl_flag & sf_intr)
 	ret = trySSL_accept(p2);	/* accept not completed */
@@ -2098,11 +2111,11 @@ void asyncConn(Conn *conn) {
 	    if (match && p2->stone->ssl_server) {
 		int lbparm = p2->stone->ssl_server->lbparm;
 		int lbmod = p2->stone->ssl_server->lbmod;
-		int ofs = 0;
 		unsigned char *s;
 		if (0 <= lbparm && lbparm <= 9) s = match[lbparm];
 		else s = match[1];
 		if (lbmod) {
+		    ofs = 0;
 		    while (*s) {
 			ofs <<= 6;
 			ofs += (*s & 0x3f);
@@ -2557,7 +2570,7 @@ void asyncAccept(Stone *stone) {
 	p2->buf[i++] = '\n';
 	p2->len = i;
     }
-    if (reqconn(p2, NULL, &stone->sins[p1->clock % stone->nsins]) < 0) {
+    if (reqconn(p2, NULL, &stone->sins[0]) < 0) {	/* 0 is default */
 	freePair(p2);
 	freePair(p1);
 	ASYNC_END;
