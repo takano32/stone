@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.123 2004/03/20 07:37:01 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.124 2004/04/01 09:13:53 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -428,7 +428,8 @@ const proto_command =	    0x0f00;	/* command (destination only) */
 const proto_tcp	=	    0x1000;	/* transmission control protocol */
 const proto_udp =	    0x2000;	/* user datagram protocol */
 const proto_source =	    0x4000;	/* source flag */
-const proto_connect =	    0x8000;	/* connection established */
+const proto_connect =	    0x8000;	/* connection established (pair) */
+const proto_ident =         0x8000;	/* need ident (stone) */
 const proto_first_r =	   0x10000;	/* first read packet */
 const proto_first_w =	   0x20000;	/* first written packet */
 const proto_select_r =	   0x40000;	/* select to read */
@@ -801,7 +802,7 @@ int host2addr(char *name, struct in_addr *addrp, short *familyp) {
 }
 
 /* *addrp is permitted to connect to *stonep ? */
-int checkXhost(Stone *stonep, struct in_addr *addrp) {
+int checkXhost(Stone *stonep, struct in_addr *addrp, char *ident) {
     int i;
     int match = 1;
     if (!stonep->nhosts) return 1; /* any hosts can access */
@@ -1342,7 +1343,7 @@ Origin *doUDP(Stone *stonep) {
     FdSet(stonep->sd, &rin);
     freeMutex(FdRinMutex);
     if (len <= 0) return NULL;	/* drop */
-    if (!checkXhost(stonep, &from.sin_addr)) {
+    if (!checkXhost(stonep, &from.sin_addr, NULL)) {
 	message(LOG_WARNING, "stone %d: recv UDP denied: from %s:%s",
 		stonep->sd,
 		addr2str(&from.sin_addr),
@@ -1986,6 +1987,85 @@ int scanConns(void) {
     return 1;
 }
 
+int getident(char *str, struct sockaddr_in *sinp, int cport) {
+    SOCKET sd;
+    struct sockaddr_in sin = *sinp;
+    int sport = ntohs(sinp->sin_port);
+    char buf[BUFMAX];
+    char c;
+    int len;
+    int ret;
+    if (str) {
+	str[0] = '\0';
+    }
+    sd = socket(AF_INET, SOCK_STREAM, 0);
+    if (InvalidSocket(sd)) {
+#ifdef WINDOWS
+	errno = WSAGetLastError();
+#endif
+	if (Debug > 0)
+	    message(LOG_DEBUG, "ident: can't create socket err=%d.",
+		    sd, errno);
+	return 0;
+    }
+    sin.sin_port = htons(113);	/* ident protocol */
+    if (connect(sd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
+#ifdef WINDOWS
+	errno = WSAGetLastError();
+#endif
+	if (Debug > 0)
+	    message(LOG_DEBUG, "ident: can't connect to %s, err=%d",
+		    addr2str(&sin.sin_addr), errno);
+	closesocket(sd);
+	return 0;
+    }
+    snprintf(buf, BUFMAX-1, "%d, %d%c%c", sport, cport, '\r', '\n');
+    len = strlen(buf);
+    ret = send(sd, buf, len, 0);
+    if (ret != len) {
+#ifdef WINDOWS
+	errno = WSAGetLastError();
+#endif
+	if (Debug > 0)
+	    message(LOG_DEBUG,
+		    "ident: can't send  to %s, ret=%d, err=%d, buf=%s",
+		    addr2str(&sin.sin_addr), ret, errno, buf);
+	closesocket(sd);
+	return 0;
+    }
+    ret = recv(sd, buf, BUFMAX-1, 0);
+    if (ret <= 0) {
+	if (Debug > 0)
+	    message(LOG_DEBUG,
+		    "ident: can't read from %s, ret=%d",
+		    addr2str(&sin.sin_addr), ret);
+	closesocket(sd);
+	return 0;
+    }
+    do {
+	ret--;
+	c = buf[ret];
+    } while (ret > 0 && (c == '\r' || c == '\n'));
+    ret++;
+    buf[ret] = '\0';
+    if (Debug > 2)
+	message(LOG_DEBUG, "ident: sent %s:%d, %d got %s",
+		addr2str(&sin.sin_addr), sport, cport, buf);
+    if (str) {
+	char *p;
+	p = rindex(buf, ':');
+	if (p) {
+	    int i;
+	    do {
+		p++;
+	    } while (*p == ' ');
+	    for (i=0; i < STRMAX-1 && *p; i++) str[i] = *p++;
+	    str[i] = '\0';
+	}
+    }
+    return 1;
+}
+
 /* *stonep accept connection */
 Pair *doaccept(Stone *stonep) {
     struct sockaddr_in from;
@@ -1994,6 +2074,8 @@ Pair *doaccept(Stone *stonep) {
     Pair *pair1, *pair2;
     int prevXferBufMax = XferBufMax;
     int ret;
+    char ident[STRMAX];
+    char fromstr[STRMAX*2];
     nsd = INVALID_SOCKET;
     pair1 = pair2 = NULL;
     len = sizeof(from);
@@ -2026,10 +2108,17 @@ Pair *doaccept(Stone *stonep) {
 	message(LOG_ERR, "stone %d: accept error err=%d.", stonep->sd, errno);
 	return NULL;
     }
-    if (!checkXhost(stonep, &from.sin_addr)) {
+    if ((stonep->proto & proto_ident)
+	&& getident(ident, &from, stonep->port)) {
+	snprintf(fromstr, STRMAX*2-1, "%s@%s",
+		 ident, addr2str(&from.sin_addr));
+    } else {
+	snprintf(fromstr, STRMAX*2-1, "%s", addr2str(&from.sin_addr));
+	ident[0] = '\0';
+    }
+    if (!checkXhost(stonep, &from.sin_addr, ident)) {
 	message(LOG_WARNING, "stone %d: access denied: from %s:%s",
-		stonep->sd,
-		addr2str(&from.sin_addr),
+		stonep->sd, fromstr,
 		port2str(from.sin_port, stonep->proto, proto_src));
 	shutdown(nsd, 2);
 	closesocket(nsd);
@@ -2041,16 +2130,13 @@ Pair *doaccept(Stone *stonep) {
 	time(&clock);
 	fprintf(AccFp, "%s%d[%d] %s[%s]%d\n",
 		strntime(buf, BUFMAX, &clock),
-		stonep->port, stonep->sd,
-		addr2str(&from.sin_addr),
+		stonep->port, stonep->sd, fromstr,
 		addr2ip(&from.sin_addr, str),
 		ntohs(from.sin_port));
     }
     if (Debug > 1) {
 	message(LOG_DEBUG, "stone %d: accepted TCP %d from %s:%s",
-		stonep->sd,
-		nsd,
-		addr2str(&from.sin_addr),
+		stonep->sd, nsd, fromstr,
 		port2str(from.sin_port, stonep->proto, proto_src));
     }
     do {
@@ -4380,6 +4466,9 @@ int getdist(
 	    } else if (!strncmp(p, "base", 4)) {
 		p += 4;
 		*protop |= proto_base;
+	    } else if (!strncmp(p, "ident", 5)) {
+		p += 5;
+		*protop |= proto_ident;
 	    } else if (!strncmp(p, "proxy", 5)) {
 		p += 5;
 		*protop &= ~proto_command;
@@ -4788,6 +4877,7 @@ void doargs(int argc, int i, char *argv[]) {
 	    if (sproto & proto_ohttp) proto |= proto_ohttp_s;
 	    if (sproto & proto_ssl) proto |= proto_ssl_s;
 	    if (sproto & proto_base) proto |= proto_base_s;
+	    if (sproto & proto_ident) proto |= proto_ident;
 	    if ((dproto & proto_command) == command_proxy) {
 		proto &= ~proto_command;
 		proto |= command_proxy;
