@@ -89,7 +89,7 @@
  */
 #define VERSION	"2.2c"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.198 2004/10/22 22:27:27 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.199 2004/10/22 23:28:17 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3470,10 +3470,9 @@ int proxyCommon(Pair *pair, char *parm, int start) {
     while (isspace(*p)) p++;	/* now p points url */
     q = p + i;			/* now q points path */
     if (*q != '/') *--q = '/';
-    i = p - top;		/* length of 'GET ' */
-    bcopy(top, q-i, i);
-    pair->len += (pair->start - (q - top - i));
-    pair->start = q - pair->buf - i;
+    bcopy(q, p, pair->start + pair->len - (q - top));
+    pair->len = pair->start + pair->len - (q - p);
+    pair->start = 0;
     if (Debug > 1) {
 	Pair *r = pair->pair;
 	message(LOG_DEBUG, "proxy %d -> http://%s:%d",
