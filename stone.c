@@ -87,7 +87,7 @@
  */
 #define VERSION	"2.2"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.57 2003/07/11 03:34:46 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.58 2003/07/11 10:39:12 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3158,7 +3158,7 @@ Stone *mkstone(
 	    if (ReuseAddr && ValidSocket(stonep->sd)) {
 		i = 1;
 		setsockopt(stonep->sd, SOL_SOCKET, SO_REUSEADDR,
-			   &i, sizeof(i));
+			   (char*)&i, sizeof(i));
 	    }
 	}
 	if (InvalidSocket(stonep->sd)) {
