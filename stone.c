@@ -88,7 +88,7 @@
  */
 #define VERSION	"2.2b"
 static char *CVS_ID =
-"@(#) $Id: stone.c,v 1.117 2004/01/15 07:16:38 hiroaki_sengoku Exp $";
+"@(#) $Id: stone.c,v 1.118 2004/01/18 05:32:16 hiroaki_sengoku Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -599,7 +599,7 @@ void message(int pri, char *fmt, ...) {
 	if (FALSE == bSvcDebug) AddToMessageLog(str);
 	else
 #endif
-	fprintf(LogFp, "%s\n", str);
+	if (LogFp) fprintf(LogFp, "%s\n", str);
 #ifndef NO_SYSLOG
     }
 #endif
@@ -4771,6 +4771,7 @@ void daemonize(void) {
 	exit(1);
     } 
     if (pid > 0) _exit(0);
+    MyPid = getpid();
     if (setsid() < 0)
 	message(LOG_WARNING, "Can't create new session err=%d", errno);
     if (chdir("/") < 0)
@@ -4780,6 +4781,10 @@ void daemonize(void) {
 	message(LOG_WARNING, "Can't close stdin err=%d", errno);
     if (close(1) != 0)
 	message(LOG_WARNING, "Can't close stdout err=%d", errno);
+#ifndef NO_SYSLOG
+    if (Syslog > 1) Syslog = 1;
+#endif
+    if (!LogFileName) LogFp = NULL;
     if (close(2) != 0)
 	message(LOG_WARNING, "Can't close stderr err=%d", errno);
 }
