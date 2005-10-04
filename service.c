@@ -80,7 +80,7 @@ void main(int argc, char **argv)
         { NULL, NULL }
     };
 
-    if ( (argc > 1) &&
+    if ( (argc == 1) &&
          ((*argv[1] == '-') || (*argv[1] == '/')) )
     {
         if ( _stricmp( "install", argv[1]+1 ) == 0 )
@@ -99,16 +99,20 @@ void main(int argc, char **argv)
         }
         else
         {
-            goto dispatch;
+            goto cli;
         }
         exit(0);
-    }
+    } else if (argc > 1) {
+	cli:
+		main_cli(argc, argv);
+	}
 
     // if it doesn't match any of the above parameters
     // the service control manager may be starting the service
     // so we must call StartServiceCtrlDispatcher
     dispatch:
         // this is just to be friendly
+        printf( "%s -h                help for command line\n", SZAPPNAME );
         printf( "%s -install          to install the service\n", SZAPPNAME );
         printf( "%s -remove           to remove the service\n", SZAPPNAME );
         printf( "%s -debug <params>   to run as a console app for debugging\n", SZAPPNAME );
