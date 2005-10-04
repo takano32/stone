@@ -80,7 +80,7 @@ void main(int argc, char **argv)
         { NULL, NULL }
     };
 
-    if ( (argc == 1) &&
+    if ( (argc == 2) &&
          ((*argv[1] == '-') || (*argv[1] == '/')) )
     {
         if ( _stricmp( "install", argv[1]+1 ) == 0 )
@@ -102,26 +102,29 @@ void main(int argc, char **argv)
             goto cli;
         }
         exit(0);
-    } else if (argc > 1) {
+    } else if (argc >= 2) {
 	cli:
+		bSvcDebug = TRUE;
 		main_cli(argc, argv);
+		exit(0);
 	}
 
     // if it doesn't match any of the above parameters
     // the service control manager may be starting the service
     // so we must call StartServiceCtrlDispatcher
     dispatch:
-        // this is just to be friendly
-        printf( "%s -h                help for command line\n", SZAPPNAME );
-        printf( "%s -install          to install the service\n", SZAPPNAME );
-        printf( "%s -remove           to remove the service\n", SZAPPNAME );
-        printf( "%s -debug <params>   to run as a console app for debugging\n", SZAPPNAME );
-        printf( "\nStartServiceCtrlDispatcher being called.\n" );
-        printf( "This may take several seconds.  Please wait.\n" );
-
-		AddEventSource(SZSERVICENAME);
-        if (!StartServiceCtrlDispatcher(dispatchTable))
-	    	LogEvent(NULL, EVENTLOG_ERROR_TYPE, EVID_SVCFAIL, NULL, "StartServiceCtrlDispatcher failed.");
+	// this is just to be friendly
+	help(argv[0], NULL);
+	fprintf(stderr,
+			"NT Service mode:\n"
+			"      -install          ; install the service\n"
+			"      -remove           ; remove the service\n"
+			"StartServiceCtrlDispatcher being called.\n"
+			"This may take several seconds.  Please wait.\n"
+			, argv[0]);
+	AddEventSource(SZSERVICENAME);
+	if (!StartServiceCtrlDispatcher(dispatchTable))
+		LogEvent(NULL, EVENTLOG_ERROR_TYPE, EVID_SVCFAIL, NULL, "StartServiceCtrlDispatcher failed.");
 }
 
 //
