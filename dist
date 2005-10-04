@@ -8,14 +8,14 @@ case "$1" in
 	;;
 esac
 shift
-stone=stone22
-stones=stone22s
-stonent=stone22nt
-stonez=stone22z
+stoneme=stone23me
+stonent=stone23nt
+stonexp=stone23xp
+stonez=stone23z
 if [ -n "$1" ]
 then	stamp=$1
 fi
-rm -rf stone-$ver stone-$ver.lzh stones-$ver.lzh stonent-$ver.lzh \
+rm -rf stone-$ver stoneme-$ver.lzh stonent-$ver.lzh stonexp-$ver.lzh \
 	stone_${ver}_arm stone_${ver}_arm.ipk
 
 nkf_s() {
@@ -23,26 +23,17 @@ nkf_s() {
 	tscopy $1 $2/$1
 }
 
-nkf_s	README.txt	$stone
-nkf_s	README.en.txt	$stone
-nkf_s	stone.c		$stone
-nkf_s	Makefile	$stone
-nkf_s	GPL.txt		$stone
-nkf_s	logmsg.mc	$stone
-nkf_s	service.c	$stone
-nkf_s	service.h	$stone
-nkf_s	svcbody.c	$stone
-nkf_s	svcbody.h	$stone
-nkf_s	README.txt	$stones
-nkf_s	README.en.txt	$stones
-nkf_s	stone.c		$stones
-nkf_s	Makefile	$stones
-nkf_s	GPL.txt		$stones
-nkf_s	logmsg.mc	$stones
-nkf_s	service.c	$stones
-nkf_s	service.h	$stones
-nkf_s	svcbody.c	$stones
-nkf_s	svcbody.h	$stones
+nkf_s	README.txt	$stoneme
+nkf_s	README.en.txt	$stoneme
+nkf_s	stone.c		$stoneme
+nkf_s	Makefile	$stoneme
+nkf_s	GPL.txt		$stoneme
+nkf_s	logmsg.mc	$stoneme
+nkf_s	service.c	$stoneme
+nkf_s	service.h	$stoneme
+nkf_s	svcbody.c	$stoneme
+nkf_s	svcbody.h	$stoneme
+nkf_s	cryptoapi.c	$stoneme
 nkf_s	README.txt	$stonent
 nkf_s	README.en.txt	$stonent
 nkf_s	stone.c		$stonent
@@ -53,8 +44,20 @@ nkf_s	service.c	$stonent
 nkf_s	service.h	$stonent
 nkf_s	svcbody.c	$stonent
 nkf_s	svcbody.h	$stonent
+nkf_s	cryptoapi.c	$stonent
+nkf_s	README.txt	$stonexp
+nkf_s	README.en.txt	$stonexp
+nkf_s	stone.c		$stonexp
+nkf_s	Makefile	$stonexp
+nkf_s	GPL.txt		$stonexp
+nkf_s	logmsg.mc	$stonexp
+nkf_s	service.c	$stonexp
+nkf_s	service.h	$stonexp
+nkf_s	svcbody.c	$stonexp
+nkf_s	svcbody.h	$stonexp
+nkf_s	cryptoapi.c	$stonexp
 mkdir stone-$ver
-cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt logmsg.mc service.c service.h svcbody.c svcbody.h stone-$ver/.
+cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt logmsg.mc service.c service.h svcbody.c svcbody.h cryptoapi.c stone-$ver/.
 sed -e "s/^Version: .*/Version: $ver/" stone.spec > stone-$ver/stone.spec
 
 mkdir -p stone_${ver}_arm/CONTROL
@@ -67,8 +70,8 @@ Priority: optional
 Depends: openssl (>=0.9.7)
 Maintainer: Hiroaki Sengoku <sengoku@gcd.org>
 Description: TCP/UDP repeater
-	Stone is a TCP/IP packet repeater in the application layer.
-	It repeats TCP and UDP packets from inside to outside of a firewall,
+	Stone is a TCP/IP repeater in the application layer.
+	It repeats TCP and UDP from inside to outside of a firewall,
 	or from outside to inside.  Refer http://www.gcd.org/sengoku/stone/
 EOF
 mkdir -p stone_${ver}_arm/usr/local/bin
@@ -76,31 +79,33 @@ cp -p $stonez/stone stone_${ver}_arm/usr/local/bin/stone
 
 if [ -n "$stamp" ]
 then	touch -t $stamp  \
-		$stone/README.*  $stones/README.*  $stonent/README.*  \
-		$stone/stone.c   $stones/stone.c   $stonent/stone.c   \
-		$stone/stone.exe $stones/stone.exe $stonent/stone.exe \
-		$stone/Makefile  $stones/Makefile  $stonent/Makefile  \
-		$stone/logmsg.mc $stones/logmsg.mc $stonent/logmsg.mc \
-		$stone/service.c $stones/service.c $stonent/service.c \
-		$stone/service.h $stones/service.h $stonent/service.h \
-		$stone/svcbody.c $stones/svcbody.c $stonent/svcbody.c \
-		$stone/svcbody.h $stones/svcbody.h $stonent/svcbody.h \
-		stone-$ver/README.* stone-$ver/stone.c stone-$ver/Makefile \
-		stone-$ver/stone.spec \
-		stone-$ver/logmsg.mc \
-		stone-$ver/service.c stone-$ver/service.h \
-		stone-$ver/svcbody.c stone-$ver/svcbody.h \
-		README.* stone.c Makefile \
-		stone_${ver}_arm/CONTROL/control \
-		stone_${ver}_arm/usr/local/bin/stone
-	find $stone $stones $stonent stone-$ver stone_${ver}_arm -type d \
+	$stoneme/README.*    $stonent/README.*    $stonexp/README.*    \
+	$stoneme/stone.c     $stonent/stone.c     $stonexp/stone.c     \
+	$stoneme/stone.exe   $stonent/stone.exe   $stonexp/stone.exe   \
+	$stoneme/Makefile    $stonent/Makefile    $stonexp/Makefile    \
+	$stoneme/logmsg.mc   $stonent/logmsg.mc   $stonexp/logmsg.mc   \
+	$stoneme/service.c   $stonent/service.c   $stonexp/service.c   \
+	$stoneme/service.h   $stonent/service.h   $stonexp/service.h   \
+	$stoneme/svcbody.c   $stonent/svcbody.c   $stonexp/svcbody.c   \
+	$stoneme/svcbody.h   $stonent/svcbody.h   $stonexp/svcbody.h   \
+	$stoneme/cryptoapi.c $stonent/cryptoapi.c $stonexp/cryptoapi.c \
+	stone-$ver/README.* stone-$ver/stone.c stone-$ver/Makefile \
+	stone-$ver/stone.spec \
+	stone-$ver/logmsg.mc \
+	stone-$ver/service.c stone-$ver/service.h \
+	stone-$ver/svcbody.c stone-$ver/svcbody.h \
+	stone-$ver/cryptoapi.c \
+	README.* stone.c Makefile \
+	stone_${ver}_arm/CONTROL/control \
+	stone_${ver}_arm/usr/local/bin/stone
+	find $stone $stonent $stonexp stone-$ver stone_${ver}_arm -type d \
 		| xargs touch -t $stamp
 	tar czf stone-$ver.tar.gz stone-$ver
-	lha u stone-$ver.lzh $stone
-	lha u stones-$ver.lzh $stones
+	lha u stoneme-$ver.lzh $stoneme
 	lha u stonent-$ver.lzh $stonent
+	lha u stonexp-$ver.lzh $stonexp
 	ipkg-build stone_${ver}_arm
 	touch -t $stamp stone-$ver.tar.gz \
-		stone-$ver.lzh stones-$ver.lzh stonent-$ver.lzh \
+		stoneme-$ver.lzh stonent-$ver.lzh stonexp-$ver.lzh \
 		stone_${ver}_arm.ipk
 fi
