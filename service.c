@@ -83,7 +83,14 @@ void main(int argc, char **argv)
     if ( (argc == 2) &&
          ((*argv[1] == '-') || (*argv[1] == '/')) )
     {
-        if ( _stricmp( "install", argv[1]+1 ) == 0 )
+        if ( _stricmp( "run-service", argv[1]+1 ) == 0 )
+        {
+			AddEventSource(SZSERVICENAME);
+			if (!StartServiceCtrlDispatcher(dispatchTable))
+				LogEvent(NULL, EVENTLOG_ERROR_TYPE, EVID_SVCFAIL, NULL,
+						 "StartServiceCtrlDispatcher failed.");
+		}
+		else if ( _stricmp( "install", argv[1]+1 ) == 0 )
         {
             CmdInstallService();
         }
@@ -117,14 +124,9 @@ void main(int argc, char **argv)
 	help(argv[0], NULL);
 	fprintf(stderr,
 			"NT Service mode:\n"
-			"      -install          ; install the service\n"
-			"      -remove           ; remove the service\n"
-			"StartServiceCtrlDispatcher being called.\n"
-			"This may take several seconds.  Please wait.\n"
+			"      -install         ; install the service\n"
+			"      -remove          ; remove the service\n"
 			, argv[0]);
-	AddEventSource(SZSERVICENAME);
-	if (!StartServiceCtrlDispatcher(dispatchTable))
-		LogEvent(NULL, EVENTLOG_ERROR_TYPE, EVID_SVCFAIL, NULL, "StartServiceCtrlDispatcher failed.");
 }
 
 //
@@ -376,13 +378,15 @@ void CmdInstallService()
     SC_HANDLE   schService;
     SC_HANDLE   schSCManager;
 
-    TCHAR szPath[512];
+    TCHAR szPath[_MAX_PATH];
+	char command[1024];
 
-    if ( GetModuleFileName( NULL, szPath, 512 ) == 0 )
+    if ( GetModuleFileName( NULL, szPath, _MAX_PATH ) == 0 )
     {
         _tprintf(TEXT("Unable to install %s - %s\n"), TEXT(SZSERVICEDISPLAYNAME), GetLastErrorText(szErr, 256));
         return;
     }
+	_snprintf(command, sizeof(command), "\"%s\" -run-service", szPath);
 
     schSCManager = OpenSCManager(
                         NULL,                   // machine (NULL == local)
@@ -401,7 +405,7 @@ void CmdInstallService()
             SERVICE_WIN32_OWN_PROCESS,  // service type
             SERVICE_AUTO_START,		// start type
             SERVICE_ERROR_NORMAL,       // error control type
-            szPath,                     // service's binary
+            command,                    // service's binary
             NULL,                       // no load ordering group
             NULL,                       // no tag identifier
             TEXT(SZDEPENDENCIES),       // dependencies
