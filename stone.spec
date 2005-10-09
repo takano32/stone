@@ -1,4 +1,4 @@
-Summary: Simple Packet Repeater
+Summary: Simple Repeater
 Name: stone
 Version: 2.1x
 Release: 1
@@ -9,8 +9,8 @@ Group: network
 BuildRoot: %{_tmppath}/%{name}-root
 
 %description
-  Stone is a TCP/IP packet repeater in the application layer.  It
-repeats TCP and UDP packets from inside to outside of a firewall, or
+  Stone is a TCP/IP repeater in the application layer.  It
+repeats TCP and UDP from inside to outside of a firewall, or
 from outside to inside.
 
 %prep
