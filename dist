@@ -98,7 +98,7 @@ then	touch -t $stamp  \
 	README.* stone.c Makefile \
 	stone_${ver}_arm/CONTROL/control \
 	stone_${ver}_arm/usr/local/bin/stone
-	find $stone $stonent $stonexp stone-$ver stone_${ver}_arm -type d \
+	find $stoneme $stonent $stonexp stone-$ver stone_${ver}_arm -type d \
 		| xargs touch -t $stamp
 	tar czf stone-$ver.tar.gz stone-$ver
 	lha u stoneme-$ver.lzh $stoneme
