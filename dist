@@ -29,10 +29,6 @@ nkf_s	stone.c		$stoneme
 nkf_s	Makefile	$stoneme
 nkf_s	GPL.txt		$stoneme
 nkf_s	logmsg.mc	$stoneme
-nkf_s	service.c	$stoneme
-nkf_s	service.h	$stoneme
-nkf_s	svcbody.c	$stoneme
-nkf_s	svcbody.h	$stoneme
 nkf_s	cryptoapi.c	$stoneme
 nkf_s	README.txt	$stonent
 nkf_s	README.en.txt	$stonent
@@ -40,10 +36,6 @@ nkf_s	stone.c		$stonent
 nkf_s	Makefile	$stonent
 nkf_s	GPL.txt		$stonent
 nkf_s	logmsg.mc	$stonent
-nkf_s	service.c	$stonent
-nkf_s	service.h	$stonent
-nkf_s	svcbody.c	$stonent
-nkf_s	svcbody.h	$stonent
 nkf_s	cryptoapi.c	$stonent
 nkf_s	README.txt	$stonexp
 nkf_s	README.en.txt	$stonexp
@@ -51,13 +43,9 @@ nkf_s	stone.c		$stonexp
 nkf_s	Makefile	$stonexp
 nkf_s	GPL.txt		$stonexp
 nkf_s	logmsg.mc	$stonexp
-nkf_s	service.c	$stonexp
-nkf_s	service.h	$stonexp
-nkf_s	svcbody.c	$stonexp
-nkf_s	svcbody.h	$stonexp
 nkf_s	cryptoapi.c	$stonexp
 mkdir stone-$ver
-cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt logmsg.mc service.c service.h svcbody.c svcbody.h cryptoapi.c stone-$ver/.
+cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt logmsg.mc cryptoapi.c stone-$ver/.
 sed -e "s/^Version: .*/Version: $ver/" stone.spec > stone-$ver/stone.spec
 
 mkdir -p stone_${ver}_arm/CONTROL
@@ -84,16 +72,10 @@ then	touch -t $stamp  \
 	$stoneme/stone.exe   $stonent/stone.exe   $stonexp/stone.exe   \
 	$stoneme/Makefile    $stonent/Makefile    $stonexp/Makefile    \
 	$stoneme/logmsg.mc   $stonent/logmsg.mc   $stonexp/logmsg.mc   \
-	$stoneme/service.c   $stonent/service.c   $stonexp/service.c   \
-	$stoneme/service.h   $stonent/service.h   $stonexp/service.h   \
-	$stoneme/svcbody.c   $stonent/svcbody.c   $stonexp/svcbody.c   \
-	$stoneme/svcbody.h   $stonent/svcbody.h   $stonexp/svcbody.h   \
 	$stoneme/cryptoapi.c $stonent/cryptoapi.c $stonexp/cryptoapi.c \
 	stone-$ver/README.* stone-$ver/stone.c stone-$ver/Makefile \
 	stone-$ver/stone.spec \
 	stone-$ver/logmsg.mc \
-	stone-$ver/service.c stone-$ver/service.h \
-	stone-$ver/svcbody.c stone-$ver/svcbody.h \
 	stone-$ver/cryptoapi.c \
 	README.* stone.c Makefile \
 	stone_${ver}_arm/CONTROL/control \
