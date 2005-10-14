@@ -1,15 +1,14 @@
 
 			    Simple Repeater
 
-			   stone version 2.2e
+			   stone version 2.2g
 
 		Copyright(c)1995-2005 by Hiroaki Sengoku
 			    sengoku@gcd.org
 
 
-  Stone is a TCP/IP packet repeater in the application layer.  It
-repeats TCP and UDP packets from inside to outside of a firewall, or
-from outside to inside.
+  Stone is a TCP/IP repeater in the application layer.  It repeats TCP
+and UDP from inside to outside of a firewall, or from outside to inside.
 
   Stone has following features:
 
@@ -20,15 +19,15 @@ from outside to inside.
 	FreeBSD, BSD/OS, SunOS, Solaris, HP-UX and so on.
 
 2.  Simple.
-	Stone's source code is only 6000 lines long (written in C
+	Stone's source code is only 8000 lines long (written in C
 	language), so you can minimize the risk of security
 	holes.
 
 3.  Stone supports SSL.
 	Using OpenSSL (http://www.openssl.org/), stone can
-	encrypt/decrypt packets.  Client verifications, and server
-	verifications are also supported.  Stone can send a substring of
-	the subject of the certificate to the destination.
+	encrypt/decrypt.  Client verifications, and server verifications
+	are also supported.  Stone can send a substring of the subject
+	of the certificate to the destination.
 
 4.  Stone is a http proxy.
 	Stone can also be a tiny http proxy.
@@ -37,18 +36,24 @@ from outside to inside.
 	With stone and a mailer that does not support APOP, you can
 	access to an APOP server.
 
+6.  Stone supports IPv6.
+	Stone can convert IP and IPv6 each other.  With stone, you can
+	use IP-only software on IPv6 network.
+
 
 HOWTO USE
 
 	stone [-C <file>] [-P <command>] [-Q <options>] [-N] [-d] [-p] [-n]
 	      [-u <max>] [-f <n>] [-l] [-L <file>] [-a <file>] [-i <file>]
 	      [-X <n>] [-T <n>] [-r]
+	      [-x <port>[,<port>][-<port>]... <xhost>... --]
 	      [-s <send> <expect>... --]
 	      [-b [<var>=<val>]... <n> <master>:<port> <backup>:<port>]
 	      [-B <host>:<port> <host1>:<port1>... --]
 	      [-I <host>]
 	      [-o <n>] [-g <n>] [-t <dir>] [-D] [-c <dir>]
 	      [-q <SSL>] [-z <SSL>]
+	      [-M install <name>] [-M remove <name>]
 	      <st> [-- <st>]...
 
 	If the ``-C <file>'' flag is used, the program read these
@@ -65,9 +70,9 @@ HOWTO USE
 	shown instead of host names and service names.
 
 	If the ``-u <max>'' flag (``<max>'' is integer) is used, the
-	program memorize ``<max>'' sources simultaneously where UDP
-	packets are sent.  If the ``-f <n>'' flag (``<n>'' is integer)
-	is used, the program spawn ``<n>'' child processes.
+	program memorize ``<max>'' UDP sources simultaneously.  If the
+	``-f <n>'' flag (``<n>'' is integer) is used, the program spawn
+	``<n>'' child processes.
 
 	If the ``-l'' flag is used, the program sends error messages to
 	the syslog instead of stderr.  If the ``-L <file>'' (``<file>''
@@ -80,6 +85,13 @@ HOWTO USE
 	the ``-T <n>'' is used, the timeout of TCP sessions can be
 	specified to ``<n>'' sec.  Default: 600.  The ``-r'' flag is
 	used, SO_REUSEADDR is set on the socket of <st> .
+
+	Using the ``-x <port>[,<port>][-<port>]... <xhost>... --'' flag,
+	the http proxy (described later) can only connect to
+	<xhost>:<port>.  If more than one ``-x ... --'' flags are
+	designated, the posterior one whose <port> list matches the
+	connecting port.  If the ``-x --'' is used, prior ``-x'' flags
+	are ignored.
 
 	The ``-b <n> <master>:<port> <backup>:<port>'' flag designates
 	the backup destination for <master>:<port>.  The program checks
@@ -108,6 +120,14 @@ HOWTO USE
 	root to the directory.  The ``-c <dir>'' flag designates the
 	directory for core dump.
 
+	The ``-M install <name>'' and the ``-M remove <name>'' flags are
+	for NT service.  ``<name>'' is the service name.  Start the
+	service using the command: net start <name>.  To install stone
+	service as the name ``repeater'', for example:
+
+		C:\>stone -M install repeater -C C:\stone.cfg
+		C:\>net start repeater
+
 	The ``-q <SSL>'' and the ``-z <SSL>'' flags are for SSL
 	encryption.  The ``-q <SSL>'' is for the client mode, that is,
 	when stone connects to the other SSL server as a SSL client.
@@ -134,16 +154,21 @@ HOWTO USE
 	depth=<n>	The maximum of the certificate chain.
 			If the peer's certificate exceeds <n>, the
 			verification fails.  The maximum of <n> is 9.
+	tls1		Just use TLSv1 protocol.
+	ssl3		Just use SSLv3 protocol.
+	ssl2		Just use SSLv2 protocol.
 	no_tls1		Turn off TLSv1 protocol.
 	no_ssl3		Turn off SSLv3 protocol.
 	no_ssl2		Turn off SSLv2 protocol.
 	bugs		Switch on all SSL implementation bug workarounds.
 	serverpref	Use server's cipher preferences (only SSLv2).
 	sid_ctx=<str>	Set session ID context.
+	passfile=<file>	The filename of the file containing password of the key
 	key=<file>	The filename of the secret key of the certificate.
 	cert=<file>	The filename of the certificate.
 	CAfile=<file>	The filename of the certificate of the CA.
 	CApath=<dir>	The directory of the certificate files.
+	pfx=<file>	The filename of the PKCS#12 bag.
 	cipher=<list>	The list of ciphers.
 	lb<n>=<m>	change the destination according to the
 			certificate of the peer.  The number calculated
@@ -157,28 +182,33 @@ HOWTO USE
 
 	(1)	<host>:<port> <sport> [<xhost>...]
 	(2)	<host>:<port> <shost>:<sport> [<xhost>...]
-	(3)	<display> [<xhost>...]
-	(4)	proxy <sport> [<xhost>...]
-	(5)	<host>:<port>/http <request> [<hosts>...]
-	(6)	<host>:<port>/proxy <header> [<hosts>...]
+	(3)	proxy <sport> [<xhost>...]
+	(4)	<host>:<port>/http <request> [<hosts>...]
+	(5)	<host>:<port>/proxy <header> [<hosts>...]
+	(6)	health <sport> [<xhost>...]
 
 	The program repeats the connection on port ``<sport>'' to the
 	other machine ``<host>'' port ``<port>''.  If the machine, on
 	which the program runs, has two or more interfaces, type (2) can
 	be used to repeat the connection on the specified interface
-	``<shost>''.
+	``<shost>''.  You can also specify path name that begins with
+	``/'' or ``./'', instead of ``<host>:<port>'' so that the
+	program handles a unix domain socket.
 
-	Type (3) is the abbreviating notation.  The program repeats the
-	connection on display number ``<display>'' to the X server
-	designated by the environment variable ``DISPLAY''.
-
-	Type (4) is a http proxy.  Specify the machine, on which the
+	Type (3) is a http proxy.  Specify the machine, on which the
 	program runs, and port ``<sport>'' in the http proxy settings of
 	your WWW browser.
 
-	Type (5) repeats packets over http request.  ``<request>'' is
-	the request specified in HTTP 1.0.  In the ``<request>'', ``\''
-	is the escape character, and the following substitution occurs.
+	Extentions can be added to the ``proxy'' like ``<xhost>/<ext''.
+	<ext> is:
+
+	v4only	limit the destination within IP addresses.
+
+	v6only	limit the destination within IPv6 addresses.
+
+	Type (4) relays stream over http request.  ``<request>'' is the
+	request specified in HTTP 1.0.  In the ``<request>'', ``\'' is
+	the escape character, and the following substitution occurs.
 
 		\n	newline  (0x0A)
 		\r	return   (0x0D)
@@ -192,63 +222,89 @@ HOWTO USE
 			if \1 (\2 - \9 in a similar way) is not null,
 			<then>, otherwise <else>.
 
-	Type (6) repeats http request with ``<header>'' in the top of
+	Type (5) repeats http request with ``<header>'' in the top of
 	request headers.  The above escapes can be also used.
+
+	Type (6) designates the port that other programs can check
+	whether the stone runs `healthy' or not.  Following commands are
+	available to check the stone.
+
+		HELO <any string>	returns the status of the stone
+		LIMIT <var> <n>		check the value of <var> is
+					less than <n>
+	``<var>'' is one of the following:
+
+		PAIR		the number of ``pair''
+		CONN		the number of ``conn''
+		ESTABLISHED	seconds passed since the last conn established
+		READWRITE	seconds passed since the last read/write
+		ASYNC		the number of threads
+
+	The response of the stone is 2xx when normal, or 5xx when
+	abnormal on the top of line.
 
 	If the ``<xhost>'' are used, only machines ``<xhost>'' can
 	connect to the program.
 
-	If the ``<xhost>/<mask>'' are used, only machines on specified
-	networks are permitted to connect to the program.  In the case
-	of class C network 192.168.1.0, for example, use
-	``192.168.1.0/255.255.255.0''.  ``<mask>'' may be a number such
-	as ``192.168.1.0/24''.
+	Extentions can be added to the ``<xhost>'' like
+	``<xhost>/<ex>,<ex>...''.  <ex> is:
+
+	<m>	You can designate the length of prefix bits of the
+		netmask, so that only machines on specified.  In the
+		case of class C network 192.168.1.0, for example, use
+		``192.168.1.0/24''.
+
+	v4	<xhost> is resolved as the IP address.
+
+	v6	<xhost> is resolved as the IPv6 address.
+
+	p<m>	the data repeated by the program are dumped, only if it
+		was connected by the machines specified by <xhost>.  <m>
+		is the dump mode, equivalent to the number of ``-p''
+		options.
 
 	Use ``!'' instead of ``<xhost>'', to deny machines by following
 	``<xhost>''.
 
-	If the ``<sport>/udp'' is used, repeats UDP packets instead of
-	TCP packets.
+	Extentions can be added to the ``<port>'' like
+	``<port>/<ext>,<ext>...''.  <ext> is:
 
-	If the ``<sport>/apop'' is used, converts POP to APOP.  The
-	conversion is derived from the RSA Data Security, Inc. MD5
-	Message-Digest Algorithm.
+	udp	repeats UDP instead of TCP.
 
-	If the ``<port>/ssl'' is used, repeats packets with encryption.
+	ssl	forwards with encryption.
 
-	If the ``<sport>/ssl'' is used, repeats packets with decryption.
+	v6	connects to the destination using IPv6.
 
-	If the ``<port>/base'' is used, repeats packets with MIME base64
-	encoding.
+	base	forwards with MIME base64 encoding.
 
-	If the ``<sport>/base'' is used, repeats packets with MIME
-	base64 decoding.
+	Extentions can be added to the ``<sport>'' like
+	``<sport>/<ext>,<ext>...''.  <ext> is:
 
-	If the ``<sport>/http'' is used, repeats packets over http.
+	udp	repeats UDP instead of TCP.
 
-	If the ``<sport>/ident'' is used, identifies the owner of the
-	incoming connection on the peer using ident protocol (RFC1413).
+	apop	converts POP to APOP.  The conversion is derived from
+		the RSA Data Security, Inc. MD5 Message-Digest Algorithm.
 
-HOWTO USE (NT service version)
+	ssl	forwards with decryption.
 
-	stone -install		to install the stone service
-	stone -remove		to remove the service
-	stone -debug <params>	to run as a console application for debugging
+	v6	accepts connection using IPv6.  If <shost> is omitted 
+		like (1), IP is also acceptable.
 
-	The option ``-C stone.cfg'' is automatically designated.  That
-	is, the stone read options from the file named ``stone.cfg'' in
-	the same directory where the ``stone.exe'' exists.
+	v6only	accepts connection using IPv6 only.  Even if <shost> is
+		omitted like (1), IP is not acceptable.
+
+	base	forwards with MIME base64 decoding.
+
+	http	relays stream over http.
+
+	ident	identifies the owner of the incoming connection
+		on the peer using ident protocol (RFC1413).
 
 
 EXAMPLES
 	outer: a machine in the outside of the firewall
 	inner: a machine in the inside of the firewall
 	fwall: the firewall on which the stone is executed
-
-	stone 7 outer
-		Repeats the X protocol to the machine designated by the
-		environmental variable ``DISPLAY''.  Run X clients under
-		``DISPLAY=inner:7'' on ``outer''.
 
 	stone outer:telnet 10023
 		Repeats the telnet protocol to ``outer''.
@@ -286,7 +342,7 @@ EXAMPLES
 	stone fwall:8080/http 10023 'POST http://outer:8023 HTTP/1.0'
 	stone localhost:telnet 8023/http
 		Run stones on ``inner'' and ``outer'' respectively.
-		Repeats packets over http.
+		Relays stream over http.
 
 	stone fwall:8080/proxy 9080 'Proxy-Authorization: Basic c2VuZ29rdTpoaXJvYWtp'
 		for browser that does not support proxy authorization.
