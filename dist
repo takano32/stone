@@ -15,7 +15,7 @@ stonez=stone23z
 if [ -n "$1" ]
 then	stamp=$1
 fi
-rm -rf stone-$ver stoneme-$ver.lzh stonent-$ver.lzh stonexp-$ver.lzh \
+rm -rf stone-$ver stoneme-$ver.zip stonent-$ver.zip stonexp-$ver.zip \
 	stone_${ver}_arm stone_${ver}_arm.ipk
 
 nkf_s() {
@@ -83,11 +83,11 @@ then	touch -t $stamp  \
 	find $stoneme $stonent $stonexp stone-$ver stone_${ver}_arm -type d \
 		| xargs touch -t $stamp
 	tar czf stone-$ver.tar.gz stone-$ver
-	lha u stoneme-$ver.lzh $stoneme
-	lha u stonent-$ver.lzh $stonent
-	lha u stonexp-$ver.lzh $stonexp
+	zip -r stoneme-$ver.zip $stoneme
+	zip -r stonent-$ver.zip $stonent
+	zip -r stonexp-$ver.zip $stonexp
 	ipkg-build stone_${ver}_arm
 	touch -t $stamp stone-$ver.tar.gz \
-		stoneme-$ver.lzh stonent-$ver.lzh stonexp-$ver.lzh \
+		stoneme-$ver.zip stonent-$ver.zip stonexp-$ver.zip \
 		stone_${ver}_arm.ipk
 fi
