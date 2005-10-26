@@ -322,10 +322,6 @@ EXAMPLES
 		Make WWW server that supports ``https''.
 		Access ``https://fwall/'' using a WWW browser.
 
-	    NOTICE: Most WWW browsers, such as the export versions of
-		    Netscape Navigator, can't handle keys whose length
-		    are longer than 512 bit.
-
 	stone localhost:telnet 10023/ssl
 		Make telnet server that supports SSL.
 		Run ``SSLtelnet -z ssl fwall 10023'' on ``inner''.
@@ -333,7 +329,7 @@ EXAMPLES
 	stone proxy 8080
 		http proxy.
 
-	stone outer:pop/apop pop
+	stone outer:110/apop 110
 		connect to inner:pop using a mailer that does not
 		support APOP.
 

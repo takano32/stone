@@ -316,9 +316,6 @@
 		WWW サーバを https 対応にする
 		WWW ブラウザで https://fwall/ をアクセス
 
-	    注意: 輸出版 Netscape Navigator 等、多くの WWW ブラウザは 
-		  512bit 超の鍵を扱えません
-
 	stone localhost:telnet 10023/ssl
 		telnet を SSL 化
 		inner で SSLtelnet -z ssl fwall 10023 を実行
@@ -326,7 +323,7 @@
 	stone proxy 8080
 		http proxy
 
-	stone outer:pop/apop pop
+	stone outer:110/apop 110
 		APOP に対応していないメーラで inner:pop へ接続
 
 	fwall が http proxy (port 8080) である時:
