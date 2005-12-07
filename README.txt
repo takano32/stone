@@ -1,7 +1,7 @@
 
 			    Simple Repeater
 
-			   stone version 2.2h
+			   stone version 2.2i
 
 		Copyright(c)1995-2005 by Hiroaki Sengoku
 			    sengoku@gcd.org
@@ -138,6 +138,8 @@
 			認証します。送られてこない場合は認証せずに
 			セッションを開始します。(-z 専用)
 	verify,none	SSL 接続相手に SSL 証明書を要求しません。
+	crl_check	CRL をチェックします。
+	crl_check_all	証明書チェーンの全てにおいて CRL をチェックします。
 	uniq		SSL 接続相手の SSL 証明書のシリアル番号が前回の
 			接続と異なる場合、接続を拒否します。
 	re<n>=<regex>	SSL 証明書のチェーンが満たすべき正規表現を指定します。

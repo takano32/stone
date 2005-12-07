@@ -1,7 +1,7 @@
 
 			    Simple Repeater
 
-			   stone version 2.2h
+			   stone version 2.2i
 
 		Copyright(c)1995-2005 by Hiroaki Sengoku
 			    sengoku@gcd.org
@@ -147,6 +147,8 @@ HOWTO USE
 			is different from the previous session, deny it.
 	verify,ifany	The certificate returned (if any) is checked. (-z only)
 	verify,none	never request SSL certificate to the peer.
+	crl_check	lookup CRLs.
+	crl_check_all	lookup CRLs for whole chain.
 	re<n>=<regex>	The certificate of the peer must satisfy the
 			<regex>.  <n> is the depth.  re0 means the subject
 			of the certificate, and re1 means the issure.
