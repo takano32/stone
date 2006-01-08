@@ -14,7 +14,7 @@ and UDP from inside to outside of a firewall, or from outside to inside.
 
 1.  Stone supports Win32.
 	Formerly, UNIX machines are used as firewalls, but recently
-	WindowsNT machines are used, too.  You can easily run Stone on
+	WindowsNT machines are used, too.  You can easily run stone on
 	WindowsNT and Windows95.  Of course, available on Linux,
 	FreeBSD, BSD/OS, SunOS, Solaris, HP-UX and so on.
 
@@ -70,9 +70,10 @@ HOWTO USE
 	shown instead of host names and service names.
 
 	If the ``-u <max>'' flag (``<max>'' is integer) is used, the
-	program memorize ``<max>'' UDP sources simultaneously.  If the
-	``-f <n>'' flag (``<n>'' is integer) is used, the program spawn
-	``<n>'' child processes.
+	program memorize ``<max>'' UDP sources simultaneously.  The
+	default value is 100.  If the ``-f <n>'' flag (``<n>'' is
+	integer) is used, the program spawn ``<n>'' child processes.
+	The default behavior is not to spawn any child processes.
 
 	If the ``-l'' flag is used, the program sends error messages to
 	the syslog instead of stderr.  If the ``-L <file>'' (``<file>''
@@ -81,10 +82,11 @@ HOWTO USE
 	writes accounting to the file.  If the ``-i <file>'' flag is
 	used, the program writes its process ID to the file.
 
-	The ``-X <n>'' flag alters the buffer size of the repeater.  If
-	the ``-T <n>'' is used, the timeout of TCP sessions can be
-	specified to ``<n>'' sec.  Default: 600.  The ``-r'' flag is
-	used, SO_REUSEADDR is set on the socket of <st> .
+	The ``-X <n>'' flag alters the buffer size of the repeater.  The
+	default value is 1000 bytes.  If the ``-T <n>'' is used, the
+	timeout of TCP sessions can be specified to ``<n>'' sec.
+	Default: 600.  The ``-r'' flag is used, SO_REUSEADDR is set on
+	the socket of <st> .
 
 	Using the ``-x <port>[,<port>][-<port>]... <xhost>... --'' flag,
 	the http proxy (described later) can only connect to
@@ -117,8 +119,9 @@ HOWTO USE
 	If the ``-o <n>'' or ``-g <n>'' flag is used, the program set
 	its uid or gid to ``<n>'' respectively.  If the ``-t <dir>''
 	flag (``<dir>'' is a directory) is used, the program change its
-	root to the directory.  The ``-c <dir>'' flag designates the
-	directory for core dump.
+	root to the directory.  If the ``-D'' flag is used, stone runs
+	as a daemon.  The ``-c <dir>'' flag designates the directory for
+	core dump.
 
 	The ``-M install <name>'' and the ``-M remove <name>'' flags are
 	for NT service.  ``<name>'' is the service name.  Start the
@@ -143,12 +146,12 @@ HOWTO USE
 	verify		require SSL certificate to the peer.
 	verify,once	request a client certificate on the initial TLS/SSL
 			handshake. (-z only)
-	uniq		if the serial number of peer's SSL certificate
-			is different from the previous session, deny it.
 	verify,ifany	The certificate returned (if any) is checked. (-z only)
 	verify,none	never request SSL certificate to the peer.
 	crl_check	lookup CRLs.
 	crl_check_all	lookup CRLs for whole chain.
+	uniq		if the serial number of peer's SSL certificate
+			is different from the previous session, deny it.
 	re<n>=<regex>	The certificate of the peer must satisfy the
 			<regex>.  <n> is the depth.  re0 means the subject
 			of the certificate, and re1 means the issure.
@@ -185,8 +188,8 @@ HOWTO USE
 	(1)	<host>:<port> <sport> [<xhost>...]
 	(2)	<host>:<port> <shost>:<sport> [<xhost>...]
 	(3)	proxy <sport> [<xhost>...]
-	(4)	<host>:<port>/http <request> [<hosts>...]
-	(5)	<host>:<port>/proxy <header> [<hosts>...]
+	(4)	<host>:<port>/http <request> [<xhost>...]
+	(5)	<host>:<port>/proxy <header> [<xhost>...]
 	(6)	health <sport> [<xhost>...]
 
 	The program repeats the connection on port ``<sport>'' to the
@@ -200,8 +203,7 @@ HOWTO USE
 	Type (3) is a http proxy.  Specify the machine, on which the
 	program runs, and port ``<sport>'' in the http proxy settings of
 	your WWW browser.
-
-	Extentions can be added to the ``proxy'' like ``<xhost>/<ext''.
+	Extentions can be added to the ``proxy'' like ``<xhost>/<ext>''.
 	<ext> is:
 
 	v4only	limit the destination within IP addresses.
@@ -245,8 +247,9 @@ HOWTO USE
 	The response of the stone is 2xx when normal, or 5xx when
 	abnormal on the top of line.
 
-	If the ``<xhost>'' are used, only machines ``<xhost>'' can
-	connect to the program.
+	If the ``<xhost>'' are used, only machines or its IP addresses
+	listed in ``<xhost>'' separated by space character can
+	connect to the program and to be repeated.
 
 	Extentions can be added to the ``<xhost>'' like
 	``<xhost>/<ex>,<ex>...''.  <ex> is:
