@@ -174,7 +174,7 @@ mingw.exe: stone.c
 	$(CC) $(CFLAGS) $(FLAGS) -o stone.exe $? $(LIBS)
 
 mingw:
-	$(MAKE) CC=gcc FLAGS="-DWINDOWS -DNO_RINDEX $(FLAGS)" LIBS="-lws2_32 -lregex $(LIBS)" mingw.exe
+	$(MAKE) CC=gcc FLAGS="-DWINDOWS -DNO_RINDEX -DADDRCACHE $(FLAGS)" LIBS="-lws2_32 -lregex $(LIBS)" mingw.exe
 
 mingw-pop:
 	$(MAKE) CC=gcc TARGET=mingw pop_stone
