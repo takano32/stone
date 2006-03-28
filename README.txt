@@ -1,7 +1,7 @@
 
 			    Simple Repeater
 
-			   stone version 2.3
+			   stone version 2.3a
 
 		Copyright(c)1995-2006 by Hiroaki Sengoku
 			    sengoku@gcd.org
@@ -20,7 +20,7 @@
 	UNIX マシンでも使うことができます。
 
 2. 単純
-	わずか 8000 行 (C 言語) ですので、セキュリティホールが生じる可能
+	わずか 9000 行 (C 言語) ですので、セキュリティホールが生じる可能
 	性を最小限にできます。
 
 3. SSL 対応
