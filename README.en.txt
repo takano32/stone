@@ -220,6 +220,13 @@ HOWTO USE
 		\\	\ itself (0x5C)
 		\a	the IP address of the client connecting to the stone.
 		\A	<IP address of the client>:<port number>
+		\d	the destination IP address
+		\D	<dst IP address>:<port number> (for transparent proxy)
+		\u	uid (number) of the client
+		\U	user name of the client
+		\g	gid (number) of the client
+		\G	group name of the client
+			\u \U \g \G are valid in the case of unix domain socket
 		\0	the serial number of peer's SSL certificate.
 		\1 - \9	the matched string in the ``regex'' of SSL options.
 		\?1<then>\:<else>\/
