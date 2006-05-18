@@ -178,8 +178,8 @@
 	(1)	<host>:<port> <sport> [<xhost>...]
 	(2)	<host>:<port> <shost>:<sport> [<xhost>...]
 	(3)	proxy <sport> [<xhost>...]
-	(4)	<host>:<port>/http <request> [<xhost>...]
-	(5)	<host>:<port>/proxy <header> [<xhost>...]
+	(4)	<host>:<port>/http <sport> <request> [<xhost>...]
+	(5)	<host>:<port>/proxy <sport> <header> [<xhost>...]
 	(6)	health <sport> [<xhost>...]
 
 	stone を実行しているマシンのポート <sport> への接続を、他のマシ
@@ -223,13 +223,21 @@
 			なければ <then>、空文字列であれば <else>
 
 	(5) は、http リクエストヘッダの先頭に <header> を追加して中継し
-	ます。(4) と同様のエスケープを使うことができます。
+	ます。(4) と同様のエスケープを使うことができます。「/proxy」の代
+	わりに「/mproxy」を指定すると、リクエストヘッダごとに <header> 
+	を追加します。
 
 	(6) は、stone が正常に動作しているか検査するためのポートの指定で
 	す。<sport> で指定したポートに接続して以下のコマンドを送信すると、
 	stone の状態が返されます。
 
-		HELO 任意の文字列	stone の状態の一覧を返す
+		HELO 任意の文字列	stone, pair, trash 等の個数
+		STAT			スレッドの個数, mutex コンフリクト回数
+		FREE			free リスト長
+		CLOCK			経過秒数
+		CVS_ID			CVS の ID
+		CONFIG			config ファイルの内容
+		STONE			各 stone の設定内容
 		LIMIT <var> <n>		変数 <var> の値が <n> 未満か調べる
 
 	<var> は次のうちのいずれかです。

@@ -188,8 +188,8 @@ HOWTO USE
 	(1)	<host>:<port> <sport> [<xhost>...]
 	(2)	<host>:<port> <shost>:<sport> [<xhost>...]
 	(3)	proxy <sport> [<xhost>...]
-	(4)	<host>:<port>/http <request> [<xhost>...]
-	(5)	<host>:<port>/proxy <header> [<xhost>...]
+	(4)	<host>:<port>/http <sport> <request> [<xhost>...]
+	(5)	<host>:<port>/proxy <sport> <header> [<xhost>...]
 	(6)	health <sport> [<xhost>...]
 
 	The program repeats the connection on port ``<sport>'' to the
@@ -234,13 +234,21 @@ HOWTO USE
 			<then>, otherwise <else>.
 
 	Type (5) repeats http request with ``<header>'' in the top of
-	request headers.  The above escapes can be also used.
+	request headers.  The above escapes can be also used.  If
+	``/mproxy'' is designated instead of ``/proxy'', ``<header>'' is
+	added to each request headers.
 
 	Type (6) designates the port that other programs can check
 	whether the stone runs `healthy' or not.  Following commands are
 	available to check the stone.
 
 		HELO <any string>	returns the status of the stone
+		STAT			# of threads, mutex conflicts
+		FREE			length of free lists
+		CLOCK			seconds passed
+		CVS_ID			CVS ID
+		CONFIG			content of the configuration file
+		STONE			configuration of each stones
 		LIMIT <var> <n>		check the value of <var> is
 					less than <n>
 	``<var>'' is one of the following:
