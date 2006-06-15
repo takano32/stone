@@ -45,7 +45,8 @@ nkf_s	GPL.txt		$stonexp
 nkf_s	logmsg.mc	$stonexp
 nkf_s	cryptoapi.c	$stonexp
 mkdir stone-$ver
-cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt logmsg.mc cryptoapi.c stone-$ver/.
+#cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt logmsg.mc cryptoapi.c stone-$ver/.
+cp -p README.en.txt README.txt stone.c Makefile GPL.txt logmsg.mc cryptoapi.c stone-$ver/.
 sed -e "s/^Version: .*/Version: $ver/" stone.spec > stone-$ver/stone.spec
 
 mkdir -p stone_${ver}_arm/CONTROL
