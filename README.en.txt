@@ -156,6 +156,8 @@ HOWTO USE
 			<regex>.  <n> is the depth.  re0 means the subject
 			of the certificate, and re1 means the issure.
 			The maximum of <n> is 9.
+			if <n> is negative, re-1 means the root CA and
+			re-2 means its child CA.
 	depth=<n>	The maximum of the certificate chain.
 			If the peer's certificate exceeds <n>, the
 			verification fails.  The maximum of <n> is 9.
