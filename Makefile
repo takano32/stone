@@ -19,7 +19,7 @@
 # -DWINDOWS	Windows95/98/NT
 # -DNT_SERVICE	WindowsNT/2000 native service
 
-CFLAGS=		# -g
+CFLAGS=		-Wall # -g
 
 SSL=		/usr/local/ssl
 SSL_FLAGS=	-DUSE_SSL -I$(SSL)/include
