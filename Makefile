@@ -19,7 +19,7 @@
 # -DWINDOWS	Windows95/98/NT
 # -DNT_SERVICE	WindowsNT/2000 native service
 
-CFLAGS=		-Wall # -g
+CFLAGS=		# -Wall -g
 
 SSL=		/usr/local/ssl
 SSL_FLAGS=	-DUSE_SSL -I$(SSL)/include
@@ -28,6 +28,9 @@ SSL_LIBS=	-L$(SSL)/lib -lssl -lcrypto
 POP_FLAGS=	-DUSE_POP
 POP_LIBS=	md5c.o
 
+MC=		wmc
+RC=		wrc
+WINDRES=	i386-mingw32-windres
 SVC_LIBS=	logmsg.o
 
 all:
@@ -77,16 +80,19 @@ svc_stone.exe: logmsg.res
 	$(MAKE) FLAGS="/DNT_SERVICE $(FLAGS)" LIBS="logmsg.res advapi32.lib user32.lib gdi32.lib shell32.lib kernel32.lib" $(TARGET)
 
 logmsg.rc: logmsg.mc
-	mc $?
+	$(MC) -i $?
 
-logmsg.o: logmsg.rc
-	windres $? -o $@
+logmsg.res: logmsg.rc
+	$(RC) $?
+
+logmsg.o: logmsg.res
+	$(WINDRES) $? -o $@
 
 svc_stone: logmsg.rc $(SVC_LIBS)
 	$(MAKE) FLAGS="-DNT_SERVICE $(FLAGS) $(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(LIBS) $(SSL_LIBS) $(SVC_LIBS) -ladvapi32 -luser32 -lgdi32 -lshell32 -lkernel32" $(TARGET)
 
 linux:
-	$(MAKE) FLAGS="-DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON -DPRCTL -DSO_ORIGINAL_DST=80 -DUSE_EPOLL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
+	$(MAKE) FLAGS="-Wall -DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON -DPRCTL -DSO_ORIGINAL_DST=80 -DUSE_EPOLL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
 
 linux-pop:
 	$(MAKE) TARGET=linux pop_stone
@@ -95,7 +101,7 @@ linux-ssl:
 	$(MAKE) TARGET=linux ssl_stone LIBS="-ldl"
 
 zaurus:
-	$(MAKE) CC="arm-linux-gcc" FLAGS="-DPTHREAD -DUNIX_DAEMON $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
+	$(MAKE) CC="arm-linux-gcc" FLAGS="-Wall -DPTHREAD -DUNIX_DAEMON $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
 	arm-linux-strip stone
 
 zaurus-pop:
@@ -174,22 +180,22 @@ mingw.exe: stone.c
 	$(CC) $(CFLAGS) $(FLAGS) -o stone.exe $? $(LIBS)
 
 mingw:
-	$(MAKE) CC=gcc FLAGS="-DWINDOWS -DNO_RINDEX -DADDRCACHE $(FLAGS)" LIBS="-lws2_32 -lregex $(LIBS)" mingw.exe
+	$(MAKE) CC="i386-mingw32-gcc" FLAGS="-Wall -D_WIN32_WINNT=0x0501 -DWINDOWS -DNO_RINDEX -DNO_LOCALTIME_R -DADDRCACHE $(FLAGS)" LIBS="-lws2_32 -lregex $(LIBS)" mingw.exe
 
 mingw-pop:
-	$(MAKE) CC=gcc TARGET=mingw pop_stone
+	$(MAKE) CC="i386-mingw32-gcc" TARGET=mingw pop_stone
 
 mingw-ssl: cryptoapi.o
-	$(MAKE) CC=gcc SSL_FLAGS="$(SSL_FLAGS) -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
+	$(MAKE) CC="i386-mingw32-gcc" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
 
 mingw-me:
-	$(MAKE) CC=gcc SSL_FLAGS="$(SSL_FLAGS) -DNO_ADDRINFO" SSL_LIBS="-lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
+	$(MAKE) CC="i386-mingw32-gcc" SSL_FLAGS="-DUSE_SSL -DNO_ADDRINFO" SSL_LIBS="-lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
 
 mingw-nt:
-	$(MAKE) CC=gcc SSL_FLAGS="$(SSL_FLAGS) -DCRYPTOAPI -DNO_ADDRINFO" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw svc_stone
+	$(MAKE) CC="i386-mingw32-gcc" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI -DNO_ADDRINFO" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw svc_stone
 
 mingw-svc:
-	$(MAKE) CC=gcc SSL_FLAGS="$(SSL_FLAGS) -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw svc_stone
+	$(MAKE) CC="i386-mingw32-gcc" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw svc_stone
 
 emx:
 	$(MAKE) CC=gcc FLAGS="-DOS2 -Zmts -Zsysv-signals $(FLAGS)" LIBS="$(LIBS) -lsocket" stone.exe
