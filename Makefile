@@ -180,7 +180,7 @@ mingw.exe: stone.c
 	$(CC) $(CFLAGS) $(FLAGS) -o stone.exe $? $(LIBS)
 
 mingw:
-	$(MAKE) CC="i386-mingw32-gcc" FLAGS="-Wall -D_WIN32_WINNT=0x0501 -DWINDOWS -DNO_RINDEX -DNO_LOCALTIME_R -DADDRCACHE $(FLAGS)" LIBS="-lws2_32 -lregex $(LIBS)" mingw.exe
+	$(MAKE) CC="i386-mingw32-gcc" FLAGS="-Wall -D_WIN32_WINNT=0x0501 -DWINDOWS -DNO_RINDEX -DADDRCACHE $(FLAGS)" LIBS="-lws2_32 -lregex $(LIBS)" mingw.exe
 
 mingw-pop:
 	$(MAKE) CC="i386-mingw32-gcc" TARGET=mingw pop_stone
