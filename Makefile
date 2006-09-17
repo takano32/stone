@@ -52,7 +52,7 @@ all:
 	@echo "using above conv. and OpenSSL, add '-ssl' (example: linux-ssl)"
 
 clean:
-	rm -f stone $(POP_LIBS) stone.exe stone.obj md5c.obj stone.o $(SVC_LIBS) MSG00001.bin logmsg.h logmsg.rc
+	rm -f stone $(POP_LIBS) stone.exe stone.obj md5c.obj stone.o $(SVC_LIBS) MSG00001.bin logmsg.h logmsg.rc cryptoapi.o
 
 md5c.c:
 	@echo "*** md5c.c is contained in RFC1321"
@@ -64,7 +64,7 @@ pop_stone: $(POP_LIBS)
 	$(MAKE) FLAGS="$(POP_FLAGS)" LIBS="$(POP_LIBS)" $(TARGET)
 
 ssl_stone:
-	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(LIBS) $(SSL_LIBS)" $(TARGET)
+	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS) $(FLAGS)" LIBS="$(LIBS) $(SSL_LIBS)" $(TARGET)
 
 stone.exe: stone.c
 	$(CC) $(CFLAGS) $(FLAGS) $? $(LIBS)
@@ -87,6 +87,9 @@ logmsg.res: logmsg.rc
 
 logmsg.o: logmsg.res
 	$(WINDRES) $? -o $@
+
+cryptoapi.o: cryptoapi.c
+	$(CC) -c $? -o $@
 
 svc_stone: logmsg.rc $(SVC_LIBS)
 	$(MAKE) FLAGS="-DNT_SERVICE $(FLAGS) $(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(LIBS) $(SSL_LIBS) $(SVC_LIBS) -ladvapi32 -luser32 -lgdi32 -lshell32 -lkernel32" $(TARGET)
@@ -186,16 +189,16 @@ mingw-pop:
 	$(MAKE) CC="i386-mingw32-gcc" TARGET=mingw pop_stone
 
 mingw-ssl: cryptoapi.o
-	$(MAKE) CC="i386-mingw32-gcc" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
+	$(MAKE) CC="i386-mingw32-gcc" FLAGS="$(FLAGS)" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
 
 mingw-me:
-	$(MAKE) CC="i386-mingw32-gcc" SSL_FLAGS="-DUSE_SSL -DNO_ADDRINFO" SSL_LIBS="-lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
+	$(MAKE) CC="i386-mingw32-gcc" FLAGS="-DNO_ADDRINFO" TARGET=mingw-ssl ssl_stone
 
 mingw-nt:
-	$(MAKE) CC="i386-mingw32-gcc" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI -DNO_ADDRINFO" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw svc_stone
+	$(MAKE) CC="i386-mingw32-gcc" FLAGS="-DNO_ADDRINFO" TARGET=mingw-ssl svc_stone
 
 mingw-svc:
-	$(MAKE) CC="i386-mingw32-gcc" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw svc_stone
+	$(MAKE) CC="i386-mingw32-gcc" TARGET=mingw-ssl svc_stone
 
 emx:
 	$(MAKE) CC=gcc FLAGS="-DOS2 -Zmts -Zsysv-signals $(FLAGS)" LIBS="$(LIBS) -lsocket" stone.exe
