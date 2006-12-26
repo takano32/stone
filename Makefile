@@ -37,6 +37,7 @@ all:
 	@echo "run make with one of the following arguments"
 	@echo "linux     ; for Linux"
 	@echo "zaurus    ; for Linux Zaurus"
+	@echo "fon       ; for La Fonera"
 	@echo "bsd       ; for FreeBSD or BSD/OS"
 	@echo "macosx    ; for Mac OS X"
 	@echo "sun       ; for SunOS 4.x with gcc"
@@ -112,6 +113,16 @@ zaurus-pop:
 
 zaurus-ssl:
 	$(MAKE) CC="arm-linux-gcc" SSL_LIBS="-lssl -lcrypto" TARGET=zaurus ssl_stone
+
+fon:
+	$(MAKE) CC="mips-linux-uclibc-gcc" FLAGS="-Wall -DPTHREAD -DUNIX_DAEMON -DPRCTL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
+	mips-linux-uclibc-strip stone
+
+fon-pop:
+	$(MAKE) CC="mips-linux-uclibc-gcc" TARGET=fon pop_stone
+
+fon-ssl:
+	$(MAKE) CC="mips-linux-uclibc-gcc" SSL_LIBS="-lssl -lcrypto" TARGET=fon ssl_stone
 
 bsd:
 	$(MAKE) FLAGS="-DCPP='\"/usr/bin/cpp -traditional\"' -D_THREAD_SAFE -DPTHREAD -DREG_NOERROR=0 $(FLAGS)" LIBS="-pthread $(LIBS)" stone
