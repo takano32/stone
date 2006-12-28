@@ -22,8 +22,8 @@
 CFLAGS=		# -Wall -g
 
 SSL=		/usr/local/ssl
-SSL_FLAGS=	-DUSE_SSL -I$(SSL)/include
-SSL_LIBS=	-L$(SSL)/lib -lssl -lcrypto
+SSL_FLAGS=	-DUSE_SSL
+SSL_LIBS=	-lssl -lcrypto
 
 POP_FLAGS=	-DUSE_POP
 POP_LIBS=	md5c.o
