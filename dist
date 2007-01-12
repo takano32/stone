@@ -62,6 +62,7 @@ Architecture: ${arch}
 Section: net
 Priority: optional
 Depends: openssl (>=0.9.7)
+Source: http://www.gcd.org/sengoku/stone/
 Maintainer: Hiroaki Sengoku <sengoku@gcd.org>
 Description: TCP/UDP repeater
 	Stone is a TCP/IP repeater in the application layer.
@@ -79,6 +80,7 @@ Architecture: ${arch}
 Section: net
 Priority: optional
 Depends: libopenssl, libpthread
+Source: http://www.gcd.org/sengoku/stone/
 Maintainer: Hiroaki Sengoku <sengoku@gcd.org>
 Description: TCP/UDP repeater
 	Stone is a TCP/IP repeater in the application layer.
@@ -114,8 +116,8 @@ then	touch -t $stamp  \
 	zip -r stoneme-$ver.zip $stoneme
 	zip -r stonent-$ver.zip $stonent
 	zip -r stonexp-$ver.zip $stonexp
-	ipkg-build stone_${ver}_arm
-	ipkg-build stone_${ver}_mips
+	ipkg-build -c -o root -g root stone_${ver}_arm
+	ipkg-build -c -o root -g root stone_${ver}_mips
 	touch -t $stamp stone-$ver.tar.gz \
 		stoneme-$ver.zip stonent-$ver.zip stonexp-$ver.zip \
 		stone_${ver}_arm.ipk stone_${ver}_mips.ipk
