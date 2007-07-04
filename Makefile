@@ -19,7 +19,7 @@
 # -DWINDOWS	Windows95/98/NT
 # -DNT_SERVICE	WindowsNT/2000 native service
 
-CFLAGS=		# -Wall -g
+CFLAGS=		# -g
 
 SSL=		/usr/local/ssl
 SSL_FLAGS=	-DUSE_SSL
@@ -97,7 +97,7 @@ svc_stone: logmsg.rc $(SVC_LIBS)
 	$(MAKE) FLAGS="-DNT_SERVICE $(FLAGS) $(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(LIBS) $(SSL_LIBS) $(SVC_LIBS) -ladvapi32 -luser32 -lgdi32 -lshell32 -lkernel32" $(TARGET)
 
 linux:
-	$(MAKE) FLAGS="-Wall -DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON -DPRCTL -DSO_ORIGINAL_DST=80 -DUSE_EPOLL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
+	$(MAKE) FLAGS="-O -Wall -DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON -DPRCTL -DSO_ORIGINAL_DST=80 -DUSE_EPOLL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
 
 linux-pop:
 	$(MAKE) TARGET=linux pop_stone
@@ -106,7 +106,7 @@ linux-ssl:
 	$(MAKE) TARGET=linux ssl_stone LIBS="-ldl"
 
 zaurus:
-	$(MAKE) CC="arm-linux-gcc" FLAGS="-Wall -DPTHREAD -DUNIX_DAEMON $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
+	$(MAKE) CC="arm-linux-gcc" FLAGS="-O -Wall -DPTHREAD -DUNIX_DAEMON $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
 	arm-linux-strip stone
 
 zaurus-pop:
@@ -116,7 +116,7 @@ zaurus-ssl:
 	$(MAKE) CC="arm-linux-gcc" SSL_LIBS="-lssl -lcrypto" TARGET=zaurus ssl_stone
 
 fon:
-	$(MAKE) CC="mips-linux-uclibc-gcc" FLAGS="-Wall -DPTHREAD -DUNIX_DAEMON -DPRCTL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
+	$(MAKE) CC="mips-linux-uclibc-gcc" FLAGS="-O -Wall -DPTHREAD -DUNIX_DAEMON -DPRCTL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
 	mips-linux-uclibc-strip stone
 
 fon-pop:
@@ -195,7 +195,7 @@ mingw.exe: stone.c
 	$(MINGWCC) $(CFLAGS) $(FLAGS) -o stone.exe $? $(LIBS)
 
 mingw:
-	$(MAKE) CC="$(MINGWCC)" FLAGS="-Wall -D_WIN32_WINNT=0x0501 -DWINDOWS -DNO_RINDEX -DADDRCACHE $(FLAGS)" LIBS="$(LIBS) -lws2_32 -lregex" mingw.exe
+	$(MAKE) CC="$(MINGWCC)" FLAGS="-O -Wall -D_WIN32_WINNT=0x0501 -DWINDOWS -DNO_RINDEX -DADDRCACHE $(FLAGS)" LIBS="$(LIBS) -lws2_32 -lregex" mingw.exe
 
 mingw-pop:
 	$(MAKE) CC="$(MINGWCC)" TARGET=mingw pop_stone
