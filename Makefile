@@ -28,10 +28,10 @@ SSL_LIBS=	-lssl -lcrypto
 POP_FLAGS=	-DUSE_POP
 POP_LIBS=	md5c.o
 
-MINGWCC=	i386-mingw32-gcc
+MINGWCC=	mingw32-gcc
 MC=		wmc
 RC=		wrc
-WINDRES=	i386-mingw32-windres
+WINDRES=	windres
 SVC_LIBS=	logmsg.o
 
 all:
@@ -195,13 +195,13 @@ mingw.exe: stone.c
 	$(MINGWCC) $(CFLAGS) $(FLAGS) -o stone.exe $? $(LIBS)
 
 mingw:
-	$(MAKE) CC="$(MINGWCC)" FLAGS="-O -Wall -D_WIN32_WINNT=0x0501 -DWINDOWS -DNO_RINDEX -DADDRCACHE $(FLAGS)" LIBS="$(LIBS) -lws2_32 -lregex" mingw.exe
+	$(MAKE) CC="$(MINGWCC)" FLAGS="-O -Wall -D_WIN32_WINNT=0x0501 -DWINDOWS -DNO_RINDEX -DADDRCACHE $(FLAGS)" LIBS="$(LIBS) -lws2_32 -lregex -lgdi32" mingw.exe
 
 mingw-pop:
 	$(MAKE) CC="$(MINGWCC)" TARGET=mingw pop_stone
 
 mingw-ssl: cryptoapi.o
-	$(MAKE) CC="$(MINGWCC)" FLAGS="$(FLAGS)" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
+	$(MAKE) CC="$(MINGWCC)" FLAGS="$(FLAGS)" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl -lcrypto" TARGET=mingw ssl_stone
 
 mingw-me:
 	$(MAKE) CC="$(MINGWCC)" FLAGS="-DNO_ADDRINFO" TARGET=mingw-ssl ssl_stone

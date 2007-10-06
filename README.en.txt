@@ -1,9 +1,9 @@
 
 			    Simple Repeater
 
-			   stone version 2.3c
+			   stone version 2.3d
 
-		Copyright(c)1995-2006 by Hiroaki Sengoku
+		Copyright(c)1995-2007 by Hiroaki Sengoku
 			    sengoku@gcd.org
 
 
@@ -167,15 +167,26 @@ HOWTO USE
 	no_tls1		Turn off TLSv1 protocol.
 	no_ssl3		Turn off SSLv3 protocol.
 	no_ssl2		Turn off SSLv2 protocol.
+	sni		Server Name Indication (SNI).
+	servername=<str>	The name of the server indicated by SNI.
 	bugs		Switch on all SSL implementation bug workarounds.
 	serverpref	Use server's cipher preferences (only SSLv2).
 	sid_ctx=<str>	Set session ID context.
 	passfile=<file>	The filename of the file containing password of the key
+	passfilepat=<file>	The pattern of the filename
 	key=<file>	The filename of the secret key of the certificate.
+	keypat=<file>		The pattern of the filename
 	cert=<file>	The filename of the certificate.
+	certpat=<file>		The pattern of the filename
+	certkey=<file>	The filename of the certificate with the secret key.
+	certkeypat=<file>	The pattern of the filename
 	CAfile=<file>	The filename of the certificate of the CA.
 	CApath=<dir>	The directory of the certificate files.
 	pfx=<file>	The filename of the PKCS#12 bag.
+	pfxpat=<file>		The pattern of the filename
+	store=<prop>	[Windows] Use the secret key in the Cert Store.
+			designate by "SUBJ:<substr>" or "THUMB:<hex>"
+	storeCA		[Windows] Use CA certificates in the Cert Store.
 	cipher=<list>	The list of ciphers.
 	lb<n>=<m>	change the destination according to the
 			certificate of the peer.  The number calculated

@@ -1,9 +1,9 @@
 
 			    Simple Repeater
 
-			   stone version 2.3c
+			   stone version 2.3d
 
-		Copyright(c)1995-2006 by Hiroaki Sengoku
+		Copyright(c)1995-2007 by Hiroaki Sengoku
 			    sengoku@gcd.org
 
 
@@ -157,15 +157,26 @@
 	no_tls1		プロトコルの選択枝から TLSv1 を外します。
 	no_ssl3		プロトコルの選択枝から SSLv3 を外します。
 	no_ssl2		プロトコルの選択枝から SSLv2 を外します。
+	sni		サーバ名通知 (Server Name Indication) を行ないます。
+	servername=<str>	SNI で通知するサーバ名を指定します。
 	bugs		SSL の実装にバグがある接続相手との接続を可能にします。
 	serverpref	SSL サーバの指定した暗号を用います (SSLv2 のみ)。
 	sid_ctx=<str>	SSL セッション ID コンテキストを設定します。
 	passfile=<file>	秘密鍵のパスフレーズを格納したファイルを指定します。
+	passfilepat=<file>	ファイル名のパターンを指定します。
 	key=<file>	証明書の秘密鍵ファイルを指定します。
+	keypat=<file>		ファイル名のパターンを指定します。
 	cert=<file>	証明書ファイルを指定します。
+	certpat=<file>		ファイル名のパターンを指定します。
+	certkey=<file>	秘密鍵付証明書ファイルを指定します。
+	certkeypat=<file>	ファイル名のパターンを指定します。
 	CAfile=<file>	認証局の証明書ファイルを指定します。
 	CApath=<dir>	認証局の証明書があるディレクトリを指定します。
 	pfx=<file>	PKCS#12 ファイルを指定します。
+	pfxpat=<file>		ファイル名のパターンを指定します。
+	store=<prop>	[Windows] 証明書ストア内の秘密鍵付証明書を指定。
+			"SUBJ:<substr>" あるいは "THUMB:<hex>"
+	storeCA		[Windows] 証明書ストア内の認証局証明書を使用します。
 	cipher=<list>	暗号化アルゴリズムのリストを指定します。
 	lb<n>=<m>	SSL 証明書の CN に応じて中継先を切り替えます。
 			SSL オプションの re<n>= で指定した正規表現中、
