@@ -19,7 +19,7 @@ and UDP from inside to outside of a firewall, or from outside to inside.
 	FreeBSD, BSD/OS, SunOS, Solaris, HP-UX and so on.
 
 2.  Simple.
-	Stone's source code is only 9000 lines long (written in C
+	Stone's source code is only 10000 lines long (written in C
 	language), so you can minimize the risk of security
 	holes.
 
