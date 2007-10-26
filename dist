@@ -13,20 +13,19 @@ shift
 stoneme=stone23me
 stonent=stone23nt
 stonexp=stone23xp
-stonez=stone23z
 stonefon=stone23fon
 if [ -n "$1" ]
 then	stamp=$1
 fi
-rm -rf stone-$ver stoneme-$ver.zip stonent-$ver.zip stonexp-$ver.zip \
-	stone_${ver}_arm stone_${ver}_arm.ipk \
-	stone_${ver}_mips stone_${ver}_mips.ipk
+rm -rf stone-$ver stoneme-$ver.zip stonent-$ver.zip stonexp-$ver.zip
 
 nkf_s() {
 	nkf -sc $1 > $2/$1
 	tscopy $1 $2/$1
 }
 
+make clean
+make mingw-me && mv stone.exe $stoneme/
 nkf_s	README.txt	$stoneme
 nkf_s	README.en.txt	$stoneme
 nkf_s	stone.c		$stoneme
@@ -34,6 +33,8 @@ nkf_s	Makefile	$stoneme
 nkf_s	GPL.txt		$stoneme
 nkf_s	logmsg.mc	$stoneme
 nkf_s	cryptoapi.c	$stoneme
+
+make mingw-nt && mv stone.exe $stonent/
 nkf_s	README.txt	$stonent
 nkf_s	README.en.txt	$stonent
 nkf_s	stone.c		$stonent
@@ -41,6 +42,8 @@ nkf_s	Makefile	$stonent
 nkf_s	GPL.txt		$stonent
 nkf_s	logmsg.mc	$stonent
 nkf_s	cryptoapi.c	$stonent
+
+make mingw-svc && mv stone.exe $stonexp/
 nkf_s	README.txt	$stonexp
 nkf_s	README.en.txt	$stonexp
 nkf_s	stone.c		$stonexp
@@ -48,49 +51,11 @@ nkf_s	Makefile	$stonexp
 nkf_s	GPL.txt		$stonexp
 nkf_s	logmsg.mc	$stonexp
 nkf_s	cryptoapi.c	$stonexp
+
 mkdir stone-$ver
 #cp -p README.en.txt stone.1 README.txt stone.1.ja stone.c Makefile GPL.txt logmsg.mc cryptoapi.c stone-$ver/.
 cp -p README.en.txt README.txt stone.c Makefile GPL.txt logmsg.mc cryptoapi.c stone-$ver/.
 sed -e "s/^Version: .*/Version: $ver/" stone.spec > stone-$ver/stone.spec
-
-arch=arm
-mkdir -p stone_${ver}_${arch}/CONTROL
-cat > stone_${ver}_${arch}/CONTROL/control <<EOF
-Package: stone
-Version: $ver
-Architecture: ${arch}
-Section: net
-Priority: optional
-Depends: openssl (>=0.9.7)
-Source: http://www.gcd.org/sengoku/stone/
-Maintainer: Hiroaki Sengoku <sengoku@gcd.org>
-Description: TCP/UDP repeater
-	Stone is a TCP/IP repeater in the application layer.
-	It repeats TCP and UDP from inside to outside of a firewall,
-	or from outside to inside.  Refer http://www.gcd.org/sengoku/stone/
-EOF
-mkdir -p stone_${ver}_${arch}/usr/local/bin
-
-arch=mips
-mkdir -p stone_${ver}_${arch}/CONTROL
-cat > stone_${ver}_${arch}/CONTROL/control <<EOF
-Package: stone
-Version: $ver
-Architecture: ${arch}
-Section: net
-Priority: optional
-Depends: libopenssl, libpthread
-Source: http://www.gcd.org/sengoku/stone/
-Maintainer: Hiroaki Sengoku <sengoku@gcd.org>
-Description: TCP/UDP repeater
-	Stone is a TCP/IP repeater in the application layer.
-	It repeats TCP and UDP from inside to outside of a firewall,
-	or from outside to inside.  Refer http://www.gcd.org/sengoku/stone/
-EOF
-mkdir -p stone_${ver}_${arch}/usr/bin
-
-cp -p $stonez/stone stone_${ver}_arm/usr/local/bin/stone
-cp -p $stonefon/stone stone_${ver}_mips/usr/bin/stone
 
 if [ -n "$stamp" ]
 then	touch -t $stamp  \
@@ -104,21 +69,13 @@ then	touch -t $stamp  \
 	stone-$ver/stone.spec \
 	stone-$ver/logmsg.mc \
 	stone-$ver/cryptoapi.c \
-	README.* stone.c Makefile \
-	stone_${ver}_arm/CONTROL/control \
-	stone_${ver}_arm/usr/local/bin/stone \
-	stone_${ver}_mips/CONTROL/control \
-	stone_${ver}_mips/usr/bin/stone
-	find $stoneme $stonent $stonexp stone-$ver \
-		stone_${ver}_arm stone_${ver}_mips -type d \
+	README.* stone.c Makefile
+	find $stoneme $stonent $stonexp stone-$ver -type d \
 		| xargs touch -t $stamp
 	tar czf stone-$ver.tar.gz stone-$ver
 	zip -r stoneme-$ver.zip $stoneme
 	zip -r stonent-$ver.zip $stonent
 	zip -r stonexp-$ver.zip $stonexp
-	ipkg-build -c -o root -g root stone_${ver}_arm
-	ipkg-build -c -o root -g root stone_${ver}_mips
 	touch -t $stamp stone-$ver.tar.gz \
-		stoneme-$ver.zip stonent-$ver.zip stonexp-$ver.zip \
-		stone_${ver}_arm.ipk stone_${ver}_mips.ipk
+		stoneme-$ver.zip stonent-$ver.zip stonexp-$ver.zip
 fi
