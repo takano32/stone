@@ -94,7 +94,7 @@ cryptoapi.o: cryptoapi.c
 	$(MINGWCC) -c $? -o $@
 
 svc_stone: logmsg.rc $(SVC_LIBS)
-	$(MAKE) FLAGS="-DNT_SERVICE $(FLAGS) $(POP_FLAGS) $(SSL_FLAGS)" LIBS="$(LIBS) $(SSL_LIBS) $(SVC_LIBS) -ladvapi32 -luser32 -lgdi32 -lshell32 -lkernel32" $(TARGET)
+	$(MAKE) FLAGS="-DNT_SERVICE $(FLAGS)" LIBS="$(LIBS) $(SVC_LIBS) -ladvapi32 -luser32 -lshell32 -lkernel32" $(TARGET)
 
 linux:
 	$(MAKE) FLAGS="-O -Wall -DCPP='\"/usr/bin/cpp -traditional\"' -DPTHREAD -DUNIX_DAEMON -DPRCTL -DSO_ORIGINAL_DST=80 -DUSE_EPOLL $(FLAGS)" LIBS="-lpthread $(LIBS)" stone
@@ -201,10 +201,10 @@ mingw-pop:
 	$(MAKE) CC="$(MINGWCC)" TARGET=mingw pop_stone
 
 mingw-ssl: cryptoapi.o
-	$(MAKE) CC="$(MINGWCC)" FLAGS="$(FLAGS)" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl -lcrypto" TARGET=mingw ssl_stone
+	$(MAKE) CC="$(MINGWCC)" FLAGS="$(FLAGS)" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
 
 mingw-me:
-	$(MAKE) CC="$(MINGWCC)" FLAGS="-DNO_ADDRINFO" TARGET=mingw-ssl ssl_stone
+	$(MAKE) CC="$(MINGWCC)" FLAGS="-DNO_ADDRINFO" mingw-ssl
 
 mingw-nt:
 	$(MAKE) CC="$(MINGWCC)" FLAGS="-DNO_ADDRINFO" TARGET=mingw-ssl svc_stone
