@@ -153,7 +153,7 @@ sun-ssl:
 	$(MAKE) TARGET=sun ssl_stone
 
 solaris:
-	$(MAKE) CC=gcc FLAGS="-DPTHREAD $(FLAGS)" LIBS="-lnsl -lsocket -lpthread $(LIBS)" stone
+	$(MAKE) CC=gcc FLAGS="-DPTHREAD -D_REENTRANT $(FLAGS)" LIBS="-lnsl -lsocket -lpthread -lthread $(LIBS)" stone
 
 solaris-pop:
 	$(MAKE) TARGET=solaris pop_stone
