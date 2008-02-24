@@ -1,9 +1,9 @@
 
 			    Simple Repeater
 
-			   stone version 2.3d
+			   stone version 2.3e
 
-		Copyright(c)1995-2007 by Hiroaki Sengoku
+		Copyright(c)1995-2008 by Hiroaki Sengoku
 			    sengoku@gcd.org
 
 
@@ -45,7 +45,7 @@ HOWTO USE
 
 	stone [-C <file>] [-P <command>] [-Q <options>] [-N] [-d] [-p] [-n]
 	      [-u <max>] [-f <n>] [-l] [-L <file>] [-a <file>] [-i <file>]
-	      [-X <n>] [-T <n>] [-r]
+	      [-X <n>] [-T <n>] [-A <n>] [-r]
 	      [-x <port>[,<port>][-<port>]... <xhost>... --]
 	      [-s <send> <expect>... --]
 	      [-b [<var>=<val>]... <n> <master>:<port> <backup>:<port>]
@@ -85,8 +85,9 @@ HOWTO USE
 	The ``-X <n>'' flag alters the buffer size of the repeater.  The
 	default value is 1000 bytes.  If the ``-T <n>'' is used, the
 	timeout of TCP sessions can be specified to ``<n>'' sec.
-	Default: 600.  The ``-r'' flag is used, SO_REUSEADDR is set on
-	the socket of <st> .
+	Default: 600.  The ``-A'' flag specifies the maximum length the
+	queue of pending connections may grow to.  Default: 50.  The
+	``-r'' flag is used, SO_REUSEADDR is set on the socket of <st> .
 
 	Using the ``-x <port>[,<port>][-<port>]... <xhost>... --'' flag,
 	the http proxy (described later) can only connect to

@@ -1,9 +1,9 @@
 
 			    Simple Repeater
 
-			   stone version 2.3d
+			   stone version 2.3e
 
-		Copyright(c)1995-2007 by Hiroaki Sengoku
+		Copyright(c)1995-2008 by Hiroaki Sengoku
 			    sengoku@gcd.org
 
 
@@ -45,7 +45,7 @@
 
 	stone [-C <file>] [-P <command>] [-Q <options>] [-N] [-d] [-p] [-n]
 	      [-u <max>] [-f <n>] [-l] [-L <file>] [-a <file>] [-i <file>]
-	      [-X <n>] [-T <n>] [-r]
+	      [-X <n>] [-T <n>] [-A <n>] [-r]
 	      [-x <port>[,<port>][-<port>]... <xhost>... --]
 	      [-s <send> <expect>... --]
 	      [-b [<var>=<val>]... <n> <master>:<port> <backup>:<port>]
@@ -77,10 +77,12 @@
 	ると、アクセスログを file へ出力します。-i は stone のプロセス 
 	ID を出力するファイルを指定します。
 
-	-X は中継を行なう際のバッファの大きさを指定します。デフォルトは 
-	1000 バイトです。-T を指定すると TCP セッションのタイムアウトの
-	秒数を変更できます。デフォルトは 600 (10 分) です。-r を指定する
-	と <st> のソケットに SO_REUSEADDR を設定します。
+	-X は中継を行なう際のバッファの大きさを指定します。デフォルトは
+	1000 バイトです。-T を指定すると TCP セッションのタイムアウトの秒
+	数を変更できます。デフォルトは 600 (10 分) です。-A を指定すると
+	listen 呼び出しの未処理接続キューの最大長を変更できます。デフォル
+	トは 50 です。-r を指定すると <st> のソケットに SO_REUSEADDR を設
+	定します。
 
 	-x を指定すると http proxy の接続先を制限できます。接続先のポー
 	ト番号のリスト <port>[,<port>][-<port>]... および接続先ホストの
