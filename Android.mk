@@ -1,3 +1,7 @@
+# export TOP=/usr/local/src/Android/gingerbread
+# . $TOP/build/envsetup.sh 
+# mm showcommands
+
 LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
