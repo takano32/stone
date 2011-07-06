@@ -201,7 +201,7 @@ mingw-pop:
 	$(MAKE) CC="$(MINGWCC)" TARGET=mingw pop_stone
 
 mingw-ssl: cryptoapi.o
-	$(MAKE) CC="$(MINGWCC)" FLAGS="$(FLAGS)" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
+	$(MAKE) CC="$(MINGWCC)" FLAGS="$(FLAGS)" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lssl -lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
 
 mingw-me:
 	$(MAKE) CC="$(MINGWCC)" FLAGS="-DNO_ADDRINFO" mingw-ssl
