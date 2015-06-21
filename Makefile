@@ -74,9 +74,8 @@ stone.exe: stone.c
 pop_stone.exe: md5c.obj
 	$(MAKE) FLAGS=-DUSE_POP LIBS="md5c.obj" $(TARGET)
 
-ssl_stone.exe:
-	$(MAKE) FLAGS="-DUSE_POP -DUSE_SSL" LIBS="ssleay32.lib libeay32.lib" $(TARGET)
-#	$(MAKE) FLAGS=-DUSE_SSL LIBS="ssl32.lib crypt32.lib" $(TARGET)
+ssl_stone.exe: cryptoapi.obj
+	$(MAKE) FLAGS="-DUSE_POP -DUSE_SSL -DCRYPTOAPI $(FLAGS)" LIBS="cryptoapi.obj ssleay32.lib libeay32.lib crypt32.lib $(LIBS)" $(TARGET)
 
 svc_stone.exe: logmsg.res
 	$(MAKE) FLAGS="/DNT_SERVICE $(FLAGS)" LIBS="logmsg.res advapi32.lib user32.lib gdi32.lib shell32.lib kernel32.lib" $(TARGET)
@@ -180,16 +179,16 @@ irix-ssl:
 	$(MAKE) TARGET=irix ssl_stone
 
 win:
-	$(MAKE) FLAGS="/Zi /DWINDOWS /DNO_RINDEX /DNO_SNPRINTF /DNO_VSNPRINTF /DNO_PID_T $(FLAGS)" LIBS="/MT wsock32.lib $(LIBS) /link /NODEFAULTLIB:LIBC" stone.exe
+	$(MAKE) FLAGS="/Zi /DUSE_PCRE /DWINDOWS /DNO_RINDEX /DNO_SNPRINTF /DNO_VSNPRINTF /DNO_PID_T $(FLAGS)" LIBS="/MT ws2_32.lib libpcreposix.lib $(LIBS) /link /NODEFAULTLIB:LIBC" stone.exe
 
 win-pop:
 	$(MAKE) TARGET=win pop_stone.exe
 
 win-ssl:
-	$(MAKE) TARGET=win ssl_stone.exe
+	$(MAKE) FLAGS="$(FLAGS)" TARGET=win ssl_stone.exe
 
 win-svc:
-	$(MAKE) TARGET=win svc_stone.exe
+	$(MAKE) TARGET=win-ssl svc_stone.exe
 
 mingw.exe: stone.c
 	$(MINGWCC) $(CFLAGS) $(FLAGS) -o stone.exe $? $(LIBS)
