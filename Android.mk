@@ -1,5 +1,5 @@
-# export ANDROID_JAVA_HOME=/usr/lib/jvm/java-6-openjdk
-# export TOP=/usr/local/src/android-4.4_r1
+# export ANDROID_JAVA_HOME=/usr/lib/jvm/java-7-openjdk-amd64
+# export TOP=/usr/local/src/android-6.0.0_r1
 # . $TOP/build/envsetup.sh 
 # mm showcommands
 
