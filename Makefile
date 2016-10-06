@@ -72,10 +72,10 @@ stone.exe: stone.c
 	$(CC) $(CFLAGS) $(FLAGS) $? $(LIBS)
 
 pop_stone.exe: md5c.obj
-	$(MAKE) FLAGS=-DUSE_POP LIBS="md5c.obj" $(TARGET)
+	$(MAKE) FLAGS=$(POP_FLAGS) LIBS="md5c.obj" $(TARGET)
 
 ssl_stone.exe: cryptoapi.obj
-	$(MAKE) FLAGS="-DUSE_POP -DUSE_SSL -DCRYPTOAPI $(FLAGS)" LIBS="cryptoapi.obj ssleay32.lib libeay32.lib crypt32.lib $(LIBS)" $(TARGET)
+	$(MAKE) FLAGS="$(POP_FLAGS) $(SSL_FLAGS) -DCRYPTOAPI $(FLAGS)" LIBS="cryptoapi.obj ssleay32.lib libeay32.lib crypt32.lib $(LIBS)" $(TARGET)
 
 svc_stone.exe: logmsg.res
 	$(MAKE) FLAGS="/DNT_SERVICE $(FLAGS)" LIBS="logmsg.res advapi32.lib user32.lib gdi32.lib shell32.lib kernel32.lib" $(TARGET)
@@ -200,7 +200,7 @@ mingw-pop:
 	$(MAKE) CC="$(MINGWCC)" TARGET=mingw pop_stone
 
 mingw-ssl: cryptoapi.o
-	$(MAKE) CC="$(MINGWCC)" FLAGS="$(FLAGS)" SSL_FLAGS="-DUSE_SSL -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lssl -lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
+	$(MAKE) CC="$(MINGWCC)" FLAGS="$(FLAGS)" SSL_FLAGS="$(SSL_FLAGS) -DCRYPTOAPI" SSL_LIBS="cryptoapi.o -lssl -lcrypt32 -lssl32 -leay32" TARGET=mingw ssl_stone
 
 mingw-me:
 	$(MAKE) CC="$(MINGWCC)" FLAGS="-DNO_ADDRINFO" mingw-ssl
